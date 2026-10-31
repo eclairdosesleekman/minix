@@ -1335,11 +1335,37 @@ start_multiboot2(struct multiboot_package *mbp)
 	if (mpp->mpp_entry)
 		entry = mpp->mpp_entry->entry_addr;
 #ifdef __LP64__
-	/* Prefer the EFI64-specific entry point (tag type 9) on 64-bit builds;
-	 * it expects to be entered in long mode, unlike the type-3 entry which
-	 * is 32-bit protected-mode code. */
-	if (mpp->mpp_entry_elf64)
-		entry = mpp->mpp_entry_elf64->entry_addr;
+	/*
+	 * EFI amd64 requires the EFI boot-services tag and the EFI64 entry
+	 * address tag.  Falling back to the ELF entry here can jump into the
+	 * legacy 32-bit/placeholder entry and appear as an unexplained reset.
+	 */
+	if (mpp->mpp_efi_bs == NULL) {
+		printf("multiboot2: EFI64 kernel is missing the EFI boot-services tag\n");
+		goto fail;
+	}
+	if (mpp->mpp_entry_elf64 == NULL) {
+		printf("multiboot2: EFI64 kernel is missing the EFI64 entry-address tag\n");
+		goto fail;
+	}
+	entry = mpp->mpp_entry_elf64->entry_addr;
+	if (entry == 0 || entry > 0xFFFFFFFFULL) {
+		printf("multiboot2: invalid EFI64 entry address 0x%lx\n",
+		    (u_long)entry);
+		goto fail;
+	}
+	/*
+	 * The Multiboot2 EFI64 ABI limits the kernel, modules and MBI to the
+	 * first 4 GiB.  multiboot64.S passes the MBI in EBX, so reject an
+	 * out-of-range buffer rather than silently truncating its address.
+	 */
+	if ((uint64_t)(uintptr_t)mbi + alen > 0x100000000ULL) {
+		printf("multiboot2: MBI at 0x%lx (%lu bytes) is above 4 GiB\n",
+		    (u_long)(uintptr_t)mbi, (u_long)alen);
+		goto fail;
+	}
+	printf("Multiboot2 EFI64 handoff: entry=0x%lx mbi=0x%lx size=%lu\n",
+	    (u_long)entry, (u_long)(uintptr_t)mbi, (u_long)alen);
 #endif
 
 	gop = (EFI_GRAPHICS_OUTPUT_PROTOCOL *)efi_gop_found();
