@@ -31,3 +31,11 @@ then
 	mv texinfo-4.8 texinfo
 fi
 
+# Apply the glibc compatibility patch to an already-fetched source tree too.
+# The extraction block above applies patches only when texinfo is first fetched.
+# This makes the fix effective for existing worktrees without requiring a
+# manual CLEANFETCHED=yes or deletion of the downloaded source directory.
+if [ -f texinfo/lib/system.h ] &&
+    grep -Fq 'extern int strcasecmp ();' texinfo/lib/system.h; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-glibc-strcasecmp)
+fi
