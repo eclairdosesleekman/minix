@@ -24,7 +24,7 @@ get_libbfd () {
 			libbfd_la_DEPENDENCIES libbfd_la_OBJECTS DEFS \
 			INCLUDES TDEFAULTS HAVEVECS
 	} | sed \
-		-e 's/ i386netbsd\.lo/ /g' \
+		-e 's/ i386netbsd\.lo//g' \
 		-e 's/,&i386_aout_nbsd_vec//g' \
 		-e 's/ -DHAVE_i386_aout_nbsd_vec//g' \
 	| write_mk external/gpl3/binutils/lib/libbfd/arch/$MACHINE_ARCH/defs.mk
