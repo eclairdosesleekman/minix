@@ -1,5 +1,5 @@
 --- a/ld/configure.tgt
 +++ b/ld/configure.tgt
-@@ -1208,1 +1208,1 @@
+@@ -971,1 +971,1 @@
 -    x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia*)
 +    x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia* | x86_64-*-minix*)
