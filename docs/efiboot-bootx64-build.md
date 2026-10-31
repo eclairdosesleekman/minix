@@ -154,17 +154,28 @@ Also added a forward declaration for `_relocate` to satisfy `-Wmissing-prototype
 EFI_STATUS _relocate(long, Elf64_Dyn *, EFI_HANDLE, EFI_SYSTEM_TABLE *);
 ```
 
-### 7. Missing MINIX-specific EFI linker script for x86_64
+### 7. Use BFD output-format names in the MINIX EFI linker scripts
 
-**New file:** `sys/external/bsd/gnu-efi/dist/gnuefi/elf_x86_64_minix_efi.lds`
+**Files:** `sys/external/bsd/gnu-efi/dist/gnuefi/elf_x86_64_minix_efi.lds`
+and `elf_ia32_minix_efi.lds`
 
-The `x86_64-elf64-minix-ld` linker only understands `elf64-x86-64-minix`
-output format; it does not know the generic `elf64-x86-64` format used by the
-standard `elf_x86_64_efi.lds`.  Created a MINIX-specific copy with:
+The MINIX cross-toolchain target triples (`x86_64-elf64-minix` and
+`i386-elf32-minix`) do not create BFD output-format names with a `-minix`
+suffix.  The binutils target setup maps these triples to the existing BFD
+vectors `x86_64_elf64_vec` and `i386_elf32_vec`, whose output-format names
+are `elf64-x86-64` and `elf32-i386`, respectively.  The linker-script
+`OUTPUT_FORMAT` must use the BFD vector name, not a name inferred from the
+target triple.
+
+The MINIX-specific scripts therefore use:
 
 ```
-OUTPUT_FORMAT("elf64-x86-64-minix", "elf64-x86-64-minix", "elf64-x86-64-minix")
+OUTPUT_FORMAT("elf64-x86-64", "elf64-x86-64", "elf64-x86-64")
+OUTPUT_FORMAT("elf32-i386", "elf32-i386", "elf32-i386")
 ```
+
+The x86_64 script remains MINIX-specific because it also contains the explicit
+`PHDRS` layout required by the EFI shared-object link.
 
 `Makefile.efiboot`'s linker script selection was extended to cover `x86_64`
 alongside `ia32`:
@@ -181,7 +192,7 @@ LDSCRIPT?= ${EFIDIR}/gnuefi/elf_${GNUEFIARCH}_minix_efi.lds
 `x86_64-elf64-minix-objcopy` was built without PE/COFF (`pei-x86-64`) target
 support (the MINIX `config.bfd` entry only includes ELF targets). The host
 system's `objcopy` (binutils on the build machine) supports both
-`elf64-x86-64-minix` input and `pei-x86-64` output.
+`elf64-x86-64` input and `pei-x86-64` output.
 
 Overridden in `bootx64/Makefile` after all BSD `.mk` includes:
 
