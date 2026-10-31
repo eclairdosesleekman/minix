@@ -52,6 +52,12 @@ if [ -f texinfo/lib/system.h ] &&
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-glibc-getenv)
 fi
 
+# Ensure standard allocation declarations are available even without STDC_HEADERS.
+if [ -f texinfo/lib/system.h ] &&
+    ! grep -Fq 'Provide standard allocation declarations when STDC_HEADERS is unavailable.' texinfo/lib/system.h; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-system-header-stdlib)
+fi
+
 # Add the standard allocation and abort declarations to already-fetched trees.
 if [ -f texinfo/lib/xmalloc.c ] &&
     ! grep -Fq '#include <stdlib.h>' texinfo/lib/xmalloc.c; then
