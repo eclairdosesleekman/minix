@@ -70,6 +70,12 @@ if [ -f texinfo/makeinfo/cmds.c ] &&
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-makeinfo-cmds-stdlib)
 fi
 
+# Add the standard free() declaration to already-fetched makeinfo.
+if [ -f texinfo/makeinfo/defun.c ] &&
+    ! grep -Fq '#include <stdlib.h>' texinfo/makeinfo/defun.c; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-makeinfo-defun-stdlib)
+fi
+
 # Make command handler prototypes explicit for C23/GCC 15 and later.
 if [ -f texinfo/makeinfo/cmds.h ] &&
     ! grep -Fq 'typedef void COMMAND_FUNCTION (int, int, int);' texinfo/makeinfo/cmds.h; then
