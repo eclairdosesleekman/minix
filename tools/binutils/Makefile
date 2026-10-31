@@ -6,7 +6,7 @@ MODULE=		binutils
 
 GNUHOSTDIST=	${.CURDIR}/../../external/gpl3/binutils/dist
 
-BRANDING?=\
+BRANDING?=	\
 	--with-pkgversion="NetBSD Binutils nb1" \
 	--with-bugurl="http://www.NetBSD.org/support/send-pr.html" \
 	--with-lib-path="=/usr/lib" --with-sysroot
