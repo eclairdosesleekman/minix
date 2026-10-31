@@ -14,6 +14,7 @@ TEXINFO_XEXIT_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-xexit-s
 TEXINFO_XMALLOC_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-xmalloc-stdlib
 TEXINFO_MKSTEMP_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-mkstemp-prototype
 TEXINFO_CMDS_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-makeinfo-cmds-stdlib
+TEXINFO_DEFUN_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-makeinfo-defun-stdlib
 TEXINFO_C23_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-texinfo-c23-command-functions
 TEXINFO_CMDS_H=${GNUHOSTDIST}/makeinfo/cmds.h
 TEXINFO_SYSTEM_H=${GNUHOSTDIST}/lib/system.h
@@ -21,24 +22,27 @@ TEXINFO_XEXIT_C=${GNUHOSTDIST}/lib/xexit.c
 TEXINFO_XMALLOC_C=${GNUHOSTDIST}/lib/xmalloc.c
 TEXINFO_MKSTEMP_C=${GNUHOSTDIST}/lib/mkstemp.c
 TEXINFO_CMDS_C=${GNUHOSTDIST}/makeinfo/cmds.c
+TEXINFO_DEFUN_C=${GNUHOSTDIST}/makeinfo/defun.c
 
 .if exists(${TEXINFO_SYSTEM_H}) && exists(${TEXINFO_GLIBC_PATCH}) && \
     exists(${TEXINFO_GETENV_PATCH}) && exists(${TEXINFO_XEXIT_C}) && \
     exists(${TEXINFO_XEXIT_PATCH}) && exists(${TEXINFO_XMALLOC_C}) && \
     exists(${TEXINFO_XMALLOC_PATCH}) && exists(${TEXINFO_MKSTEMP_C}) && \
     exists(${TEXINFO_MKSTEMP_PATCH}) && exists(${TEXINFO_CMDS_C}) && exists(${TEXINFO_CMDS_H}) && \
-    exists(${TEXINFO_CMDS_PATCH}) && exists(${TEXINFO_C23_PATCH})
+    exists(${TEXINFO_CMDS_PATCH}) && exists(${TEXINFO_DEFUN_C}) && \\
+    exists(${TEXINFO_DEFUN_PATCH}) && exists(${TEXINFO_C23_PATCH})
 .texinfo_host_compat_done: ${TEXINFO_SYSTEM_H} ${TEXINFO_XEXIT_C} \
     ${TEXINFO_XMALLOC_C} ${TEXINFO_MKSTEMP_C} ${TEXINFO_CMDS_C} \
-    ${TEXINFO_CMDS_H} ${TEXINFO_GLIBC_PATCH} ${TEXINFO_GETENV_PATCH} ${TEXINFO_XEXIT_PATCH} \
+    ${TEXINFO_CMDS_H} ${TEXINFO_DEFUN_C} ${TEXINFO_GLIBC_PATCH} ${TEXINFO_GETENV_PATCH} ${TEXINFO_XEXIT_PATCH} \
     ${TEXINFO_XMALLOC_PATCH} ${TEXINFO_MKSTEMP_PATCH} ${TEXINFO_CMDS_PATCH} \
-    ${TEXINFO_C23_PATCH}
+    ${TEXINFO_DEFUN_PATCH} ${TEXINFO_C23_PATCH}
 	@if grep -Fq 'extern int strcasecmp ();' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_GLIBC_PATCH}); fi
 	@if grep -Fq 'extern char *getenv ();' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_GETENV_PATCH}); fi
 	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_XEXIT_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_XEXIT_PATCH}); fi
 	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_XMALLOC_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_XMALLOC_PATCH}); fi
 	@if grep -Fq 'int __gen_tempname ();' ${TEXINFO_MKSTEMP_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_MKSTEMP_PATCH}); fi
 	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_CMDS_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_CMDS_PATCH}); fi
+	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_DEFUN_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_DEFUN_PATCH}); fi
 	@if ! grep -Fq 'typedef void COMMAND_FUNCTION (int, int, int);' ${TEXINFO_CMDS_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_C23_PATCH}); fi
 	@touch ${.TARGET}
 
