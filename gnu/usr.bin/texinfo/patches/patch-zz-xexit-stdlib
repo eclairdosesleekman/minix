@@ -1,0 +1,5 @@
+--- a/lib/xexit.c
++++ b/lib/xexit.c
+@@ -22 +22,2 @@
+ #include "system.h"
++#include <stdlib.h>
