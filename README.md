@@ -10,6 +10,15 @@ sources required by the toolchain before building.
 
 ## Build an amd64 UEFI installation ISO
 
+Refresh the cross tools before building release sets. The release target
+reuses an existing `tooldir`, so changes to the binutils BFD target setup are
+not picked up until the tools target has been run.
+
+```sh
+./build.sh -U -u -m amd64 -O ../build tools
+./build.sh -U -u -m amd64 -O ../build release
+```
+
 Build the release sets first, then create the ISO:
 
 ```sh
