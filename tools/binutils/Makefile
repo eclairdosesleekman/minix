@@ -6,20 +6,20 @@ MODULE=		binutils
 
 GNUHOSTDIST=	${.CURDIR}/../../external/gpl3/binutils/dist
 
-BRANDING?=	\
-	--with-pkgversion="NetBSD Binutils nb1" \
-	--with-bugurl="http://www.NetBSD.org/support/send-pr.html" \
+BRANDING?=	\\
+	--with-pkgversion="NetBSD Binutils nb1" \\
+	--with-bugurl="http://www.NetBSD.org/support/send-pr.html" \\
 	--with-lib-path="=/usr/lib" --with-sysroot
 
-BASE_CONFIGURE_ARGS= \
-	--target=${MACHINE_GNU_PLATFORM} \
-	--enable-initfini-array=yes \
-	--enable-default-execstack=no \
+BASE_CONFIGURE_ARGS= \\
+	--target=${MACHINE_GNU_PLATFORM} \\
+	--enable-initfini-array=yes \\
+	--enable-default-execstack=no \\
 	${BRANDING}
 
-CONFIGURE_ARGS= --disable-nls \
-		--program-transform-name="s,^,${MACHINE_GNU_PLATFORM}-," \
-		--disable-werror \
+CONFIGURE_ARGS= --disable-nls \\
+		--program-transform-name="s,^,${MACHINE_GNU_PLATFORM}-," \\
+		--disable-werror \\
 		${BASE_CONFIGURE_ARGS}
 
 .if defined(__MINIX) && ! exists(${GNUHOSTDIST}/gas/m68k-parse.c)
@@ -50,23 +50,44 @@ INSTALL_TARGET+=install-gprof
 ALL_TARGET+=	all-gold
 INSTALL_TARGET+=install-gold
 
-CONFIGURE_ARGS+=	\
-	--enable-lto \
+CONFIGURE_ARGS+=	\\
+	--enable-lto \\
 	--enable-plugins
 # LSC: Here we use the MK variable, as we have to select the right default
 #      linker. Problem is, when Gold is not seen, USE_BITCODE is forced to
 #      "no".
 .if ${MKBITCODE:Uno} == "yes"
-CONFIGURE_ARGS+= \
-	--enable-ld=yes \
+CONFIGURE_ARGS+= \\
+	--enable-ld=yes \\
 	--enable-gold=default
 .else
-CONFIGURE_ARGS+= \
-	--enable-ld=default \
+CONFIGURE_ARGS+= \\
+	--enable-ld=default \\
 	--enable-gold=yes
 .endif # ${MKBITCODE:Uno} == "yes"
 .endif # defined(__MINIX)
 .include "${.CURDIR}/../Makefile.gnuhost"
+
+# The MINIX target triple is x86_64-elf64-minix.  Binutils 2.34
+# needs explicit target-table entries for BFD, GAS, and ld.
+.if defined(__MINIX)
+MINIX_BFD_TARGET_PATCH=${NETBSDSRCDIR}/external/gpl3/binutils/patches/patch-zz-minix-bfd-target
+MINIX_GAS_TARGET_PATCH=${NETBSDSRCDIR}/external/gpl3/binutils/patches/patch-zz-minix-gas-target
+MINIX_LD_TARGET_PATCH=${NETBSDSRCDIR}/external/gpl3/binutils/patches/patch-zz-minix-ld-target
+
+MINIX_BFD_CONFIG=${GNUHOSTDIST}/bfd/config.bfd
+MINIX_GAS_CONFIG=${GNUHOSTDIST}/gas/configure.tgt
+MINIX_LD_CONFIG=${GNUHOSTDIST}/ld/configure.tgt
+
+.binutils_minix_target_done: ${fetch_done} ${MINIX_BFD_CONFIG} ${MINIX_GAS_CONFIG} ${MINIX_LD_CONFIG} \\
+    ${MINIX_BFD_TARGET_PATCH} ${MINIX_GAS_TARGET_PATCH} ${MINIX_LD_TARGET_PATCH}
+	@if ! grep -Fq 'x86_64-*-minix*' ${MINIX_BFD_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_BFD_TARGET_PATCH}); fi
+	@if ! grep -Fq 'i386-*-minix*' ${MINIX_GAS_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_GAS_TARGET_PATCH}); fi
+	@if ! grep -Fq 'x86_64-*-minix*' ${MINIX_LD_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_LD_TARGET_PATCH}); fi
+	@touch ${.TARGET}
+
+.configure_done: .binutils_minix_target_done
+.endif # defined(__MINIX)
 
 CCADDFLAGS=	-I${GNUHOSTDIST}/include  -I${DESTDIR}/usr/include
 CCADDFLAGS+=	-B${DESTDIR}/usr/lib/
@@ -81,34 +102,34 @@ MKNATIVE?=	${.CURDIR}/mknative-binutils
 
 native-binutils: .native/.configure_done
 	@echo 'Extracting GNU binutils configury for a native toolchain.'
-	MAKE=${MAKE:Q} ${HOST_SH} ${MKNATIVE} binutils \
+	MAKE=${MAKE:Q} ${HOST_SH} ${MKNATIVE} binutils \\
 		${.OBJDIR}/.native ${NEWCONFIGDIR} ${MACHINE_GNU_PLATFORM}
 
 .native/.configure_done: ${_GNU_CFGSRC} ${.CURDIR}/Makefile
 	mkdir .native 2>/dev/null || true
-	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \
-		(cd .native && ${CONFIGURE_ENV:NC*:NLD*} \
-			CC_FOR_BUILD=${HOST_CC:Q} \
-			CC=${CC:Q}' '${CCADDFLAGS:Q} \
-			CXX=${CXX:Q}' '${CCADDFLAGS:Q} \
-			CPP=${CPP:Q}' '-I${DESTDIR}/usr/include \
-			CFLAGS= CPPFLAGS= CXXFLAGS= \
-			LDFLAGS=${LDADDFLAGS:Q} \
-			MSGFMT=${TOOLDIR}/bin/${_TOOL_PREFIX}msgfmt \
-			XGETTEXT=${TOOLDIR}/bin/${_TOOL_PREFIX}xgettext \
-			LIBS=-lintl \
-			ac_cv_prog_cc_cross=yes \
-			ac_cv_func_strcoll_works=yes \
-			${HOST_SH} ${GNUHOSTDIST}/configure \
-			--build=`${GNUHOSTDIST}/config.guess` \
-			--host=${MACHINE_GNU_PLATFORM} \
-			${BASE_CONFIGURE_ARGS} \
+	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \\
+		(cd .native && ${CONFIGURE_ENV:NC*:NLD*} \\
+			CC_FOR_BUILD=${HOST_CC:Q} \\
+			CC=${CC:Q}' '${CCADDFLAGS:Q} \\
+			CXX=${CXX:Q}' '${CCADDFLAGS:Q} \\
+			CPP=${CPP:Q}' '-I${DESTDIR}/usr/include \\
+			CFLAGS= CPPFLAGS= CXXFLAGS= \\
+			LDFLAGS=${LDADDFLAGS:Q} \\
+			MSGFMT=${TOOLDIR}/bin/${_TOOL_PREFIX}msgfmt \\
+			XGETTEXT=${TOOLDIR}/bin/${_TOOL_PREFIX}xgettext \\
+			LIBS=-lintl \\
+			ac_cv_prog_cc_cross=yes \\
+			ac_cv_func_strcoll_works=yes \\
+			${HOST_SH} ${GNUHOSTDIST}/configure \\
+			--build=`\${GNUHOSTDIST}/config.guess` \\
+			--host=${MACHINE_GNU_PLATFORM} \\
+			${BASE_CONFIGURE_ARGS} \\
 		)
-	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \
+	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \\
 		(cd .native && ${MAKE} configure-host)
-	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \
+	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \\
 		(cd .native/bfd && ${MAKE} bfd.h bfdver.h)
-	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \
+	PATH=${TOOLDIR}/bin:$$PATH; export PATH; \\
 		(cd .native/ld && ${MAKE} ldemul-list.h)
 	@touch $@
 
