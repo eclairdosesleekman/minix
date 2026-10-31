@@ -39,3 +39,9 @@ if [ -f texinfo/lib/system.h ] &&
     grep -Fq 'extern int strcasecmp ();' texinfo/lib/system.h; then
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-glibc-strcasecmp)
 fi
+
+# Add the missing standard-library declaration to an already-fetched tree too.
+if [ -f texinfo/lib/xexit.c ] &&
+    ! grep -Fq '#include <stdlib.h>' texinfo/lib/xexit.c; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-xexit-stdlib)
+fi
