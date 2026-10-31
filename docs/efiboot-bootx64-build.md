@@ -159,13 +159,12 @@ EFI_STATUS _relocate(long, Elf64_Dyn *, EFI_HANDLE, EFI_SYSTEM_TABLE *);
 **Files:** `sys/external/bsd/gnu-efi/dist/gnuefi/elf_x86_64_minix_efi.lds`
 and `elf_ia32_minix_efi.lds`
 
-The MINIX cross-toolchain target triples (`x86_64-elf64-minix` and
-`i386-elf32-minix`) do not create BFD output-format names with a `-minix`
-suffix.  The binutils target setup maps these triples to the existing BFD
-vectors `x86_64_elf64_vec` and `i386_elf32_vec`, whose output-format names
-are `elf64-x86-64` and `elf32-i386`, respectively.  The linker-script
-`OUTPUT_FORMAT` must use the BFD vector name, not a name inferred from the
-target triple.
+The MINIX binutils target setup maps `x86_64-*-minix` to the existing BFD
+vector `x86_64_elf64_vec` and includes `i386_elf32_vec` as an additional
+selectable vector.  Their output-format names are `elf64-x86-64` and
+`elf32-i386`, respectively.  The `-minix` suffix belongs to the toolchain
+target triple; it is not appended to the BFD output-format name.  The linker
+script's `OUTPUT_FORMAT` must use the registered BFD format name.
 
 The MINIX-specific scripts therefore use:
 
