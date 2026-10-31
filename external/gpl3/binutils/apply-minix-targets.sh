@@ -43,7 +43,7 @@ insert_target()
 			if (kind == "bfd") {
 				print "      x86_64-*-minix*)"
 				print "        targ_defvec=x86_64_elf64_vec"
-				print "        targ_selvecs=\"i386_elf32_vec iamcu_elf32_vec x86_64_elf32_vec i386_pei_vec x86_64_pei_vec\""
+				print "        targ_selvecs=\"i386_elf32_vec iamcu_elf32_vec x86_64_elf32_vec i386_pe_vec i386_pei_vec x86_64_pe_vec x86_64_pei_vec\""
 				print "        want64=true"
 				print "        ;;"
 			} else if (kind == "gas") {
