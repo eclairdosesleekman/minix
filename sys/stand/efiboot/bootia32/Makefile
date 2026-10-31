@@ -7,7 +7,7 @@ GNUEFIARCH=	ia32
 LIBKERN_ARCH=	i386
 LIBGNUEFI_ARCH=	i386
 KLINK_MACHINE=	i386
-OBJCOPY_FORMAT=	--subsystem efi-app	--target=pei-i386
+OBJCOPY_FORMAT=	--subsystem efi-app	--output-target=pei-i386
 
 EFIBOOT_ACPI=	yes
 EFIBOOT_MULTIBOOT2=	yes

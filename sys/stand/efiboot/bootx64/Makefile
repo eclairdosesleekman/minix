@@ -7,7 +7,7 @@ GNUEFIARCH=	x86_64
 LIBKERN_ARCH=	x86_64
 LIBGNUEFI_ARCH=	x86_64
 KLINK_MACHINE=	amd64
-OBJCOPY_FORMAT=	--subsystem efi-app	--target=pei-x86-64
+OBJCOPY_FORMAT=	--subsystem efi-app	--output-target=pei-x86-64
 
 EFIBOOT_ACPI=	yes
 EFIBOOT_FDT=	yes
