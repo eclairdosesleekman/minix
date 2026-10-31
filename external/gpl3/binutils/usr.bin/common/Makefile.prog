@@ -34,6 +34,21 @@ PROGDPLIBS+=	iberty	${TOP}/${BFDSUBDIR}/libiberty
 
 .PATH: ${DIST}/binutils ${DIST}/binutils/doc
 
+.if defined(__MINIX)
+# The GNU binutils build generates man pages in its object tree from
+# binutils.texi.  The release source archive does not always contain the
+# generated .1 files, so also search the completed tools build.
+BINUTILS_BUILD_DOC=${TOOLDIR:H}/tools/binutils/build/binutils/doc
+.PATH: ${BINUTILS_BUILD_DOC}
+
+# Do not make the system-tool build depend on a generated man page if the
+# tools build did not produce it (for example, when building without docs).
+.if !exists(${DIST}/binutils/doc/${PROG}.1) && \
+    !exists(${BINUTILS_BUILD_DOC}/${PROG}.1)
+MAN=
+.endif
+.endif # defined(__MINIX)
+
 .include <bsd.prog.mk>
 
 .if !defined(__MINIX)
