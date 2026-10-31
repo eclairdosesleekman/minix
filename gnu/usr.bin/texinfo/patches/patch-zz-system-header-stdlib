@@ -1,6 +1,8 @@
 --- a/lib/system.h
 +++ b/lib/system.h
-@@ -74,6 +74,9 @@
+@@ -62,7 +62,9 @@
+ #ifdef STDC_HEADERS
+ #define getopt system_getopt
  #include <stdlib.h>
  #undef getopt
  #else
