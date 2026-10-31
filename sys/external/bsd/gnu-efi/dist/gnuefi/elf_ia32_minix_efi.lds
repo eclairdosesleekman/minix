@@ -1,8 +1,9 @@
 /*	$NetBSD: elf_ia32_efi.lds,v 1.1.1.2 2018/08/16 18:17:47 jmcneill Exp $	*/
 /* MINIX version */
-/* Same as elf_ia32_efi.lds, except for OUTPUT_FORMAT below - KEEP IN SYNC */
+/* Use the i386 ELF output format supported by the MINIX cross-linker. */
 
-OUTPUT_FORMAT("elf32-i386-minix", "elf32-i386-minix", "elf32-i386-minix")
+/* The MINIX target triple uses BFD's generic i386 ELF vector. */
+OUTPUT_FORMAT("elf32-i386", "elf32-i386", "elf32-i386")
 OUTPUT_ARCH(i386)
 ENTRY(_start)
 
