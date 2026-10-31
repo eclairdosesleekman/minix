@@ -118,6 +118,9 @@ void bsp_finish_booting(void)
  *===========================================================================*/
 void kmain(kinfo_t *local_cbi)
 {
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: kmain entered\r\n");
+#endif
 /* Start the ball rolling. */
   struct boot_image *ip;	/* boot image pointer */
   register struct proc *rp;	/* process pointer */
