@@ -29,7 +29,7 @@ TEXINFO_DEFUN_C=${GNUHOSTDIST}/makeinfo/defun.c
     exists(${TEXINFO_XEXIT_PATCH}) && exists(${TEXINFO_XMALLOC_C}) && \
     exists(${TEXINFO_XMALLOC_PATCH}) && exists(${TEXINFO_MKSTEMP_C}) && \
     exists(${TEXINFO_MKSTEMP_PATCH}) && exists(${TEXINFO_CMDS_C}) && exists(${TEXINFO_CMDS_H}) && \
-    exists(${TEXINFO_CMDS_PATCH}) && exists(${TEXINFO_DEFUN_C}) && \\
+    exists(${TEXINFO_CMDS_PATCH}) && exists(${TEXINFO_DEFUN_C}) && \
     exists(${TEXINFO_DEFUN_PATCH}) && exists(${TEXINFO_C23_PATCH})
 .texinfo_host_compat_done: ${TEXINFO_SYSTEM_H} ${TEXINFO_XEXIT_C} \
     ${TEXINFO_XMALLOC_C} ${TEXINFO_MKSTEMP_C} ${TEXINFO_CMDS_C} \
