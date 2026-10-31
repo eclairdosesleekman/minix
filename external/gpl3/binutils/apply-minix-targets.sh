@@ -91,7 +91,7 @@ patch_gold_elf_target()
 		return 0
 	fi
 
-	tmp=external/gpl3/binutils/apply-minix-targets.sh.minix-gold-targets.$
+	tmp=${file}.minix-gold-targets.$
 	trap 'rm -f "$tmp"' EXIT HUP INT TERM
 	awk '
 		/Check for ELF target\./ { in_elf=1 }
