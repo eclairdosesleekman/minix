@@ -39,7 +39,13 @@ if [ ! -d dist ]; then
 		find . -type d -name testsuite \
 		    ! -path './libiberty/testsuite' -prune -exec rm -fr {} +
 		find . -name .gitignore -delete
-		cat ../patches/* | patch -p1
+		# Apply optional downstream patches when the directory is present.
+		if [ -d ../patches ]; then
+			for patchfile in ../patches/*; do
+				[ -f "$patchfile" ] || continue
+				patch -p1 < "$patchfile"
+			done
+		fi
 	)
 fi
 
