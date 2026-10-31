@@ -1,12 +1,6 @@
 --- a/lib/system.h
 +++ b/lib/system.h
-@@ -62,7 +62,9 @@
- #ifdef STDC_HEADERS
- #define getopt system_getopt
- #include <stdlib.h>
- #undef getopt
- #else
-+/* Provide standard allocation declarations when STDC_HEADERS is unavailable. */
+@@ -67,1 +67,3 @@
++/* Ensure standard allocation declarations are available without STDC_HEADERS. */
 +#include <stdlib.h>
  extern char *getenv (const char *);
- #endif
