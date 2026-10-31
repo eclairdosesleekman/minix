@@ -158,8 +158,9 @@ multiboot_entry64_efi:
 /*  Boot stack (placed in .data so it lands in the unpaged section)         */
 /*===========================================================================*/
 .data
-.balign 4096
+/* The early C bootstrap needs the same 16 KiB stack budget as the kernel. */
+.balign K_STACK_SIZE
 boot_stack64:
-	.space	4096
+	.space	K_STACK_SIZE
 boot_stack64_top:
 
