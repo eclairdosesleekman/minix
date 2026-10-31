@@ -9,15 +9,18 @@ CONFIGURE_ARGS=	--program-prefix=${_TOOL_PREFIX}
 # Apply host compatibility patches before configuring the fetched
 # Texinfo 4.8 source. This is required for Linux-hosted cross-builds too.
 TEXINFO_GLIBC_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-glibc-strcasecmp
+TEXINFO_GETENV_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-glibc-getenv
 TEXINFO_XEXIT_PATCH=${NETBSDSRCDIR}/gnu/usr.bin/texinfo/patches/patch-zz-xexit-stdlib
 TEXINFO_SYSTEM_H=${GNUHOSTDIST}/lib/system.h
 TEXINFO_XEXIT_C=${GNUHOSTDIST}/lib/xexit.c
 
 .if exists(${TEXINFO_SYSTEM_H}) && exists(${TEXINFO_GLIBC_PATCH}) && \
-    exists(${TEXINFO_XEXIT_C}) && exists(${TEXINFO_XEXIT_PATCH})
+    exists(${TEXINFO_GETENV_PATCH}) && exists(${TEXINFO_XEXIT_C}) && \
+    exists(${TEXINFO_XEXIT_PATCH})
 .texinfo_host_compat_done: ${TEXINFO_SYSTEM_H} ${TEXINFO_XEXIT_C} \
-    ${TEXINFO_GLIBC_PATCH} ${TEXINFO_XEXIT_PATCH}
+    ${TEXINFO_GLIBC_PATCH} ${TEXINFO_GETENV_PATCH} ${TEXINFO_XEXIT_PATCH}
 	@if grep -Fq 'extern int strcasecmp ();' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_GLIBC_PATCH}); fi
+	@if grep -Fq 'extern char *getenv ();' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_GETENV_PATCH}); fi
 	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_XEXIT_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_XEXIT_PATCH}); fi
 	@touch ${.TARGET}
 
