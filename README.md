@@ -5,19 +5,9 @@ boot support and an x86_64 (amd64) port.
 
 ## Build environment
 
-The cross-build environment is Ubuntu 26.04. Fetch the texinfo and binutils
-sources required by the toolchain before building.
+The cross-build environment is Ubuntu 26.04.
 
 ## Build an amd64 UEFI installation ISO
-
-Refresh the cross tools before building release sets. The release target
-reuses an existing `tooldir`, so changes to the binutils BFD target setup are
-not picked up until the tools target has been run.
-
-```sh
-./build.sh -U -u -m amd64 -O ../build tools
-./build.sh -U -u -m amd64 -O ../build release
-```
 
 Build the release sets first, then create the ISO:
 
