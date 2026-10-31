@@ -88,6 +88,12 @@ if [ -f texinfo/makeinfo/float.c ] &&
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-makeinfo-float-stdlib)
 fi
 
+# Add the standard free() declaration to already-fetched makeinfo footnote code.
+if [ -f texinfo/makeinfo/footnote.c ] &&
+    ! grep -Fq '#include <stdlib.h>' texinfo/makeinfo/footnote.c; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-makeinfo-footnote-stdlib)
+fi
+
 # Make command handler prototypes explicit for C23/GCC 15 and later.
 if [ -f texinfo/makeinfo/cmds.h ] &&
     ! grep -Fq 'typedef void COMMAND_FUNCTION (int, int, int);' texinfo/makeinfo/cmds.h; then
