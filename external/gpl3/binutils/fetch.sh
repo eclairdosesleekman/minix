@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 # Make sure we're in our directory (i.e., where this shell script is).
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cd "$SCRIPT_DIR"
@@ -47,7 +49,7 @@ fi
 if [ ! -f dist/libiberty/testsuite/Makefile.in ]; then
 	fetch_archive
 	mkdir -p dist/libiberty
-	tar -oxjf binutils-2.34.tar.bz2 -C dist --strip-components=2 \
+	tar -oxjf binutils-2.34.tar.bz2 -C dist --strip-components=1 \
 	    binutils-2.34/libiberty/testsuite
 fi
 
