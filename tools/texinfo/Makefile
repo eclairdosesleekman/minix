@@ -34,7 +34,7 @@ TEXINFO_FOOTNOTE_C=${GNUHOSTDIST}/makeinfo/footnote.c
 TEXINFO_HTML_C=${GNUHOSTDIST}/makeinfo/html.c
 
 .if exists(${TEXINFO_SYSTEM_H}) && exists(${TEXINFO_GLIBC_PATCH}) && \
-    exists(${TEXINFO_GETENV_PATCH}) && exists(${TEXINFO_SYSTEM_STDLIB_PATCH}) && \\
+    exists(${TEXINFO_GETENV_PATCH}) && exists(${TEXINFO_SYSTEM_STDLIB_PATCH}) && \
     exists(${TEXINFO_XEXIT_C}) && \
     exists(${TEXINFO_XEXIT_PATCH}) && exists(${TEXINFO_XMALLOC_C}) && \
     exists(${TEXINFO_XMALLOC_PATCH}) && exists(${TEXINFO_MKSTEMP_C}) && \
