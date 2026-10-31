@@ -1,6 +1,0 @@
---- a/gas/configure.tgt
-+++ b/gas/configure.tgt
-@@ -247,1 +247,2 @@
--      i386-*-gnu*) fmt=elf em=gnu ;;
-+      i386-*-minix*) fmt=elf ;;
-+      i386-*-gnu*) fmt=elf em=gnu ;;
