@@ -23,5 +23,5 @@ TEXINFO_SYSTEM_H=${GNUHOSTDIST}/lib/system.h
 .if !empty(.MAKE.OS:M*CYGWIN*) && target(install)
 .END: install-texinfo
 install-texinfo: 
-	${HOST_SH} ${NETBSDSRCDIR}/tools/binstall/mkmanifest ${TOOLDIR}/bin/${_TOOL_PREFIX}install-info
+	${HOST_SH} ${NETBSDSRCDIR}/tools/binstall/mkmanifest ${TOOLDIR}/bin/${_TOOL_PREFIX}install-info.exe
 .endif
