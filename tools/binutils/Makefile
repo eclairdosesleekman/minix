@@ -117,7 +117,7 @@ native-binutils: .native/.configure_done
 			ac_cv_prog_cc_cross=yes \
 			ac_cv_func_strcoll_works=yes \
 			${HOST_SH} ${GNUHOSTDIST}/configure \
-			--build=\` ${GNUHOSTDIST}/config.guess\` \
+			--build=`${GNUHOSTDIST}/config.guess` \
 			--host=${MACHINE_GNU_PLATFORM} \
 			${BASE_CONFIGURE_ARGS} \
 		)
