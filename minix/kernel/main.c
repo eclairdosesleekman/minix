@@ -128,16 +128,38 @@ void kmain(kinfo_t *local_cbi)
   static int bss_test;
 
   /* bss sanity check */
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: kmain before BSS check\r\n");
+#endif
   assert(bss_test == 0);
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: kmain BSS check passed\r\n");
+#endif
   bss_test = 1;
 
   /* save a global copy of the boot parameters */
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: kmain before kinfo copy\r\n");
+#endif
   memcpy(&kinfo, local_cbi, sizeof(kinfo));
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: kinfo copy done\r\n");
+  direct_com_print("MINIX/amd64: kmain before kmessages copy\r\n");
+#endif
   memcpy(&kmess, kinfo.kmess, sizeof(kmess));
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: kmessages copy done\r\n");
+#endif
 
    /* We have done this exercise in pre_init so we expect this code
       to simply work! */
+#if defined(__x86_64__)
+   direct_com_print("MINIX/amd64: kmain before board lookup\r\n");
+#endif
    machine.board_id = get_board_id_by_name(env_get(BOARDVARNAME));
+#if defined(__x86_64__)
+   direct_com_print("MINIX/amd64: board lookup done\r\n");
+#endif
 #ifdef __arm__
   /* We want to initialize serial before we do any output */
   arch_ser_init();
@@ -150,8 +172,15 @@ void kmain(kinfo_t *local_cbi)
 
   assert(sizeof(kinfo.boot_procs) == sizeof(image));
   memcpy(kinfo.boot_procs, image, sizeof(kinfo.boot_procs));
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: boot image copy done\r\n");
+  direct_com_print("MINIX/amd64: entering cstart\r\n");
+#endif
 
   cstart();
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: cstart returned\r\n");
+#endif
 
   BKL_LOCK();
  
