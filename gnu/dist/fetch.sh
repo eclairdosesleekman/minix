@@ -45,3 +45,9 @@ if [ -f texinfo/lib/xexit.c ] &&
     ! grep -Fq '#include <stdlib.h>' texinfo/lib/xexit.c; then
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-xexit-stdlib)
 fi
+
+# Fix the old no-argument getenv declaration in already-fetched Texinfo trees.
+if [ -f texinfo/lib/system.h ] &&
+    grep -Fq 'extern char *getenv ();' texinfo/lib/system.h; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-glibc-getenv)
+fi
