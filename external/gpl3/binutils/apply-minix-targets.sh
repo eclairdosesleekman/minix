@@ -91,7 +91,7 @@ patch_gold_elf_target()
 		return 0
 	fi
 
-	tmp=${file}.minix-gold-targets.$
+	tmp=$(mktemp "${file}.minix-gold-targets.XXXXXX")
 	trap 'rm -f "$tmp"' EXIT HUP INT TERM
 	awk '
 		/Check for ELF target\./ { in_elf=1 }
