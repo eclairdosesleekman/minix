@@ -776,6 +776,7 @@ efi_fdt_alloc_size(void)
 	return FDT_SPACE;
 }
 
+#ifndef EFIBOOT_X86
 /*
  * Native NetBSD boot hooks (exec.c); on FDT platforms the kernel
  * hand-off state is the device tree.
@@ -797,6 +798,7 @@ efi_md_cleanup_boot(void)
 {
 	efi_fdt_cleanup_boot();
 }
+#endif /* !EFIBOOT_X86 */
 
 #ifdef EFIBOOT_ACPI
 int
