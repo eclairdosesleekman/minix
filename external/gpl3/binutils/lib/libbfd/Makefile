@@ -42,14 +42,14 @@ LIBDPLIBS+=	z	${.CURDIR}/../../../../../lib/libz
 GCPPFLAGS=	${G_archdefs} ${G_DEFS} ${G_INCLUDES} ${G_TDEFAULTS}
 GCPPFLAGS+=	${G_HAVEVECS}
 
-.if defined(__MINIX)
+.if defined(__MINIX) && ${BFD_MACHINE_ARCH} == "x86_64"
 # binutils 2.34 removed the i386 NetBSD a.out backend.  The generated
 # x86_64 defs.mk still comes from older NetBSD sources, so filter out its
 # stale object and target-vector references for MINIX builds.
 G_libbfd_la_DEPENDENCIES:=	${G_libbfd_la_DEPENDENCIES:Ni386netbsd.lo}
 G_TDEFAULTS:=	${G_TDEFAULTS:S/,&i386_aout_nbsd_vec//}
 G_HAVEVECS:=	${G_HAVEVECS:N-DHAVE_i386_aout_nbsd_vec}
-.endif # defined(__MINIX)
+.endif # defined(__MINIX) && x86_64
 
 CPPFLAGS+=	-I${.CURDIR}/arch/${BFD_MACHINE_ARCH} -I${DIST}/include -I. \
 		-I${DIST}/bfd ${GCPPFLAGS:M-D*} ${GCPPFLAGS:M-I*:N-I.*} \
