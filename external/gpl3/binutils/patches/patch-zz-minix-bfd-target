@@ -1,0 +1,5 @@
+--- a/bfd/config.bfd
++++ b/bfd/config.bfd
+@@
+-      x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia)
++      x86_64-*-elf* | x86_64-*-rtems* | x86_64-*-fuchsia | x86_64-*-minix*)
