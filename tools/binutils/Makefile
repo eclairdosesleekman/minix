@@ -6,7 +6,7 @@ MODULE=		binutils
 
 GNUHOSTDIST=	${.CURDIR}/../../external/gpl3/binutils/dist
 
-BRANDING?=	\
+BRANDING?=\
 	--with-pkgversion="NetBSD Binutils nb1" \
 	--with-bugurl="http://www.NetBSD.org/support/send-pr.html" \
 	--with-lib-path="=/usr/lib" --with-sysroot
@@ -71,6 +71,11 @@ CONFIGURE_ARGS+= \
 # The MINIX target triple is x86_64-elf64-minix.  Add explicit
 # target-table entries before configure, independent of upstream line numbers.
 .if defined(__MINIX)
+# UEFI boot images are PE/COFF executables.  The MINIX target is ELF-only
+# by default, so explicitly add the GNU/MinGW BFD targets that provide
+# pei-x86-64 and pei-i386 output formats for objcopy.
+CONFIGURE_ARGS+= --enable-targets=x86_64-w64-mingw32,i686-w64-mingw32
+
 MINIX_TARGET_SETUP=${NETBSDSRCDIR}/external/gpl3/binutils/apply-minix-targets.sh
 
 .binutils_minix_target_done: ${fetch_done} ${MINIX_TARGET_SETUP}
@@ -112,7 +117,7 @@ native-binutils: .native/.configure_done
 			ac_cv_prog_cc_cross=yes \
 			ac_cv_func_strcoll_works=yes \
 			${HOST_SH} ${GNUHOSTDIST}/configure \
-			--build=`${GNUHOSTDIST}/config.guess` \
+			--build=\` ${GNUHOSTDIST}/config.guess\` \
 			--host=${MACHINE_GNU_PLATFORM} \
 			${BASE_CONFIGURE_ARGS} \
 		)
