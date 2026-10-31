@@ -23,7 +23,11 @@ get_libbfd () {
 		getvars bfd/Makefile \
 			libbfd_la_DEPENDENCIES libbfd_la_OBJECTS DEFS \
 			INCLUDES TDEFAULTS HAVEVECS
-	} | write_mk external/gpl3/binutils/lib/libbfd/arch/$MACHINE_ARCH/defs.mk
+	} | sed \
+		-e 's/ i386netbsd\.lo/ /g' \
+		-e 's/,&i386_aout_nbsd_vec//g' \
+		-e 's/ -DHAVE_i386_aout_nbsd_vec//g' \
+	| write_mk external/gpl3/binutils/lib/libbfd/arch/$MACHINE_ARCH/defs.mk
 
 	write_c external/gpl3/binutils/lib/libbfd/arch/$MACHINE_ARCH/bfd.h <$_TMPDIR/bfd/bfd.h
 	write_c external/gpl3/binutils/lib/libbfd/arch/$MACHINE_ARCH/bfdver.h <$_TMPDIR/bfd/bfdver.h
