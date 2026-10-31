@@ -63,3 +63,9 @@ if [ -f texinfo/lib/mkstemp.c ] &&
     grep -Fq 'int __gen_tempname ();' texinfo/lib/mkstemp.c; then
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-mkstemp-prototype)
 fi
+
+# Add the standard allocation/free declarations to already-fetched makeinfo.
+if [ -f texinfo/makeinfo/cmds.c ] &&
+    ! grep -Fq '#include <stdlib.h>' texinfo/makeinfo/cmds.c; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-makeinfo-cmds-stdlib)
+fi
