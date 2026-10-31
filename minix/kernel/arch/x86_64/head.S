@@ -23,6 +23,7 @@
 
 IMPORT(pre_init)
 IMPORT(kmain)
+IMPORT(direct_com_print)
 
 /*
  * Multiboot2 header — x86_64 UEFI kernel.
@@ -100,6 +101,10 @@ boot_saved_magic:
 .balign 8
 boot_saved_info:
 	.quad	0
+.Lpre_init_returned_msg:
+	.asciz	"MINIX/amd64: pre_init returned\r\n"
+.Lhigh_stack_ready_msg:
+	.asciz	"MINIX/amd64: high kernel stack ready\r\n"
 
 /*===========================================================================*/
 /*  EFI-64 entry — bootloader has already set up 64-bit long mode           */
@@ -137,14 +142,26 @@ multiboot_entry64_efi:
 	movq	boot_saved_info(%rip), %rsi
 	call	_C_LABEL(pre_init)
 
+	/* Preserve the boot-info pointer while tracing the return path. */
+	movq	%rax, %r12
+	leaq	.Lpre_init_returned_msg(%rip), %rdi
+	call	_C_LABEL(direct_com_print)
+	movq	%r12, %rax
+
 	/*
 	 * pre_init() has installed the MINIX page tables.  The kernel image
 	 * is mapped at its high virtual address now, so switch to the normal
-	 * high kernel stack before entering kmain().
+	 * high kernel stack before entering kmain().  mpx.S aligns this stack
+	 * to K_STACK_SIZE; enforce the SysV AMD64 16-byte call-site alignment
+	 * here as well.
 	 */
 	movq	$k_initial_stktop, %rsp
+	andq	$-16, %rsp
 	xorq	%rbp, %rbp
-	movq	%rax, %rdi
+	movq	%rax, %r12
+	leaq	.Lhigh_stack_ready_msg(%rip), %rdi
+	call	_C_LABEL(direct_com_print)
+	movq	%r12, %rdi
 
 	/* The physical-to-high-virtual displacement does not fit rel32. */
 	movabsq	$_C_LABEL(kmain), %rax
