@@ -13,8 +13,8 @@ sources required by the toolchain before building.
 Build the release sets first, then create the ISO:
 
 ```sh
-./build.sh -U -u -m amd64 -O ../build release
 sudo apt install xorriso
+./build.sh -U -u -m amd64 -O ../build release
 ./build.sh -U -u -m amd64 -O ../build iso-image
 ```
 
