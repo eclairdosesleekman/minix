@@ -33,11 +33,12 @@ if [ ! -d dist ]; then
 
 	(
 		cd dist
-		# Keep libiberty/testsuite: libiberty/configure generates
-		# testsuite/Makefile from testsuite/Makefile.in even when tests
-		# are not run.  Removing it makes config.status fail.
+		# Keep both testsuite source directories needed by ordinary builds:
+		# libiberty/configure needs testsuite/Makefile.in, while the
+		# binutils all target builds testsuite/gentestdlls from gentestdlls.c.
 		find . -type d -name testsuite \
-		    ! -path './libiberty/testsuite' -prune -exec rm -fr {} +
+		    ! -path './libiberty/testsuite' \
+		    ! -path './binutils/testsuite' -prune -exec rm -fr {} +
 		find . -name .gitignore -delete
 		# Apply optional downstream patches when the directory is present.
 		if [ -d ../patches ]; then
@@ -50,18 +51,26 @@ if [ ! -d dist ]; then
 fi
 
 # Older fetch.sh versions removed every testsuite directory. Restore the
-# one required by libiberty from the original archive for already-fetched
-# source trees too.
-if [ ! -f dist/libiberty/testsuite/Makefile.in ]; then
-	fetch_archive
-	mkdir -p dist/libiberty
-	tar -oxjf binutils-2.34.tar.bz2 -C dist --strip-components=1 \
-	    binutils-2.34/libiberty/testsuite
-fi
+# source directories needed for normal binutils builds from the archive.
+restore_testsuite()
+{
+	subdir=$1
+	required_file=$2
 
-if [ ! -f dist/libiberty/testsuite/Makefile.in ]; then
-	echo "binutils fetch: libiberty/testsuite/Makefile.in is missing" >&2
-	exit 1
-fi
+	if [ ! -f "dist/$subdir/$required_file" ]; then
+		fetch_archive
+		mkdir -p "dist/$subdir"
+		tar -oxjf binutils-2.34.tar.bz2 -C dist --strip-components=1 \
+		    "binutils-2.34/$subdir"
+	fi
+
+	if [ ! -f "dist/$subdir/$required_file" ]; then
+		echo "binutils fetch: required source dist/$subdir/$required_file is missing" >&2
+		exit 1
+	fi
+}
+
+restore_testsuite libiberty/testsuite Makefile.in
+restore_testsuite binutils/testsuite gentestdlls.c
 
 exit 0
