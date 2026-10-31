@@ -79,7 +79,7 @@ MINIX_BFD_CONFIG=${GNUHOSTDIST}/bfd/config.bfd
 MINIX_GAS_CONFIG=${GNUHOSTDIST}/gas/configure.tgt
 MINIX_LD_CONFIG=${GNUHOSTDIST}/ld/configure.tgt
 
-.binutils_minix_target_done: ${fetch_done} ${MINIX_BFD_CONFIG} ${MINIX_GAS_CONFIG} ${MINIX_LD_CONFIG} \
+.binutils_minix_target_done: ${fetch_done} \
     ${MINIX_BFD_TARGET_PATCH} ${MINIX_GAS_TARGET_PATCH} ${MINIX_LD_TARGET_PATCH}
 	@if ! grep -Fq 'x86_64-*-minix*' ${MINIX_BFD_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_BFD_TARGET_PATCH}); fi
 	@if ! grep -Fq 'i386-*-minix*' ${MINIX_GAS_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_GAS_TARGET_PATCH}); fi
