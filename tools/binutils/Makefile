@@ -68,6 +68,27 @@ CONFIGURE_ARGS+= \
 .endif # defined(__MINIX)
 .include "${.CURDIR}/../Makefile.gnuhost"
 
+# The MINIX target triple is x86_64-elf64-minix.  Binutils 2.34
+# needs explicit target-table entries for BFD, GAS, and ld.
+.if defined(__MINIX)
+MINIX_BFD_TARGET_PATCH=${NETBSDSRCDIR}/external/gpl3/binutils/patches/patch-zz-minix-bfd-target
+MINIX_GAS_TARGET_PATCH=${NETBSDSRCDIR}/external/gpl3/binutils/patches/patch-zz-minix-gas-target
+MINIX_LD_TARGET_PATCH=${NETBSDSRCDIR}/external/gpl3/binutils/patches/patch-zz-minix-ld-target
+
+MINIX_BFD_CONFIG=${GNUHOSTDIST}/bfd/config.bfd
+MINIX_GAS_CONFIG=${GNUHOSTDIST}/gas/configure.tgt
+MINIX_LD_CONFIG=${GNUHOSTDIST}/ld/configure.tgt
+
+.binutils_minix_target_done: ${fetch_done} \
+    ${MINIX_BFD_TARGET_PATCH} ${MINIX_GAS_TARGET_PATCH} ${MINIX_LD_TARGET_PATCH}
+	@if ! grep -Fq 'x86_64-*-minix*' ${MINIX_BFD_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_BFD_TARGET_PATCH}); fi
+	@if ! grep -Fq 'i386-*-minix*' ${MINIX_GAS_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_GAS_TARGET_PATCH}); fi
+	@if ! grep -Fq 'x86_64-*-minix*' ${MINIX_LD_CONFIG}; then (cd ${GNUHOSTDIST} && patch -p1 < ${MINIX_LD_TARGET_PATCH}); fi
+	@touch ${.TARGET}
+
+.configure_done: .binutils_minix_target_done
+.endif # defined(__MINIX)
+
 CCADDFLAGS=	-I${GNUHOSTDIST}/include  -I${DESTDIR}/usr/include
 CCADDFLAGS+=	-B${DESTDIR}/usr/lib/
 CCADDFLAGS+=	${HOST_CPPFLAGS}
