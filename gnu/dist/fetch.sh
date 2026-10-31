@@ -51,3 +51,9 @@ if [ -f texinfo/lib/system.h ] &&
     grep -Fq 'extern char *getenv ();' texinfo/lib/system.h; then
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-glibc-getenv)
 fi
+
+# Add the standard allocation and abort declarations to already-fetched trees.
+if [ -f texinfo/lib/xmalloc.c ] &&
+    ! grep -Fq '#include <stdlib.h>' texinfo/lib/xmalloc.c; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-xmalloc-stdlib)
+fi
