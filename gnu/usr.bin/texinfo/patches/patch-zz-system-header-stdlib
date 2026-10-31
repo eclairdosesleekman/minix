@@ -1,0 +1,10 @@
+--- a/lib/system.h
++++ b/lib/system.h
+@@ -74,6 +74,9 @@
+ #include <stdlib.h>
+ #undef getopt
+ #else
++/* Provide standard allocation declarations when STDC_HEADERS is unavailable. */
++#include <stdlib.h>
+ extern char *getenv (const char *);
+ #endif
