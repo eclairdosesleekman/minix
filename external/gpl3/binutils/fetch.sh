@@ -33,12 +33,13 @@ if [ ! -d dist ]; then
 
 	(
 		cd dist
-		# Keep both testsuite source directories needed by ordinary builds:
-		# libiberty/configure needs testsuite/Makefile.in, while the
-		# binutils all target builds testsuite/gentestdlls from gentestdlls.c.
+		# Keep the testsuite source directories required by enabled build
+		# components: libiberty/configure needs Makefile.in, binutils builds
+		# testsuite/gentestdlls, and Gold configures and builds its testsuite.
 		find . -type d -name testsuite \
 		    ! -path './libiberty/testsuite' \
-		    ! -path './binutils/testsuite' -prune -exec rm -fr {} +
+		    ! -path './binutils/testsuite' \
+		    ! -path './gold/testsuite' -prune -exec rm -fr {} +
 		find . -name .gitignore -delete
 		# Apply optional downstream patches when the directory is present.
 		if [ -d ../patches ]; then
@@ -70,7 +71,9 @@ restore_testsuite()
 	fi
 }
 
+# Gold's configure and default build both recurse into its testsuite.
 restore_testsuite libiberty/testsuite Makefile.in
 restore_testsuite binutils/testsuite gentestdlls.c
+restore_testsuite gold/testsuite Makefile.in
 
 exit 0
