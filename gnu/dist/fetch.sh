@@ -54,7 +54,7 @@ fi
 
 # Ensure standard allocation declarations are available even without STDC_HEADERS.
 if [ -f texinfo/lib/system.h ] &&
-    ! grep -Fq 'Provide standard allocation declarations when STDC_HEADERS is unavailable.' texinfo/lib/system.h; then
+    ! grep -Fq 'Include standard allocation declarations for all host configurations.' texinfo/lib/system.h; then
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-system-header-stdlib)
 fi
 
