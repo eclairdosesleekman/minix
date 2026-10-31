@@ -57,3 +57,9 @@ if [ -f texinfo/lib/xmalloc.c ] &&
     ! grep -Fq '#include <stdlib.h>' texinfo/lib/xmalloc.c; then
 	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-xmalloc-stdlib)
 fi
+
+# Correct the obsolete two-argument __gen_tempname declaration in old Texinfo.
+if [ -f texinfo/lib/mkstemp.c ] &&
+    grep -Fq 'int __gen_tempname ();' texinfo/lib/mkstemp.c; then
+	(cd texinfo && patch -p1 < ../../usr.bin/texinfo/patches/patch-zz-mkstemp-prototype)
+fi
