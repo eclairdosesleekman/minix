@@ -1,5 +1,5 @@
 /* MINIX version */
-/* Same as elf_x86_64_efi.lds, except for OUTPUT_FORMAT below - KEEP IN SYNC */
+/* MINIX variant: explicit program headers are required for the EFI link. */
 /* The MINIX target triple uses BFD's generic x86-64 ELF vector. */
 OUTPUT_FORMAT("elf64-x86-64", "elf64-x86-64", "elf64-x86-64")
 OUTPUT_ARCH(i386:x86-64)
