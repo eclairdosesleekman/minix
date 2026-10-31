@@ -21,7 +21,7 @@ TEXINFO_XEXIT_C=${GNUHOSTDIST}/lib/xexit.c
 	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_XEXIT_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_XEXIT_PATCH}); fi
 	@touch ${.TARGET}
 
-.configure_done: .texinfo_glibc_patch_done
+.configure_done: .texinfo_host_compat_done
 .endif
 
 .if !empty(.MAKE.OS:M*CYGWIN*) && target(install)
