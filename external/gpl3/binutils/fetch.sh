@@ -38,7 +38,8 @@ if [ ! -d dist ]; then
 		# binutils all target builds testsuite/gentestdlls from gentestdlls.c.
 		find . -type d -name testsuite \
 		    ! -path './libiberty/testsuite' \
-		    ! -path './binutils/testsuite' -prune -exec rm -fr {} +
+		    ! -path './binutils/testsuite' \
+		    ! -path './gold/testsuite' -prune -exec rm -fr {} +
 		find . -name .gitignore -delete
 		# Apply optional downstream patches when the directory is present.
 		if [ -d ../patches ]; then
@@ -70,7 +71,9 @@ restore_testsuite()
 	fi
 }
 
+# Gold's configure and default build both recurse into its testsuite.
 restore_testsuite libiberty/testsuite Makefile.in
 restore_testsuite binutils/testsuite gentestdlls.c
+restore_testsuite gold/testsuite Makefile.in
 
 exit 0
