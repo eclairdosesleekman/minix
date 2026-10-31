@@ -1,7 +1,6 @@
 --- a/lib/system.h
 +++ b/lib/system.h
-@@ -42,2 +42,4 @@
- #include <stdio.h>
-+/* Include standard allocation declarations for all host configurations. */
+@@ -67,1 +67,3 @@
++/* Ensure standard allocation declarations are available without STDC_HEADERS. */
 +#include <stdlib.h>
- #include <sys/types.h>
+ extern char *getenv (const char *);
