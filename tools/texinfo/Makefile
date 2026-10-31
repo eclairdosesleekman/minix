@@ -52,7 +52,7 @@ TEXINFO_HTML_C=${GNUHOSTDIST}/makeinfo/html.c
     ${TEXINFO_DEFUN_PATCH} ${TEXINFO_FILES_PATCH} ${TEXINFO_FLOAT_PATCH} ${TEXINFO_FOOTNOTE_PATCH} ${TEXINFO_HTML_PATCH} ${TEXINFO_C23_PATCH}
 	@if grep -Fq 'extern int strcasecmp ();' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_GLIBC_PATCH}); fi
 	@if grep -Fq 'extern char *getenv ();' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_GETENV_PATCH}); fi
-	@if ! grep -Fq 'Include standard allocation declarations for all host configurations.' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_SYSTEM_STDLIB_PATCH}); fi
+	@if ! grep -Fq 'Ensure standard allocation declarations are available without STDC_HEADERS.' ${TEXINFO_SYSTEM_H}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_SYSTEM_STDLIB_PATCH}); fi
 	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_XEXIT_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_XEXIT_PATCH}); fi
 	@if ! grep -Fq '#include <stdlib.h>' ${TEXINFO_XMALLOC_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_XMALLOC_PATCH}); fi
 	@if grep -Fq 'int __gen_tempname ();' ${TEXINFO_MKSTEMP_C}; then (cd ${GNUHOSTDIST} && patch -p1 < ${TEXINFO_MKSTEMP_PATCH}); fi
