@@ -205,6 +205,8 @@ void get_parameters_mb2(vir_bytes mbi_addr, kinfo_t *cbi)
 	phys_bytes kernbase = (phys_bytes) &_kern_phys_base,
 	kernsize = (phys_bytes) &_kern_size;
 	
+	direct_com_print("MB2: get_parameters_mb2 entered\r\n");
+
 	/* Kernel may use memory */
 	kernel_may_alloc = 1;
 
@@ -259,6 +261,7 @@ void get_parameters_mb2(vir_bytes mbi_addr, kinfo_t *cbi)
 		tag = (struct multiboot_tag *) ((multiboot_uint8_t *) tag
 			+ ((tag->size + 7) & ~7));
 	}
+	direct_com_print("MB2: tag scan complete\r\n");
 	
 	/*
 	 * With EFI boot services active, some boot loaders omit the standard
@@ -271,6 +274,7 @@ void get_parameters_mb2(vir_bytes mbi_addr, kinfo_t *cbi)
 		do_tag_efi_mmap(cbi, efi_mmap);
 	if (cbi->mem_high_phys == 0)
 		panic("Multiboot2: no usable memory map (type 6 or 17)");
+	direct_com_print("MB2: usable memory map found\r\n");
 
     /* let higher levels know what we are booting on */
     mb_set_param(cbi->param_buf, ARCHVARNAME, (char *)get_board_arch_name(BOARD_ID_INTEL), cbi);
@@ -320,6 +324,7 @@ void get_parameters_mb2(vir_bytes mbi_addr, kinfo_t *cbi)
 			cbi->module_list[m].mod_start,
 			cbi->module_list[m].mod_end);
 	}
+	direct_com_print("MB2: modules checked against kernel and reserved\r\n");
 
 	/* The legacy 0xA0000-0x100000 region (VGA framebuffer + option/BIOS
 	 * ROM shadow) is not usable RAM on PC platforms even when the firmware
@@ -328,5 +333,6 @@ void get_parameters_mb2(vir_bytes mbi_addr, kinfo_t *cbi)
 	 * stays full of garbage and corrupts whatever structure lands on it
 	 * (slabs, page tables, user heaps).  Carve it out of usable memory. */
 	cut_memmap(cbi, 0xA0000, 0x100000);
+	direct_com_print("MB2: memory map preparation complete\r\n");
 }
 

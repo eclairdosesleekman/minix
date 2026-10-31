@@ -100,12 +100,20 @@ int overlaps(kinfo_module_t *mod, int n, int cmp_mod)
 
 kinfo_t *pre_init(u32_t magic, vir_bytes mbi_addr)
 {
-	/* Get our own copy of the boot parameters pointed to by mbi_addr.
-	 * Here we find out whether we should do serial output.
+	/*
+	 * Keep a serial breadcrumb trail until the normal console is ready.
+	 * A fault here otherwise looks like an unexplained EFI reboot because
+	 * the framebuffer/IDT have not yet been installed by MINIX.
 	 */
-	if (magic == MULTIBOOT2_BOOTLOADER_MAGIC)
+	direct_com_init();
+	direct_com_print("MINIX/amd64: pre_init entered\r\n");
+
+	/* Get our own copy of the boot parameters pointed to by mbi_addr. */
+	if (magic == MULTIBOOT2_BOOTLOADER_MAGIC) {
+		direct_com_print("MINIX/amd64: parsing Multiboot2 information\r\n");
 		get_parameters_mb2(mbi_addr, &kinfo);
-	else
+		direct_com_print("MINIX/amd64: Multiboot2 information parsed\r\n");
+	} else
 		panic("Invalid multiboot2 magic: 0x%x\n", magic);
 
 	/*
@@ -128,11 +136,17 @@ kinfo_t *pre_init(u32_t magic, vir_bytes mbi_addr)
 			write_cr4(cr4 & ~I386_CR4_PGE);
 	}
 
+	direct_com_print("MINIX/amd64: clearing bootstrap page tables\r\n");
 	pg_clear();
+	direct_com_print("MINIX/amd64: building identity map\r\n");
 	pg_identity(&kinfo);
+	direct_com_print("MINIX/amd64: mapping high kernel\r\n");
 	kinfo.freepde_start = pg_mapkernel();
+	direct_com_print("MINIX/amd64: loading CR3\r\n");
 	pg_load();
+	direct_com_print("MINIX/amd64: enabling write protection\r\n");
 	vm_enable_paging();
+	direct_com_print("MINIX/amd64: pre_init complete\r\n");
 
 	/* Done, return boot info so it can be passed to kmain(). */
 	return &kinfo;
