@@ -7,14 +7,14 @@
 /* Pass irq as first argument per AMD64 ABI (%edi). */
 #define APIC_IRQ_HANDLER(irq)	\
 	movl	$irq, %edi					;\
-	call	_C_LABEL(irq_handle)				;
+	CALL_C_ALIGNED(_C_LABEL(irq_handle))				;
 
 /*
  * Call the LAPIC interrupt handler function, then signal EOI by writing 0
  * to the address stored in lapic_eoi_addr (a 64-bit vir_bytes global).
  */
 #define LAPIC_INTR_HANDLER(func)	\
-	call	func						;\
+	CALL_C_ALIGNED(func)				;\
 	movq	_C_LABEL(lapic_eoi_addr)(%rip), %rax		;\
 	movl	$0, (%rax)					;
 
@@ -41,14 +41,14 @@ ENTRY(apic_hwint##irq)							\
 	movq	%rbp, %rdi	/* context_stop(proc_ptr) */		;\
 	push	%rbp							;\
 	movq	$0, %rbp	/* for stack trace */			;\
-	call	_C_LABEL(context_stop)					;\
+	CALL_C_ALIGNED(_C_LABEL(context_stop))					;\
 	pop	%rbp							;\
 	APIC_IRQ_HANDLER(irq)						;\
 	jmp	_C_LABEL(switch_to_user)				;\
 									\
 0:									\
 	pushaq								;\
-	call	_C_LABEL(context_stop_idle)				;\
+	CALL_C_ALIGNED(_C_LABEL(context_stop_idle))				;\
 	APIC_IRQ_HANDLER(irq)						;\
 	CLEAR_IF(KERNEL_IRQ_RFLAGS_OFF(%rsp))				;\
 	popaq								;\
@@ -65,14 +65,14 @@ ENTRY(apic_hwint##irq)							\
 	movq	%rbp, %rdi	/* context_stop(proc_ptr) */		;\
 	push	%rbp							;\
 	movq	$0, %rbp	/* for stack trace */			;\
-	call	_C_LABEL(context_stop)					;\
+	CALL_C_ALIGNED(_C_LABEL(context_stop))					;\
 	pop	%rbp							;\
 	LAPIC_INTR_HANDLER(func)					;\
 	jmp	_C_LABEL(switch_to_user)				;\
 									\
 0:									\
 	pushaq								;\
-	call	_C_LABEL(context_stop_idle)				;\
+	CALL_C_ALIGNED(_C_LABEL(context_stop_idle))				;\
 	LAPIC_INTR_HANDLER(func)					;\
 	CLEAR_IF(KERNEL_IRQ_RFLAGS_OFF(%rsp))				;\
 	popaq								;\
@@ -108,7 +108,7 @@ lapic_intr_dummy_handler_msg:
 
 /*
  * AMD64 ABI: arg1 (fmt string) in %rdi, arg2 (vect) in %esi.
- * Each handler is ≤ 19 bytes; .balign 32 pads to the 32-byte stride used
+ * Each handler is ≤ 23 bytes; .balign 32 pads to the 32-byte stride used
  * by lapic_set_dummy_handlers().
  */
 #define lapic_intr_dummy_handler(vect)					\
