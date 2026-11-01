@@ -34,7 +34,8 @@
 
 static irq_hook_t pic_timer_hook;		/* interrupt handler hook */
 
-static unsigned probe_ticks;
+/* Updated by the PIT IRQ handler and polled during CPU frequency calibration. */
+static volatile unsigned probe_ticks;
 static u64_t tsc0, tsc1;
 #define PROBE_TICKS	(system_hz / 10)
 
