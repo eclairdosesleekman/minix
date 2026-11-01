@@ -16,6 +16,15 @@
  */
 #define cpuid	(((reg_t *)(((vir_bytes)get_stack_frame() + (K_STACK_SIZE - 1)) \
 						& ~(K_STACK_SIZE - 1)))[-1])
+
+/*
+ * switch_k_stack() jumps to its continuation; it does not push a return
+ * address as CALL would.  Leave one word below the two per-CPU words
+ * reserved by tss_init(), so a C continuation starts with the SysV AMD64
+ * ABI stack alignment (RSP % 16 == 8).
+ */
+#define X86_STACK_SWITCH_SP(cpu)	\
+	((char *)get_k_stack_top(cpu) - (3 * sizeof(reg_t)))
 /*
  * If APIC or SMP is disabled in the boot monitor, finish booting on the
  * legacy PIC.  As in the normal SMP path, move off the EFI bootstrap stack
@@ -28,7 +37,7 @@
 	  setup_sysenter_syscall();		\
 	  bsp_cpu_id = 0;			\
 	  ncpus = 1;				\
-	  switch_k_stack((char *)get_k_stack_top(0) - (2 * sizeof(reg_t)), \
+	  switch_k_stack(X86_STACK_SWITCH_SP(0), \
 			  bsp_finish_booting);		\
 } while(0)
 
