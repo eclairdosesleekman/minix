@@ -15,6 +15,7 @@
 #include "apic_asm.h"
 #include "kernel/clock.h"
 #include "glo.h"
+#include "direct_utils.h"
 #include "hw_intr.h"
 
 #include "acpi.h"
@@ -442,6 +443,9 @@ static int spurious_irq_handler(irq_hook_t * UNUSED(hook))
 
 static void apic_calibrate_clocks(unsigned cpu)
 {
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: apic_calibrate_clocks entered\r\n");
+#endif
 	u32_t lvtt, val;
 	u64_t lapic_delta;
 	u64_t tsc_delta;
@@ -504,6 +508,9 @@ static void apic_calibrate_clocks(unsigned cpu)
 	while(probe_ticks < PROBE_TICKS) {
 		intr_enable();
 	}
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: APIC calibration probe complete\r\n");
+#endif
 
 	intr_disable();
 	BKL_LOCK();
@@ -516,6 +523,9 @@ static void apic_calibrate_clocks(unsigned cpu)
 	tsc_delta = tsc1 - tsc0;
 
 	lapic_bus_freq[cpuid] = system_hz * lapic_delta / (PROBE_TICKS - 1);
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: APIC bus frequency calculated\r\n");
+#endif
 	BOOT_VERBOSE(printf("APIC bus freq %llu MHz\n",
 				(unsigned long long)(lapic_bus_freq[cpuid] / 1000000)));
 	cpu_freq = (tsc_delta / (PROBE_TICKS - 1)) * make64(system_hz, 0);
@@ -1156,35 +1166,69 @@ int apic_send_init_ipi(unsigned cpu, phys_bytes trampoline)
 #ifndef CONFIG_SMP
 int apic_single_cpu_init(void)
 {
-	if (!cpu_feature_apic_on_chip())
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: apic_single_cpu_init entered\r\n");
+#endif
+	if (!cpu_feature_apic_on_chip()) {
+#if defined(__x86_64__)
+		direct_com_print("MINIX/amd64: CPU has no APIC feature\r\n");
+#endif
 		return 0;
+	}
 
 	lapic_addr = LOCAL_APIC_DEF_ADDR;
 	ioapic_enabled = 0;
 
 	if (!lapic_enable(0)) {
+#if defined(__x86_64__)
+		direct_com_print("MINIX/amd64: lapic_enable failed\r\n");
+#endif
 		lapic_addr = 0x0;
 		return 0;
 	}
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: lapic_enable done\r\n");
+#endif
 
 	bsp_lapic_id = apicid();
 	printf("Boot cpu apic id %d\n", bsp_lapic_id);
 
 	acpi_init();
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: APIC acpi_init done\r\n");
+	direct_com_print("MINIX/amd64: before detect_ioapics\r\n");
+#endif
 
 	if (!detect_ioapics()) {
+#if defined(__x86_64__)
+		direct_com_print("MINIX/amd64: no IOAPIC detected\r\n");
+#endif
 		lapic_disable();
 		lapic_addr = 0x0;
 		return 0;
 	}
 
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: IOAPIC detection done\r\n");
+	direct_com_print("MINIX/amd64: before ioapic_enable_all\r\n");
+#endif
 	ioapic_enable_all();
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: ioapic_enable_all done\r\n");
+#endif
 
 	if (ioapic_enabled)
 		machine.apic_enabled = 1;
 
+	/* Install APIC vectors only after IOAPIC routing is configured. */
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: before apic_idt_init\r\n");
+#endif
 	apic_idt_init(0); /* Not a reset ! */
 	idt_reload();
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: APIC IDT reload done\r\n");
+#endif
 	return 1;
 }
 #endif
