@@ -228,32 +228,17 @@ ENTRY(ipc_entry_sysenter)
 	jmp	ipc_entry_common
 
 /*
- * The 8259 may still deliver an IRQ with its legacy vector base (0x20/0x28)
- * during the UEFI-to-kernel handoff.  Vectors 0x20-0x23 are also MINIX
- * software-call vectors, so distinguish an actual ring-0 hardware interrupt
- * from a user software interrupt by inspecting the saved CS.
+ * Legacy 8259 IRQ vectors are kept separate from these software-call
+ * vectors, so the entry stubs never need to guess whether a CPL3 entry was
+ * an INT instruction or a pending hardware interrupt.
  */
-#define LEGACY_PIC_IRQ_KERNEL(irq) \
-	pushaq						;\
-	call	_C_LABEL(context_stop_idle)			;\
-	PIC_IRQ_HANDLER(irq)				;\
-	movb	$END_OF_INT, %al			;\
-	outb	$INT_CTL				;\
-	CLEAR_IF(KERNEL_IRQ_RFLAGS_OFF(%rsp))	;\
-	popaq						;\
-	iretq
-
 ENTRY(ipc_entry_softint_orig)
-	TEST_INT_IN_KERNEL(8, 0f)
 	SAVE_PROCESS_CTX(0, KTS_INT_ORIG)
 	jmp	ipc_entry_common
-0:	LEGACY_PIC_IRQ_KERNEL(1)
 
 ENTRY(ipc_entry_softint_um)
-	TEST_INT_IN_KERNEL(8, 0f)
 	SAVE_PROCESS_CTX(0, KTS_INT_UM)
 	jmp	ipc_entry_common
-0:	LEGACY_PIC_IRQ_KERNEL(3)
 
 /*
  * Common IPC dispatch.
@@ -295,16 +280,12 @@ ENTRY(ipc_entry_common)
 /*===========================================================================*/
 
 ENTRY(kernel_call_entry_orig)
-	TEST_INT_IN_KERNEL(8, 0f)
 	SAVE_PROCESS_CTX(0, KTS_INT_ORIG)
 	jmp	kernel_call_entry_common
-0:	LEGACY_PIC_IRQ_KERNEL(0)
 
 ENTRY(kernel_call_entry_um)
-	TEST_INT_IN_KERNEL(8, 0f)
 	SAVE_PROCESS_CTX(0, KTS_INT_UM)
 	jmp	kernel_call_entry_common
-0:	LEGACY_PIC_IRQ_KERNEL(2)
 
 /*
  * kernel_call(message *m_user, struct proc *caller):

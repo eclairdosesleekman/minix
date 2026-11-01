@@ -128,10 +128,15 @@ static struct gate_table_s gate_table_pic[] = {
 
 /*
  * Compatibility gates for the legacy 8259 vector base (0x20/0x28).
- * Vectors 0x20-0x23 overlap the software-call gates above and are handled
- * by their respective entry stubs after checking the saved CS.
+ * UEFI may leave legacy PIC interrupts pending across the handoff, so map
+ * all 16 legacy IRQ vectors to their hardware interrupt handlers. Software
+ * call gates use vectors outside this range.
  */
 static struct gate_table_s gate_table_legacy_pic[] = {
+	{ hwint00, LEGACY_VECTOR( 0), INTR_PRIVILEGE },
+	{ hwint01, LEGACY_VECTOR( 1), INTR_PRIVILEGE },
+	{ hwint02, LEGACY_VECTOR( 2), INTR_PRIVILEGE },
+	{ hwint03, LEGACY_VECTOR( 3), INTR_PRIVILEGE },
 	{ hwint04, LEGACY_VECTOR( 4), INTR_PRIVILEGE },
 	{ hwint05, LEGACY_VECTOR( 5), INTR_PRIVILEGE },
 	{ hwint06, LEGACY_VECTOR( 6), INTR_PRIVILEGE },

@@ -28,11 +28,15 @@
 #define BREAKPOINT_VECTOR  3	/* software breakpoint */
 #define OVERFLOW_VECTOR    4	/* from INTO */
 
-/* Fixed system call vector. */
-#define KERN_CALL_VECTOR_ORIG  32 /* system calls are made with int SYSVEC */
-#define IPC_VECTOR_ORIG        33 /* interrupt vector for ipc */
-#define KERN_CALL_VECTOR_UM    34 /* user-mapped equivalent */
-#define IPC_VECTOR_UM          35 /* user-mapped equivalent */
+/*
+ * Software-call vectors must not overlap the legacy 8259 range (0x20-0x2f)
+ * or the remapped PIC ranges (0x50-0x57 and 0x70-0x77). UEFI may leave a
+ * legacy PIC interrupt pending when control is handed to MINIX.
+ */
+#define KERN_CALL_VECTOR_ORIG  0x40 /* system calls are made with int SYSVEC */
+#define IPC_VECTOR_ORIG        0x41 /* interrupt vector for ipc */
+#define KERN_CALL_VECTOR_UM    0x42 /* user-mapped equivalent */
+#define IPC_VECTOR_UM          0x43 /* user-mapped equivalent */
 
 /* Hardware interrupt numbers. */
 #ifndef USE_APIC
