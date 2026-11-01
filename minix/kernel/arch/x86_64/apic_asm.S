@@ -109,12 +109,14 @@ lapic_intr_dummy_handler_msg:
 /*
  * AMD64 ABI: arg1 (fmt string) in %rdi, arg2 (vect) in %esi.
  * Each handler is ≤ 23 bytes; .balign 32 pads to the 32-byte stride used
- * by lapic_set_dummy_handlers().
+ * by lapic_set_dummy_handlers().  panic() does not return, so align the stack
+ * directly here without saving the interrupted RSP; this keeps the stub small.
  */
 #define lapic_intr_dummy_handler(vect)					\
 	movl	$vect, %esi					;	\
 	leaq	lapic_intr_dummy_handler_msg(%rip), %rdi	;	\
-	call	_C_LABEL(panic)					;	\
+	andq	$-16, %rsp				;	\
+	call	_C_LABEL(panic)				;	\
 1:	jmp	1b;
 
 #define LAPIC_INTR_DUMMY_HANDLER(vect)			\
