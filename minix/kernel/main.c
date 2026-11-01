@@ -37,10 +37,10 @@ static void announce(void);
 
 void bsp_finish_booting(void)
 {
+  int i;
 #if defined(__x86_64__)
   direct_com_print("MINIX/amd64: bsp_finish_booting entered\r\n");
 #endif
-  int i;
 #if SPROFILE
   sprofiling = 0;      /* we're not profiling until instructed to */
 #endif /* SPROFILE */
@@ -137,7 +137,13 @@ void bsp_finish_booting(void)
   /* Kernel may no longer use bits of memory as VM will be running soon */
   kernel_may_alloc = 0;
 #ifdef CONFIG_SMP
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: before wait_for_APs_to_finish_booting\r\n");
+#endif
   wait_for_APs_to_finish_booting();
+#if defined(__x86_64__)
+  direct_com_print("MINIX/amd64: wait_for_APs_to_finish_booting done\r\n");
+#endif
 #endif
 
 #if defined(__x86_64__)
@@ -410,12 +416,25 @@ void kmain(kinfo_t *local_cbi)
 #ifdef CONFIG_SMP
   if (config_no_apic) {
 	  DEBUGBASIC(("APIC disabled, disables SMP, using legacy PIC\n"));
+#if defined(__x86_64__)
+	  direct_com_print("MINIX/amd64: SMP fallback because APIC is disabled\r\n");
+#endif
 	  smp_single_cpu_fallback();
   } else if (config_no_smp) {
 	  DEBUGBASIC(("SMP disabled, using legacy PIC\n"));
+#if defined(__x86_64__)
+	  direct_com_print("MINIX/amd64: SMP fallback because SMP is disabled\r\n");
+#endif
 	  smp_single_cpu_fallback();
   } else {
+#if defined(__x86_64__)
+	  direct_com_print("MINIX/amd64: entering smp_init\r\n");
+#endif
 	  smp_init();
+#if defined(__x86_64__)
+	  direct_com_print("MINIX/amd64: smp_init returned\r\n");
+	  direct_com_print("MINIX/amd64: entering bsp_finish_booting\r\n");
+#endif
 	  /*
 	   * if smp_init() returns it means that it failed and we try to finish
 	   * single CPU booting
