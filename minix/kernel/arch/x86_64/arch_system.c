@@ -18,6 +18,7 @@
 #include "oxpcie.h"
 
 #include "glo.h"
+#include "direct_utils.h"
 
 #ifdef USE_APIC
 #include "apic.h"
@@ -266,7 +267,13 @@ void arch_init(void)
 	 * use stack 0 and cpu id 0 on a single processor machine, SMP
 	 * configuration does this in smp_init() for all cpus at once
 	 */
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: arch_init before tss_init\r\n");
+#endif
 	tss_init(0, get_k_stack_top(0));
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: tss_init done\r\n");
+#endif
 #else
 	/*
 	 * Under SMP the BSP runs the whole bootstrap on the separate boot stack
@@ -285,19 +292,40 @@ void arch_init(void)
 #endif
 
 #if !CONFIG_OXPCIE
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: before ser_init\r\n");
+#endif
 	ser_init();
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: ser_init done\r\n");
+#endif
 #endif
 
 #ifdef USE_ACPI
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: arch_init before acpi_init\r\n");
+#endif
 	acpi_init();
+#if defined(__x86_64__)
+	direct_com_print("MINIX/amd64: arch_init acpi_init done\r\n");
+#endif
 #endif
 
 #if defined(USE_APIC) && !defined(CONFIG_SMP)
 	if (config_no_apic) {
 		DEBUGBASIC(("APIC disabled, using legacy PIC\n"));
 	}
-	else if (!apic_single_cpu_init()) {
-		DEBUGBASIC(("APIC not present, using legacy PIC\n"));
+	else {
+#if defined(__x86_64__)
+		direct_com_print("MINIX/amd64: arch_init entering apic_single_cpu_init\r\n");
+#endif
+		if (!apic_single_cpu_init()) {
+			DEBUGBASIC(("APIC not present, using legacy PIC\n"));
+		} else {
+#if defined(__x86_64__)
+			direct_com_print("MINIX/amd64: apic_single_cpu_init done\r\n");
+#endif
+		}
 	}
 #endif
 
