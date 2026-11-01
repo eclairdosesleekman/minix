@@ -17,6 +17,10 @@
 #define IRQ0_VECTOR     0x50   /* nice vectors to relocate IRQ0-7 to */
 #define IRQ8_VECTOR     0x70   /* no need to move IRQ8-15 */
 
+/* Legacy 8259 vectors can remain pending across the UEFI handoff. */
+#define LEGACY_IRQ0_VECTOR 0x20
+#define LEGACY_VECTOR(irq) (LEGACY_IRQ0_VECTOR + (irq))
+
 /* Interrupt vectors defined/reserved by processor. */
 #define DIVIDE_VECTOR      0	/* divide error */
 #define DEBUG_VECTOR       1	/* single step (trace) */
