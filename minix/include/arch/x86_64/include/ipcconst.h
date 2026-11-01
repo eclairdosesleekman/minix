@@ -1,6 +1,8 @@
 #ifndef _X86_64_IPCCONST_H_
 #define _X86_64_IPCCONST_H_
 
+#include <machine/interrupt.h>
+
 /*
  * IPC message payload size: 88 bytes (4 m_source + 4 m_type + 88 payload = 96
  * total), sized to hold 11 x 8-byte pointers/longs for the AMD64 ABI.
@@ -15,11 +17,12 @@
  */
 #define _ASSERT_MSG_SIZE(msg_type)	/* not enforced per-struct on x86_64 */
 
-#define KERVEC_INTR 32     /* syscall trap to kernel */
-#define IPCVEC_INTR 33     /* ipc trap to kernel  */
+/* Keep the software-call vectors in sync with machine/interrupt.h. */
+#define KERVEC_INTR KERN_CALL_VECTOR_ORIG
+#define IPCVEC_INTR IPC_VECTOR_ORIG
 
-#define KERVEC_UM 34     /* syscall trap to kernel, user-mapped code */
-#define IPCVEC_UM 35     /* ipc trap to kernel, user-mapped code  */
+#define KERVEC_UM KERN_CALL_VECTOR_UM
+#define IPCVEC_UM IPC_VECTOR_UM
 
 #define IPC_STATUS_REG		bx
 
