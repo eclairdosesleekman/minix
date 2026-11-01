@@ -1,6 +1,10 @@
 #include <minix/ipcconst.h>
 #include <machine/asm.h>
 
+#if !defined(__x86_64__) || IPCVEC_INTR != 0x41
+#error "x86_64 kerninfo stub requires IPC vector 0x41"
+#endif
+
 /* void ipc_minix_kerninfo(void **result);
  *
  * x86_64 IPC ABI: rdi=call_nr, rsi=endpoint, rdx=msg_ptr.
