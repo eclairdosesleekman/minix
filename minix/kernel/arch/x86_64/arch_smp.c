@@ -256,8 +256,8 @@ static void ap_finish_booting(void)
 
 void smp_ap_boot(void)
 {
-	switch_k_stack((char *)get_k_stack_top(__ap_id) -
-			X86_STACK_TOP_RESERVED, ap_finish_booting);
+	switch_k_stack(X86_STACK_SWITCH_SP(__ap_id),
+			ap_finish_booting);
 }
 
 static void smp_reinit_vars(void)
@@ -349,8 +349,8 @@ void smp_init (void)
 
 	BOOT_VERBOSE(printf("SMP initialized\n"));
 
-	switch_k_stack((char *)get_k_stack_top(bsp_cpu_id) -
-			X86_STACK_TOP_RESERVED, smp_start_aps);
+	switch_k_stack(X86_STACK_SWITCH_SP(bsp_cpu_id),
+			smp_start_aps);
 	
 	return;
 

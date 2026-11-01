@@ -476,7 +476,10 @@ ENTRY(reload_ds)
 /*				switch_k_stack				     */
 /*===========================================================================*/
 /* void switch_k_stack(void *new_sp, void (*continuation)(void))
- * rdi=new_sp, rsi=continuation */
+ * rdi=new_sp, rsi=continuation
+ *
+ * new_sp must already satisfy the SysV AMD64 function-entry ABI
+ * (RSP % 16 == 8), because this routine jumps to the continuation. */
 ENTRY(switch_k_stack)
 	movq	%rdi, %rsp		/* switch to new stack */
 	xorq	%rbp, %rbp		/* reset frame pointer */
