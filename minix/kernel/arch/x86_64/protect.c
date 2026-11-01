@@ -126,6 +126,27 @@ static struct gate_table_s gate_table_pic[] = {
 	{ NULL, 0, 0}
 };
 
+/*
+ * Compatibility gates for the legacy 8259 vector base (0x20/0x28).
+ * Vectors 0x20-0x23 overlap the software-call gates above and are handled
+ * by their respective entry stubs after checking the saved CS.
+ */
+static struct gate_table_s gate_table_legacy_pic[] = {
+	{ hwint04, LEGACY_VECTOR( 4), INTR_PRIVILEGE },
+	{ hwint05, LEGACY_VECTOR( 5), INTR_PRIVILEGE },
+	{ hwint06, LEGACY_VECTOR( 6), INTR_PRIVILEGE },
+	{ hwint07, LEGACY_VECTOR( 7), INTR_PRIVILEGE },
+	{ hwint08, LEGACY_VECTOR( 8), INTR_PRIVILEGE },
+	{ hwint09, LEGACY_VECTOR( 9), INTR_PRIVILEGE },
+	{ hwint10, LEGACY_VECTOR(10), INTR_PRIVILEGE },
+	{ hwint11, LEGACY_VECTOR(11), INTR_PRIVILEGE },
+	{ hwint12, LEGACY_VECTOR(12), INTR_PRIVILEGE },
+	{ hwint13, LEGACY_VECTOR(13), INTR_PRIVILEGE },
+	{ hwint14, LEGACY_VECTOR(14), INTR_PRIVILEGE },
+	{ hwint15, LEGACY_VECTOR(15), INTR_PRIVILEGE },
+	{ NULL, 0, 0}
+};
+
 static struct gate_table_s gate_table_exceptions[] = {
 	{ divide_error, DIVIDE_VECTOR, INTR_PRIVILEGE },
 	{ single_step_exception, DEBUG_VECTOR, INTR_PRIVILEGE },
@@ -298,6 +319,7 @@ void idt_init(void)
 {
 	idt_copy_vectors_pic();
 	idt_copy_vectors(gate_table_exceptions);
+	idt_copy_vectors(gate_table_legacy_pic);
 }
 
 struct desctableptr_s gdt_desc, idt_desc;
