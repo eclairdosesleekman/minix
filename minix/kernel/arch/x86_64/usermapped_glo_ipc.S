@@ -1,6 +1,10 @@
 #include <minix/ipcconst.h>
 #include <machine/asm.h>
 
+#if !defined(__x86_64__) || IPCVEC_UM != 0x43 || KERVEC_UM != 0x42
+#error "x86_64 user-mapped IPC stubs require vectors 0x43/0x42"
+#endif
+
 /* Put usermapped stubs in the section mapped into user address space. */
 #undef _ENTRY
 #define _ENTRY(x) \

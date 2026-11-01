@@ -1,6 +1,10 @@
 #include <minix/ipcconst.h>
 #include <machine/asm.h>
 
+#if !defined(__x86_64__) || IPCVEC_INTR != 0x41
+#error "x86_64 libc IPC stubs require IPC vector 0x41"
+#endif
+
 /*
  * Userspace IPC stubs for AMD64 (SysV ABI).
  *

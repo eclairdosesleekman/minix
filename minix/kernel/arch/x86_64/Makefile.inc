@@ -127,6 +127,12 @@ SRCS+=	do_iopenable.c do_readbios.c do_sdevio.c exception.c i8259.c oxpcie.c \
 	io_inb.S io_inl.S io_intr.S io_inw.S io_outb.S io_outl.S io_outw.S \
 	usermapped_glo_ipc.S
 
+# The user-mapped INT stubs bake their vectors into the kernel image.
+usermapped_glo_ipc.o: \
+	${NETBSDSRCDIR}/minix/include/minix/ipcconst.h \
+	${NETBSDSRCDIR}/minix/include/arch/x86_64/include/ipcconst.h \
+	${NETBSDSRCDIR}/minix/include/arch/x86_64/include/interrupt.h
+
 OBJS.kernel+=	${UNPAGED_OBJS}
 
 .ifdef CONFIG_SMP
