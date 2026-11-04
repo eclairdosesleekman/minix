@@ -1102,7 +1102,7 @@ cd9660_rename_filename(iso9660_disk *diskStructure, cd9660node *iter, int num,
 		dot = -1;
 		semi = -1;
 		/* Directory identifiers do not have a `;version' suffix. */
-		while (count < maxlength && *naming != '\\0') {
+		while (count < maxlength && *naming != '\0') {
 			if (*naming == '.')
 				dot = count;
 			else if (*naming == ';') {
@@ -1159,7 +1159,7 @@ cd9660_rename_filename(iso9660_disk *diskStructure, cd9660node *iter, int num,
 			powers = powers / 10;
 		}
 
-		while (*naming != '\\0' && *naming != ';' &&
+		while (*naming != '\0' && *naming != ';' &&
 		    numbts < maxlength) {
 			tmp[numbts] = *naming;
 			naming++;
