@@ -126,11 +126,7 @@ cat > "${DEVICE_SPEC}" <<'EOF_DEVICES'
 ./dev/console type=char device=netbsd,4,0 mode=600 uid=0 gid=0
 ./dev/null type=char device=netbsd,1,3 mode=666 uid=0 gid=0
 ./dev/zero type=char device=netbsd,1,5 mode=666 uid=0 gid=0
-EOF_DEVICES'
-. type=dir uid=0 gid=0 mode=0755
-./dev type=dir uid=0 gid=0 mode=0755
-./dev/console type=char device=netbsd,4,0 mode=600 uid=0 gid=0
-EOF_CONSOLE
+EOF_DEVICES
 
 workdir_add_kernel minix_default
 
