@@ -1074,10 +1074,9 @@ cd9660_rename_filename(iso9660_disk *diskStructure, cd9660node *iter, int num,
 	/* TODO : A LOT of chanes regarding 8.3 filenames */
 	if (diskStructure->isoLevel == 1)
 		maxlength = 8;
-	else if (diskStructure->isoLevel == 2)
-		maxlength = 31;
 	else
-		maxlength = ISO_FILENAME_MAXLENGTH_BEFORE_VERSION;
+		/* ISO 9660 Levels 2 and 3 use the same identifier length. */
+		maxlength = 31;
 
 	tmp = emalloc(ISO_FILENAME_MAXLENGTH_WITH_PADDING);
 
@@ -1774,8 +1773,16 @@ cd9660_convert_filename(iso9660_disk *diskStructure, const char *oldname,
 	cd9660_filename_conversion_functor conversion_function = 0;
 	if (diskStructure->isoLevel == 1)
 		conversion_function = &cd9660_level1_convert_filename;
-	else if (diskStructure->isoLevel == 2)
+	else if (diskStructure->isoLevel == 2 ||
+	    diskStructure->isoLevel == 3)
+		/*
+		 * ISO 9660 Level 3 adds multi-extent file support but retains
+		 * Level 2's file and directory identifier rules.
+		 */
 		conversion_function = &cd9660_level2_convert_filename;
+	else
+		errx(EXIT_FAILURE, "unsupported ISO level %d",
+		    diskStructure->isoLevel);
 	return (*conversion_function)(diskStructure, oldname, newname, is_file);
 }
 
