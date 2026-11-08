@@ -138,7 +138,7 @@ large_command_substitution_head() {
 	atf_set "timeout" "30"
 }
 large_command_substitution_body() {
-	file="large-command-substitution.$"
+	file="large-command-substitution.data"
 	printf '%8192s' '' > "$file"
 	output=$(cat "$file")
 	rm -f "$file"
