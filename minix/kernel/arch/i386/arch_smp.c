@@ -396,6 +396,7 @@ void smp_init (void)
 
 	if (!lapic_enable(bsp_cpu_id)) {
 		printf("ERROR : failed to initialize BSP Local APIC\n");
+		lapic_disable();
 		goto uniproc_fallback;
 	}
 
