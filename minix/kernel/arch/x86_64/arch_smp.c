@@ -233,7 +233,7 @@ exit_shutdown_aps:
 	lapic_disable();
 
 	ncpus = bsp_cpu_id + 1; /* retain the BSP's logical CPU ID */
-	lapic_addr = lapic_eoi_addr = 0;
+	lapic_addr = 0;
 	return;
 }
 
@@ -321,7 +321,7 @@ void smp_ap_boot(void)
 
 static void smp_reinit_vars(void)
 {
-	lapic_addr = lapic_eoi_addr = 0;
+	lapic_addr = 0;
 	ioapic_enabled = 0;
 
 	/*
