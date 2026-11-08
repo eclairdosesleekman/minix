@@ -1154,161 +1154,146 @@ int detect_ioapics(void)
 
 #ifdef CONFIG_SMP
 
-void apic_send_ipi(unsigned vector, unsigned cpu, int type)
+/*
+ * xAPIC serializes the two ICR halves through MMIO and reports delivery
+ * pending. x2APIC uses one atomic 64-bit ICR MSR, with the destination in
+ * the high half. Never touch the reserved x2APIC ICR2 MSR.
+ */
+static int lapic_wait_icr_idle(void)
 {
-	u32_t icr1, icr2;
+	unsigned timeout;
 
-	if (ncpus == 1)
-		/* no need of sending an IPI */
-		return;
-
-	while (lapic_read_icr1() & APIC_ICR_DELIVERY_PENDING) 
+	for (timeout = 0; timeout < APIC_ICR_TIMEOUT; timeout++) {
+		if (!(lapic_read(LAPIC_ICR1) & APIC_ICR_DELIVERY_PENDING))
+			return 0;
 		arch_pause();
+	}
+	return -1;
+}
 
-	icr1 = lapic_read_icr1() & 0xFFF0F800;
-	icr2 = lapic_read_icr2() & 0xFFFFFF;
+static int lapic_send_icr(u32_t destination, u32_t command)
+{
+	u32_t error;
 
-	switch (type) {
-		case APIC_IPI_DEST:
-			if (!cpu_is_ready(cpu))
-				return;
-			lapic_write_icr2(icr2 |	(cpuid2apicid[cpu] << 24));
-			lapic_write_icr1(icr1 |	APIC_ICR_DEST_FIELD | vector);
-			break;
-		case APIC_IPI_SELF:
-			lapic_write_icr2(icr2);
-			lapic_write_icr1(icr1 |	APIC_ICR_DEST_SELF | vector);
-			break;
-		case APIC_IPI_TO_ALL_BUT_SELF:
-			lapic_write_icr2(icr2);
-			lapic_write_icr1(icr1 |	APIC_ICR_DEST_ALL_BUT_SELF | vector);
-			break;
-		case APIC_IPI_TO_ALL:
-			lapic_write_icr2(icr2);
-			lapic_write_icr1(icr1 |	APIC_ICR_DEST_ALL | vector);
-			break;
-		default:
-			printf("WARNING : unknown send ipi type request\n");
+	if (!lapic_is_enabled())
+		return -1;
+
+	if (lapic_is_x2apic()) {
+		lapic_write(LAPIC_ESR, 0);
+		ia32_msr_write(IA32_X2APIC_MSR_ICR, destination, command);
+		arch_pause();
+		error = lapic_read(LAPIC_ESR);
+		lapic_write(LAPIC_ESR, 0);
+		return error ? -1 : 0;
 	}
 
+	/* xAPIC physical destinations are limited to the 8-bit ICR2 field. */
+	if (destination > 0xff)
+		return -1;
+	if (lapic_wait_icr_idle())
+		return -1;
+
+	lapic_write(LAPIC_ESR, 0);
+	lapic_write(LAPIC_ICR2, destination << 24);
+	lapic_write(LAPIC_ICR1, command);
+
+	if (lapic_wait_icr_idle())
+		return -1;
+	error = lapic_read(LAPIC_ESR);
+	lapic_write(LAPIC_ESR, 0);
+	return error ? -1 : 0;
+}
+
+void apic_send_ipi(unsigned vector, unsigned cpu, int type)
+{
+	u32_t destination = 0, command;
+
+	if (ncpus <= 1)
+		return;
+	if (vector > APIC_ICR_VECTOR) {
+		printf("WARNING: invalid local APIC IPI vector %u\\n", vector);
+		return;
+	}
+
+	command = APIC_ICR_DM_FIXED | (vector & APIC_ICR_VECTOR);
+	switch (type) {
+	case APIC_IPI_DEST:
+		if (cpu >= ncpus || !cpu_is_ready(cpu))
+			return;
+		destination = cpuid2apicid[cpu];
+		break;
+	case APIC_IPI_SELF:
+		command |= APIC_ICR_DEST_SELF;
+		break;
+	case APIC_IPI_TO_ALL:
+		command |= APIC_ICR_DEST_ALL;
+		break;
+	case APIC_IPI_TO_ALL_BUT_SELF:
+		command |= APIC_ICR_DEST_ALL_BUT_SELF;
+		break;
+	default:
+		printf("WARNING: unknown local APIC IPI destination %d\\n", type);
+		return;
+	}
+
+	if (lapic_send_icr(destination, command))
+		printf("WARNING: failed to deliver local APIC IPI vector 0x%x\\n",
+				vector);
 }
 
 int apic_send_startup_ipi(unsigned cpu, phys_bytes trampoline)
 {
-	int timeout;
-	u32_t errstatus = 0;
-	int i;
+	unsigned i;
+	u32_t vector;
 
-	/* INIT-SIPI-SIPI sequence */
+	if (cpu >= ncpus || !lapic_is_enabled())
+		return -1;
+	if ((trampoline & 0xfff) || trampoline >= 0x100000)
+		return -1;
 
+	vector = (u32_t)(trampoline >> 12);
+	if (vector > 0xff)
+		return -1;
+
+	/* INIT-SIPI-SIPI sequence: SIPIs are edge-triggered fixed vectors. */
 	for (i = 0; i < 2; i++) {
-		u32_t val;
-		
-		/* clear err status */
-		lapic_errstatus();
-
-		/* set target pe */
-		val = lapic_read(LAPIC_ICR2) & 0xFFFFFF;
-		val |= cpuid2apicid[cpu] << 24;
-		lapic_write(LAPIC_ICR2, val);
-
-		/* send SIPI */
-		val = lapic_read(LAPIC_ICR1) & 0xFFF32000;
-		val |= APIC_ICR_LEVEL_ASSERT |APIC_ICR_DM_STARTUP;
-		val |= (((u32_t)trampoline >> 12)&0xff);
-		lapic_write(LAPIC_ICR1, val);
-
-		timeout = 1000;
-
-		/* wait for 200 micro-seconds*/
-		lapic_microsec_sleep (200);
-		errstatus = 0;
-
-		while ((lapic_read(LAPIC_ICR1) & APIC_ICR_DELIVERY_PENDING) &&
-				!errstatus) {
-			errstatus = lapic_errstatus();
-			timeout--;
-			if (!timeout) break;
-		}
-
-		/* skip this one and continue with another cpu */
-		if (errstatus)
+		if (lapic_send_icr(cpuid2apicid[cpu],
+		    APIC_ICR_DM_STARTUP | vector))
 			return -1;
+		lapic_microsec_sleep(200);
 	}
-
 	return 0;
 }
 
-int apic_send_init_ipi(unsigned cpu, phys_bytes trampoline) 
+int apic_send_init_ipi(unsigned cpu, phys_bytes trampoline)
 {
-	u32_t ptr, errstatus = 0;
-	int timeout;
+	u32_t ptr;
 
-	/* set the warm reset vector */
-	ptr = (u32_t)(trampoline & 0xF);
-	phys_copy(0x467, vir2phys(&ptr), sizeof(u16_t ));
+	if (cpu >= ncpus || !lapic_is_enabled())
+		return -1;
+	if (trampoline >= 0x100000)
+		return -1;
+
+	/* Set the BIOS warm-reset vector and shutdown code for the trampoline. */
+	ptr = (u32_t)(trampoline & 0xf);
+	phys_copy(0x467, (phys_bytes)&ptr, sizeof(u16_t));
 	ptr = (u32_t)(trampoline >> 4);
-	phys_copy(0x469, vir2phys(&ptr), sizeof(u16_t ));
+	phys_copy(0x469, (phys_bytes)&ptr, sizeof(u16_t));
+	outb(RTC_INDEX, 0xF);
+	outb(RTC_IO, 0xA);
 
-	/* set shutdown code */
-	outb (RTC_INDEX, 0xF);
-	outb (RTC_IO, 0xA);
+	/* INIT assert is level-triggered; wait before deasserting it. */
+	if (lapic_send_icr(cpuid2apicid[cpu],
+	    APIC_ICR_DM_INIT | APIC_ICR_TRIGGER | APIC_ICR_LEVEL_ASSERT))
+		return -1;
+	lapic_microsec_sleep(10000);
 
-	/* clear error state register. */
-	(void) lapic_errstatus();
+	if (lapic_send_icr(cpuid2apicid[cpu],
+	    APIC_ICR_DM_INIT | APIC_ICR_TRIGGER | APIC_ICR_LEVEL_DEASSERT))
+		return -1;
 
-	/* assert INIT IPI , No Shorthand, destination mode : physical */
-	lapic_write(LAPIC_ICR2, (lapic_read (LAPIC_ICR2) & 0xFFFFFF) |
-					(cpuid2apicid[cpu] << 24));
-	lapic_write(LAPIC_ICR1, (lapic_read (LAPIC_ICR1) & 0xFFF32000) |
-		APIC_ICR_DM_INIT | APIC_ICR_TM_LEVEL | APIC_ICR_LEVEL_ASSERT);
-
-	timeout = 1000;
-
-	/* sleep for 200 micro-seconds */
-	lapic_microsec_sleep(200);
-
-	errstatus = 0;
-
-	while ((lapic_read(LAPIC_ICR1) & APIC_ICR_DELIVERY_PENDING) && !errstatus) {
-		errstatus = lapic_errstatus();
-		timeout--;
-		if (!timeout) break;
-	}
-
-	if (errstatus) 
-		return -1; /* to continue with a new processor */
-
-	/* clear error state register. */
-	lapic_errstatus();
-
-	/* deassert INIT IPI , No Shorthand, destination mode : physical */
-	lapic_write(LAPIC_ICR2, (lapic_read (LAPIC_ICR2) & 0xFFFFFF) |
-					(cpuid2apicid[cpu] << 24));
-	lapic_write(LAPIC_ICR1, (lapic_read (LAPIC_ICR1) & 0xFFF32000) |
-		APIC_ICR_DEST_ALL | APIC_ICR_TM_LEVEL);
-
-	timeout = 1000;
-	errstatus = 0;
-
-	/* sleep for 200 micro-seconds */
-	lapic_microsec_sleep(200);
-
-	while ((lapic_read(LAPIC_ICR1)&APIC_ICR_DELIVERY_PENDING) && !errstatus) {
-		errstatus = lapic_errstatus();
-		timeout--;
-		if(!timeout) break;
-	}
-
-	if (errstatus) 
-		return -1; /* with the new processor */
-
-	/* clear error state register.  */
-	(void) lapic_errstatus();
-
-	/* wait 10ms */
-	lapic_microsec_sleep (10000);
-
+	/* Allow the target to leave INIT before delivering its startup vector. */
+	lapic_microsec_sleep(10000);
 	return 0;
 }
 #endif
