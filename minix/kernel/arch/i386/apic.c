@@ -871,9 +871,6 @@ int lapic_enable(unsigned cpu)
 		return 0;
 	}
 
-	if (!lapic_enable_in_msr())
-		return 0;
-
 	/* set the highest priority for ever */
 	lapic_write(LAPIC_TPR, 0x0);
 
@@ -1304,18 +1301,16 @@ int apic_single_cpu_init(void)
 	if (!cpu_feature_apic_on_chip())
 		return 0;
 
-	lapic_addr = LOCAL_APIC_DEF_ADDR;
+	acpi_init();
 	ioapic_enabled = 0;
 
 	if (!lapic_enable(0)) {
-		lapic_addr = 0x0;
+		lapic_addr = 0;
 		return 0;
 	}
 
 	bsp_lapic_id = apicid();
-	printf("Boot cpu apic id %d\n", bsp_lapic_id);
-
-	acpi_init();
+	printf("Boot cpu apic id %u\n", bsp_lapic_id);
 
 	if (!detect_ioapics()) {
 		lapic_disable();
