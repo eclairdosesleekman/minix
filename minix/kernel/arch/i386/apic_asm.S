@@ -35,11 +35,9 @@ ENTRY(apic_hwint##irq)							\
 	iret								;
 
 #define LAPIC_INTR_HANDLER(func)	\
-	movl	$func, %eax						;\
+	movl	$func, %eax					;\
 	call	*%eax           /* call the actual handler */		;\
-	mov	_C_LABEL(lapic_eoi_addr), %eax	/* the end of handler*/	;\
-	movl	$0, (%eax)						;
-
+	call	_C_LABEL(arch_eoi)				;
 /*===========================================================================*/
 /*			handler of the local APIC interrupts		     */
 /*===========================================================================*/
