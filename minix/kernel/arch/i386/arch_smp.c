@@ -39,9 +39,8 @@ extern int panicking;
 
 static int volatile cpu_down;
 
-/* there can be at most 255 local APIC ids, each fits in 8 bits */
-static unsigned char apicid2cpuid[255];
-unsigned char cpuid2apicid[CONFIG_MAX_CPUS];
+/* Logical CPU slots map to full 32-bit x2APIC IDs or 8-bit xAPIC IDs. */
+u32_t cpuid2apicid[CONFIG_MAX_CPUS];
 
 SPINLOCK_DEFINE(smp_cpu_lock)
 SPINLOCK_DEFINE(dispq_lock)
@@ -308,39 +307,77 @@ static void tss_init_all(void)
 		tss_init(cpu, get_k_stack_top(cpu)); 
 }
 
+static int logical_cpu_for_apicid(u32_t apic_id)
+{
+	unsigned cpu;
+
+	for (cpu = 0; cpu < ncpus; cpu++)
+		if (cpuid2apicid[cpu] == apic_id)
+			return cpu;
+	return -1;
+}
+
 static int discover_cpus(void)
 {
-	struct acpi_madt_lapic * cpu;
+	struct acpi_madt_cpu entry;
+	unsigned i;
 
-	while (ncpus < CONFIG_MAX_CPUS && (cpu = acpi_get_lapic_next())) {
-		apicid2cpuid[cpu->apic_id] = ncpus;
-		cpuid2apicid[ncpus] = cpu->apic_id;
-		printf("CPU %3d local APIC id %3d\n", ncpus, cpu->apic_id);
+	while (ncpus < CONFIG_MAX_CPUS &&
+	    acpi_get_processor_next(&entry)) {
+		if (entry.apic_id > 0xff && !lapic_is_x2apic()) {
+			printf("WARNING: ignoring x2APIC ID %u in xAPIC mode\n",
+					entry.apic_id);
+			continue;
+		}
+
+		/* Firmware tables occasionally contain duplicate processor IDs. */
+		for (i = 0; i < ncpus; i++)
+			if (cpuid2apicid[i] == entry.apic_id)
+				break;
+		if (i < ncpus) {
+			printf("WARNING: duplicate local APIC ID %u ignored\n",
+					entry.apic_id);
+			continue;
+		}
+
+		cpuid2apicid[ncpus] = entry.apic_id;
+		printf("CPU %3u local APIC id %u\n", ncpus, entry.apic_id);
 		ncpus++;
 	}
-
 	return ncpus;
 }
 
 void smp_init (void)
 {
-	/* read the MP configuration */
-	if (!discover_cpus()) {
-		ncpus = 1;
+	u32_t boot_apic_id;
+	int boot_cpu;
+
+	/* ACPI must be initialized before reading the MADT APIC base/CPU list. */
+	acpi_init();
+	ioapic_enabled = 0;
+	if (!lapic_prepare()) {
+		printf("WARNING: unable to initialize local APIC mode\\n");
 		goto uniproc_fallback;
 	}
 
-	lapic_addr = LOCAL_APIC_DEF_ADDR;
-	ioapic_enabled = 0;
+	if (!discover_cpus()) {
+		printf("WARNING: ACPI did not report any enabled processors\\n");
+		lapic_disable();
+		goto uniproc_fallback;
+	}
+
+	boot_apic_id = apicid();
+	boot_cpu = logical_cpu_for_apicid(boot_apic_id);
+	if (boot_cpu < 0) {
+		printf("WARNING: bootstrap APIC ID %u is absent from the MADT\\n",
+				boot_apic_id);
+		lapic_disable();
+		goto uniproc_fallback;
+	}
+	bsp_cpu_id = (unsigned)boot_cpu;
 
 	tss_init_all();
 	setup_sysenter_syscall();
-
-	/*
-	 * we still run on the boot stack and we cannot use cpuid as its value
-	 * wasn't set yet. apicid2cpuid initialized in mps_init()
-	 */
-	bsp_cpu_id = apicid2cpuid[apicid()];
 
 	/*
 	 * tss_init_all() seeded the cpuid slot (top-of-stack[-1]) only on the
@@ -363,12 +400,21 @@ void smp_init (void)
 	}
 
 	bsp_lapic_id = apicid();
-	
-	acpi_init();
+
+	/*
+	 * This kernel has no IOAPIC interrupt remapping support. Standard
+	 * IOAPIC redirection entries have only an 8-bit physical destination.
+	 */
+	if (bsp_lapic_id > 0xff) {
+		printf("WARNING: BSP x2APIC ID %u cannot be targeted by this IOAPIC\\n",
+				bsp_lapic_id);
+		lapic_disable();
+		goto uniproc_fallback;
+	}
 
 	if (!detect_ioapics()) {
 		lapic_disable();
-		lapic_addr = 0x0;
+		lapic_addr = 0;
 		goto uniproc_fallback;
 	}
 
