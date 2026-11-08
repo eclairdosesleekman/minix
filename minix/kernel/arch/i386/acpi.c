@@ -166,7 +166,7 @@ static struct acpi_madt_hdr *acpi_get_madt_hdr(void)
 		printf("WARNING: ACPI MADT is missing or truncated\n");
 		return NULL;
 	}
-	madt_hdr = (struct acpi_madt_hdr *)(uintptr_t)acpi_phys2vir(base);
+	madt_hdr = (struct acpi_madt_hdr *)(vir_bytes)acpi_phys2vir(base);
 	if (!madt_hdr || madt_hdr->hdr.length < sizeof(*madt_hdr) ||
 	    madt_hdr->hdr.length > table_len ||
 	    acpi_check_csum(&madt_hdr->hdr, madt_hdr->hdr.length)) {
