@@ -22,7 +22,7 @@
 	  bsp_finish_booting();			\
 } while(0)
 
-extern unsigned char cpuid2apicid[CONFIG_MAX_CPUS];
+extern u32_t cpuid2apicid[CONFIG_MAX_CPUS];
 
 #define barrier()	do { mfence(); } while(0)
 
