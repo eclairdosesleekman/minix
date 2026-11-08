@@ -79,8 +79,8 @@
 #define APIC_ICR_LEVEL_DEASSERT		(0 << 14)
 
 #define APIC_ICR_TRIGGER		(1 << 15)
-#define APIC_ICR_TM_LEVEL		IS_CLEAR(APIC_ICR_TRIGGER)
-#define APIC_ICR_TM_EDGE		IS_CLEAR(APIC_ICR_TRIGGER)
+#define APIC_ICR_TM_LEVEL		APIC_ICR_TRIGGER
+#define APIC_ICR_TM_EDGE		0
 
 #define APIC_ICR_INT_MASK		(1 << 16)
 
@@ -89,8 +89,14 @@
 #define APIC_ICR_DEST_ALL		(2 << 18)
 #define APIC_ICR_DEST_ALL_BUT_SELF	(3 << 18)
 
-#define IA32_APIC_BASE	0x1b
+#define IA32_APIC_BASE			0x1b
+#define IA32_APIC_BASE_X2APIC_BIT	10
 #define IA32_APIC_BASE_ENABLE_BIT	11
+#define IA32_X2APIC_MSR_BASE		0x800
+#define IA32_X2APIC_MSR_ICR		0x830
+#define IA32_X2APIC_MSR_EOI		0x80b
+#define APIC_BASE_ADDRESS_MASK		0x000ffffffffff000ULL
+#define APIC_ICR_TIMEOUT		1000000U
 
 /* FIXME we should spread the irqs across as many priority levels as possible
  * due to buggy hw */
@@ -132,12 +138,6 @@ static struct irq io_apic_irq[NR_IRQ_VECTORS];
 #include "kernel/spinlock.h"
 
 
-#define lapic_write_icr1(val)	lapic_write(LAPIC_ICR1, val)
-#define lapic_write_icr2(val)	lapic_write(LAPIC_ICR2, val)
-
-#define lapic_read_icr1(x)	lapic_read(LAPIC_ICR1)
-#define lapic_read_icr2(x)	lapic_read(LAPIC_ICR2)
-
 #define is_boot_apic(apicid)	((apicid) == bsp_lapic_id)
 
 #define VERBOSE_APIC(x) x
@@ -145,8 +145,13 @@ static struct irq io_apic_irq[NR_IRQ_VECTORS];
 int ioapic_enabled;
 u32_t lapic_addr_vaddr;
 vir_bytes lapic_addr;
-vir_bytes lapic_eoi_addr;
-int bsp_lapic_id;
+u32_t bsp_lapic_id;
+
+/* Selected once by the BSP; each processor enables this same APIC mode. */
+static int lapic_mode_initialized;
+static int lapic_x2apic;
+static int lapic_active;
+static u64_t lapic_phys_base;
 
 static volatile unsigned probe_ticks;
 static	u64_t tsc0, tsc1;
@@ -403,11 +408,6 @@ void ioapic_mask_irq(unsigned irq)
 		irq_8259_mask(irq);
 }
 
-unsigned int apicid(void)
-{
-	return lapic_read(LAPIC_ID) >> 24;
-}
-
 static int calib_clk_handler(irq_hook_t * UNUSED(hook))
 {
 	u32_t tcrt;
@@ -625,7 +625,181 @@ void lapic_microsec_sleep(unsigned count)
 		arch_pause();
 }
 
-static  u32_t lapic_errstatus(void)
+/*
+ * IA32_APIC_BASE is per-processor. The BSP selects the mode; APs configure
+ * their own APIC_BASE MSR to match it before touching local APIC registers.
+ */
+int lapic_prepare(void)
+{
+	u32_t msr_hi, msr_lo;
+	u64_t base, acpi_base, msr_value;
+	int x2_supported;
+
+	x2_supported = _cpufeature(_CPUF_I386_X2APIC);
+	ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+
+	if ((msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) &&
+	    !(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT))) {
+		printf("ERROR: invalid IA32_APIC_BASE x2APIC/enable state\\n");
+		return 0;
+	}
+
+	if (!lapic_mode_initialized) {
+		/* Prefer x2APIC when the bootstrap CPU advertises it. */
+		lapic_x2apic =
+			!!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) ||
+			x2_supported;
+		if (lapic_x2apic && !x2_supported) {
+			printf("ERROR: firmware enabled unsupported x2APIC mode\\n");
+			return 0;
+		}
+	} else if (lapic_x2apic && !x2_supported) {
+		printf("ERROR: CPU %u cannot join the system in x2APIC mode\\n",
+				(unsigned)cpuid);
+		return 0;
+	}
+
+	if (lapic_x2apic) {
+		msr_lo |= (1U << IA32_APIC_BASE_ENABLE_BIT) |
+		    (1U << IA32_APIC_BASE_X2APIC_BIT);
+	} else {
+		/*
+		 * x2APIC -> xAPIC is legal only after disabling both mode bits.
+		 * Do this explicitly for a heterogeneous system rather than
+		 * attempting the architecturally-invalid EXTD=0, EN=1 write.
+		 */
+		if (msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) {
+			msr_lo &= ~((1U << IA32_APIC_BASE_ENABLE_BIT) |
+			    (1U << IA32_APIC_BASE_X2APIC_BIT));
+			ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
+			ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+			if (msr_lo & ((1U << IA32_APIC_BASE_ENABLE_BIT) |
+			    (1U << IA32_APIC_BASE_X2APIC_BIT)))
+				return 0;
+		}
+
+		msr_value = ((u64_t)msr_hi << 32) | msr_lo;
+		base = msr_value & APIC_BASE_ADDRESS_MASK;
+		acpi_base = acpi_get_lapic_address();
+		if (acpi_base)
+			base = acpi_base;
+		if (!base)
+			base = LOCAL_APIC_DEF_ADDR;
+		if ((base & 0xfff) != 0 ||
+		    (sizeof(vir_bytes) < sizeof(u64_t) && (base >> 32))) {
+			printf("ERROR: unsupported Local APIC physical address 0x%llx\\n",
+					(unsigned long long)base);
+			return 0;
+		}
+		lapic_phys_base = base;
+		msr_value = (msr_value & ~APIC_BASE_ADDRESS_MASK) | base;
+		msr_value |= (u64_t)1 << IA32_APIC_BASE_ENABLE_BIT;
+		msr_hi = (u32_t)(msr_value >> 32);
+		msr_lo = (u32_t)msr_value;
+	}
+
+	ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
+	ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+
+	if (!(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT)) ||
+	    (!!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) !=
+		!!lapic_x2apic)) {
+		printf("ERROR: failed to enable requested Local APIC mode\\n");
+		return 0;
+	}
+
+	if (lapic_x2apic) {
+		lapic_addr = 0; /* x2APIC registers are MSRs, not MMIO. */
+		lapic_addr_vaddr = 0;
+	} else {
+		msr_value = ((u64_t)msr_hi << 32) | msr_lo;
+		base = msr_value & APIC_BASE_ADDRESS_MASK;
+		if (base != lapic_phys_base && lapic_mode_initialized)
+			return 0;
+		lapic_phys_base = base;
+		lapic_addr = (vir_bytes)base;
+		lapic_addr_vaddr = (u32_t)base;
+	}
+
+	lapic_mode_initialized = 1;
+	lapic_active = 1;
+	return 1;
+}
+
+int lapic_is_enabled(void)
+{
+	return lapic_active;
+}
+
+int lapic_is_x2apic(void)
+{
+	return lapic_x2apic;
+}
+
+u32_t lapic_read_reg(vir_bytes reg)
+{
+	if (!lapic_active)
+		panic("Local APIC read while disabled");
+
+	if (lapic_x2apic) {
+		u32_t offset = (u32_t)reg, hi, lo;
+		u32_t msr;
+
+		/* DFR and the high half of the split xAPIC ICR do not exist. */
+		if ((offset & 0xf) || offset == 0x0e0 || offset == 0x310)
+			panic("invalid x2APIC register offset 0x%x", offset);
+		msr = IA32_X2APIC_MSR_BASE + (offset >> 4);
+		ia32_msr_read(msr, &hi, &lo);
+		return lo;
+	}
+
+	if (!lapic_addr || reg < lapic_addr || reg >= lapic_addr + 0x400)
+		panic("invalid xAPIC register address 0x%lx", (unsigned long)reg);
+	return *((volatile u32_t *)reg);
+}
+
+void lapic_write_reg(vir_bytes reg, u32_t value)
+{
+	if (!lapic_active)
+		panic("Local APIC write while disabled");
+
+	if (lapic_x2apic) {
+		u32_t offset = (u32_t)reg;
+		u32_t msr;
+
+		if ((offset & 0xf) || offset == 0x0e0 || offset == 0x310)
+			panic("invalid x2APIC register offset 0x%x", offset);
+		msr = IA32_X2APIC_MSR_BASE + (offset >> 4);
+		ia32_msr_write(msr, 0, value);
+		return;
+	}
+
+	if (!lapic_addr || reg < lapic_addr || reg >= lapic_addr + 0x400)
+		panic("invalid xAPIC register address 0x%lx", (unsigned long)reg);
+	*((volatile u32_t *)reg) = value;
+}
+
+void apic_eoi(void)
+{
+	if (!lapic_active)
+		return;
+	if (lapic_x2apic)
+		ia32_msr_write(IA32_X2APIC_MSR_EOI, 0, 0);
+	else
+		*((volatile u32_t *)(lapic_addr + 0x0b0)) = 0;
+}
+
+unsigned int apicid(void)
+{
+	u32_t id;
+
+	if (!lapic_active)
+		return 0;
+	id = lapic_read(LAPIC_ID);
+	return lapic_x2apic ? id : id >> 24;
+}
+
+static u32_t lapic_errstatus(void)
 {
 	lapic_write(LAPIC_ESR, 0);
 	return lapic_read(LAPIC_ESR);
@@ -634,23 +808,31 @@ static  u32_t lapic_errstatus(void)
 #ifdef CONFIG_SMP
 static int lapic_disable_in_msr(void)
 {
-	u32_t msr_hi, msr_lo;
+	u32_t msr_hi, msr_lo, verify_hi, verify_lo;
 
 	ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
-
-	msr_lo &= ~(1 << IA32_APIC_BASE_ENABLE_BIT);
+	if (lapic_x2apic)
+		msr_lo &= ~((1U << IA32_APIC_BASE_ENABLE_BIT) |
+		    (1U << IA32_APIC_BASE_X2APIC_BIT));
+	else
+		msr_lo &= ~(1U << IA32_APIC_BASE_ENABLE_BIT);
 	ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
+	ia32_msr_read(IA32_APIC_BASE, &verify_hi, &verify_lo);
 
+	if (verify_lo & (1U << IA32_APIC_BASE_ENABLE_BIT))
+		return 0;
+	if (verify_lo & (1U << IA32_APIC_BASE_X2APIC_BIT))
+		return 0;
 	return 1;
 }
 #endif /* CONFIG_SMP */
 
 void lapic_disable(void)
 {
-	/* Disable current APIC and close interrupts from PIC */
+	/* Disable this processor's local APIC and close interrupts from PIC. */
 	u32_t val;
 
-	if (!lapic_addr)
+	if (!lapic_is_enabled())
 		return;
 	
 #ifdef CONFIG_SMP
@@ -661,7 +843,8 @@ void lapic_disable(void)
 		val = lapic_read(LAPIC_LINT0);
 		val &= ~(APIC_ICR_DM_MASK|APIC_ICR_INT_MASK);
 		val |= APIC_ICR_DM_EXTINT; /* ExtINT at LINT0 */
-		lapic_write (LAPIC_LINT0, val);
+		lapic_write(LAPIC_LINT0, val);
+		lapic_active = 0;
 		return;
 	}
 
@@ -678,44 +861,17 @@ void lapic_disable(void)
 	val &= ~APIC_ENABLE;
 	lapic_write(LAPIC_SIVR, val);
 
-	lapic_disable_in_msr();
+	if (!lapic_disable_in_msr())
+		printf("WARNING: failed to disable Local APIC MSR mode\n");
 #endif /* CONFIG_SMP */
-}
-
-static int lapic_enable_in_msr(void)
-{
-	u32_t msr_hi, msr_lo;
-
-	ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
-
-#if 0
-	u32_t addr;
-	/*FIXME this is a problem on AP */
-	/*
-	 * FIXME if the location is different (unlikely) then the one we expect,
-	 * update it
-	 */
-	addr = (msr_lo >> 12) | ((msr_hi & 0xf) << 20);
-	if (addr != (lapic_addr >> 12)) {
-		if (msr_hi & 0xf) {
-			printf("ERROR : APIC address needs more then 32 bits\n");
-			return 0;
-		}
-		lapic_addr = msr_lo & ~((1 << 12) - 1);
-	}
-#endif
-
-	msr_lo |= (1 << IA32_APIC_BASE_ENABLE_BIT);
-	ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
-
-	return 1;
+	lapic_active = 0;
 }
 
 int lapic_enable(unsigned cpu)
 {
 	u32_t val, nlvt;
 
-	if (!lapic_addr)
+	if (!lapic_prepare())
 		return 0;
 
 	cpu_has_tsc = _cpufeature(_CPUF_I386_TSC);
@@ -731,7 +887,6 @@ int lapic_enable(unsigned cpu)
 	/* set the highest priority for ever */
 	lapic_write(LAPIC_TPR, 0x0);
 
-	lapic_eoi_addr = LAPIC_EOI;
 	/* clear error state register. */
 	val = lapic_errstatus ();
 
@@ -744,14 +899,19 @@ int lapic_enable(unsigned cpu)
 
 	apic_eoi();
 
-	/* Program Logical Destination Register. */
-	val = lapic_read(LAPIC_LDR) & ~0xFF000000;
-	val |= (cpu & 0xFF) << 24;
-	lapic_write(LAPIC_LDR, val);
+	/*
+	 * x2APIC logical destination format is fixed/read-only and DFR is
+	 * reserved in that mode. Keep the legacy flat logical mode only for
+	 * xAPIC; this kernel routes inter-CPU interrupts by physical APIC ID.
+	 */
+	if (!lapic_x2apic) {
+		val = lapic_read(LAPIC_LDR) & ~0xFF000000;
+		val |= (cpu & 0xFF) << 24;
+		lapic_write(LAPIC_LDR, val);
 
-	/* Program Destination Format Register for Flat mode. */
-	val = lapic_read(LAPIC_DFR) | 0xF0000000;
-	lapic_write (LAPIC_DFR, val);
+		val = lapic_read(LAPIC_DFR) | 0xF0000000;
+		lapic_write(LAPIC_DFR, val);
+	}
 
 	val = lapic_read (LAPIC_LVTER) & 0xFFFFFF00;
 	lapic_write (LAPIC_LVTER, val);
