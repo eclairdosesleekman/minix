@@ -150,30 +150,62 @@ size_t acpi_get_table_length(const char * name)
 	return 0;
 }
 
-static void * acpi_madt_get_typed_item(struct acpi_madt_hdr * hdr,
+static struct acpi_madt_hdr *acpi_get_madt_hdr(void)
+{
+	static struct acpi_madt_hdr *madt_hdr;
+	static int checked;
+	phys_bytes base;
+	size_t table_len;
+
+	if (checked)
+		return madt_hdr;
+	checked = 1;
+	base = acpi_get_table_base("APIC");
+	table_len = acpi_get_table_length("APIC");
+	if (!base || table_len < sizeof(*madt_hdr)) {
+		printf("WARNING: ACPI MADT is missing or truncated\n");
+		return NULL;
+	}
+	madt_hdr = (struct acpi_madt_hdr *)(uintptr_t)acpi_phys2vir(base);
+	if (!madt_hdr || madt_hdr->hdr.length < sizeof(*madt_hdr) ||
+	    madt_hdr->hdr.length > table_len ||
+	    acpi_check_csum(&madt_hdr->hdr, madt_hdr->hdr.length)) {
+		printf("WARNING: ACPI MADT header, length, or checksum is invalid\n");
+		madt_hdr = NULL;
+		return NULL;
+	}
+	return madt_hdr;
+}
+
+static void *acpi_madt_get_typed_item(struct acpi_madt_hdr *hdr,
 					unsigned char type,
 					unsigned idx)
 {
-	u8_t * t, * end;
-	int i;
+	u8_t *t, *end;
+	unsigned i = 0;
 
-	t = (u8_t *) hdr + sizeof(struct acpi_madt_hdr);
-	end = (u8_t *) hdr + hdr->hdr.length;
+	if (!hdr || hdr->hdr.length < sizeof(*hdr))
+		return NULL;
+	t = (u8_t *)hdr + sizeof(*hdr);
+	end = (u8_t *)hdr + hdr->hdr.length;
+	while (t < end) {
+		struct acpi_madt_item_hdr *item;
+		size_t remaining = (size_t)(end - t);
 
-	i = 0;
-	while(t < end) {
-		if (type == ((struct acpi_madt_item_hdr *) t)->type) {
+		if (remaining < sizeof(*item))
+			return NULL;
+		item = (struct acpi_madt_item_hdr *)t;
+		if (item->length < sizeof(*item) || item->length > remaining)
+			return NULL;
+		if (item->type == type) {
 			if (i == idx)
-				return t;
-			else
-				i++;
+				return item;
+			i++;
 		}
-		t += ((struct acpi_madt_item_hdr *) t)->length;
+		t += item->length;
 	}
-
 	return NULL;
 }
-
 #if 0
 static void * acpi_madt_get_item(struct acpi_madt_hdr * hdr,
 				unsigned idx)
@@ -380,59 +412,121 @@ void acpi_init(void)
 	acpi_init_poweroff();
 }
 
-struct acpi_madt_ioapic * acpi_get_ioapic_next(void)
+struct acpi_madt_ioapic *acpi_get_ioapic_next(void)
 {
-	static unsigned idx = 0;
-	static struct acpi_madt_hdr * madt_hdr;
+	static unsigned idx;
+	struct acpi_madt_hdr *madt_hdr = acpi_get_madt_hdr();
+	struct acpi_madt_ioapic *ret;
 
-	struct acpi_madt_ioapic * ret;
-
-	if (idx == 0) {
-		madt_hdr = (struct acpi_madt_hdr *)
-			acpi_phys2vir(acpi_get_table_base("APIC"));
-		if (madt_hdr == NULL)
-			return NULL;
-	}
-
+	if (!madt_hdr)
+		return NULL;
 	ret = (struct acpi_madt_ioapic *)
 		acpi_madt_get_typed_item(madt_hdr, ACPI_MADT_TYPE_IOAPIC, idx);
 	if (ret)
 		idx++;
-
 	return ret;
 }
 
-struct acpi_madt_lapic * acpi_get_lapic_next(void)
+struct acpi_madt_lapic *acpi_get_lapic_next(void)
 {
-	static unsigned idx = 0;
-	static struct acpi_madt_hdr * madt_hdr;
+	static unsigned idx;
+	struct acpi_madt_hdr *madt_hdr = acpi_get_madt_hdr();
+	struct acpi_madt_lapic *ret;
 
-	struct acpi_madt_lapic * ret;
-
-	if (idx == 0) {
-		madt_hdr = (struct acpi_madt_hdr *)
-			acpi_phys2vir(acpi_get_table_base("APIC"));
-		if (madt_hdr == NULL)
-			return NULL;
-	}
-
+	if (!madt_hdr)
+		return NULL;
 	for (;;) {
 		ret = (struct acpi_madt_lapic *)
-			acpi_madt_get_typed_item(madt_hdr,
-					ACPI_MADT_TYPE_LAPIC, idx);
+			acpi_madt_get_typed_item(madt_hdr, ACPI_MADT_TYPE_LAPIC, idx);
 		if (!ret)
-			break;
-
+			return NULL;
 		idx++;
-
-		/* report only usable CPUs */
 		if (ret->flags & 1)
-			break;
+			return ret;
 	}
-
-	return ret;
 }
 
+int acpi_get_processor_next(struct acpi_madt_cpu *cpu)
+{
+	static struct acpi_madt_hdr *madt_hdr;
+	static u8_t *cursor;
+	u8_t *end;
+
+	if (!cpu)
+		return 0;
+	if (!madt_hdr) {
+		madt_hdr = acpi_get_madt_hdr();
+		if (!madt_hdr)
+			return 0;
+		cursor = (u8_t *)madt_hdr + sizeof(*madt_hdr);
+	}
+	end = (u8_t *)madt_hdr + madt_hdr->hdr.length;
+
+	while (cursor < end) {
+		struct acpi_madt_item_hdr *item;
+		size_t remaining = (size_t)(end - cursor);
+
+		if (remaining < sizeof(*item))
+			return 0;
+		item = (struct acpi_madt_item_hdr *)cursor;
+		if (item->length < sizeof(*item) || item->length > remaining)
+			return 0;
+		cursor += item->length;
+
+		if (item->type == ACPI_MADT_TYPE_LAPIC &&
+		    item->length >= sizeof(struct acpi_madt_lapic)) {
+			struct acpi_madt_lapic *lapic =
+			    (struct acpi_madt_lapic *)item;
+			if (!(lapic->flags & 1))
+				continue;
+			cpu->apic_id = lapic->apic_id;
+			cpu->flags = lapic->flags;
+			return 1;
+		}
+		if (item->type == ACPI_MADT_TYPE_X2APIC &&
+		    item->length >= sizeof(struct acpi_madt_x2apic)) {
+			struct acpi_madt_x2apic *x2 =
+			    (struct acpi_madt_x2apic *)item;
+			if (!(x2->flags & 1))
+				continue;
+			cpu->apic_id = x2->apic_id;
+			cpu->flags = x2->flags;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+u64_t acpi_get_lapic_address(void)
+{
+	struct acpi_madt_hdr *madt_hdr = acpi_get_madt_hdr();
+	u64_t address;
+	u8_t *cursor, *end;
+
+	if (!madt_hdr)
+		return 0;
+	address = madt_hdr->local_apic_address;
+	cursor = (u8_t *)madt_hdr + sizeof(*madt_hdr);
+	end = (u8_t *)madt_hdr + madt_hdr->hdr.length;
+	while (cursor < end) {
+		struct acpi_madt_item_hdr *item;
+		size_t remaining = (size_t)(end - cursor);
+
+		if (remaining < sizeof(*item))
+			return 0;
+		item = (struct acpi_madt_item_hdr *)cursor;
+		if (item->length < sizeof(*item) || item->length > remaining)
+			return 0;
+		if (item->type == ACPI_MADT_TYPE_LAPIC_ADRESS &&
+		    item->length >= sizeof(struct acpi_madt_lapic_address)) {
+			struct acpi_madt_lapic_address *override =
+			    (struct acpi_madt_lapic_address *)item;
+			address = override->address;
+		}
+		cursor += item->length;
+	}
+	return address;
+}
 void __k_unpaged_acpi_poweroff(void)
 {
 	/* NO OP poweroff symbol*/
