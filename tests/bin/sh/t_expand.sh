@@ -132,6 +132,20 @@ iteration_on_null_parameter_body() {
 	atf_check_equal '[]' '$s2'
 }
 
+atf_test_case large_command_substitution
+large_command_substitution_head() {
+	atf_set "descr" "Command substitution handles output larger than pipe capacity"
+	atf_set "timeout" "30"
+}
+large_command_substitution_body() {
+	file="large-command-substitution.$"
+	printf '%8192s' '' > "$file"
+	output=$(cat "$file")
+	rm -f "$file"
+	[ "${#output}" -eq 8192 ] ||
+	    atf_fail "expected 8192 bytes, got ${#output}"
+}
+
 atf_init_test_cases() {
 	atf_add_test_case dollar_at
 	atf_add_test_case dollar_at_with_text
@@ -139,4 +153,5 @@ atf_init_test_cases() {
 	atf_add_test_case varpattern_backslashes
 	atf_add_test_case arithmetic
 	atf_add_test_case iteration_on_null_parameter
+	atf_add_test_case large_command_substitution
 }
