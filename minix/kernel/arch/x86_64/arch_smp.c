@@ -154,7 +154,12 @@ static void smp_start_aps(void)
 			if (cpu_transition(cpu, CPU_STATE_STARTING,
 			    CPU_STATE_FAILED)) {
 				printf("WARNING cannot boot cpu %u\n", cpu);
-				continue;
+				/*
+				 * The low-memory trampoline has one shared CPU-ID
+				 * slot. Do not overwrite it while a timed-out AP
+				 * could still be executing the trampoline.
+				 */
+				break;
 			}
 		}
 
@@ -168,9 +173,16 @@ static void smp_start_aps(void)
 		 * The timeout is conditional: if the AP won STARTING ->
 		 * INITIALIZING, the failed transition below cannot affect it.
 		 */
-		if (cpu_transition(cpu, CPU_STATE_STARTING, CPU_STATE_FAILED))
+		if (cpu_transition(cpu, CPU_STATE_STARTING, CPU_STATE_FAILED)) {
 			printf("WARNING CPU %u did not reach its startup entry\n",
 					cpu);
+			/*
+			 * Keep the trampoline's CPU ID stable for a late AP. The
+			 * remaining processors stay OFFLINE rather than risking
+			 * that they boot with the wrong logical ID.
+			 */
+			break;
+		}
 	}
 	phys_copy((phys_bytes) &biosresetvector, 0x467, sizeof(u32_t));
 
