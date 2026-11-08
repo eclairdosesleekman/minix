@@ -1365,6 +1365,7 @@ int apic_single_cpu_init(void)
 #if defined(__x86_64__)
 		direct_com_print("MINIX/amd64: lapic_enable failed\r\n");
 #endif
+		lapic_disable();
 		lapic_addr = 0;
 		return 0;
 	}
