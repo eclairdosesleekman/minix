@@ -1345,6 +1345,7 @@ int apic_single_cpu_init(void)
 	ioapic_enabled = 0;
 
 	if (!lapic_enable(0)) {
+		lapic_disable();
 		lapic_addr = 0;
 		return 0;
 	}
