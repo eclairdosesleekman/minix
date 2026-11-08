@@ -181,7 +181,7 @@ static struct acpi_madt_hdr *acpi_get_madt_hdr(void)
 	base = acpi_get_table_base("APIC");
 	table_len = acpi_get_table_length("APIC");
 	if (!base || table_len < sizeof(*madt_hdr)) {
-		printf("WARNING: ACPI MADT is missing or truncated\\n");
+		printf("WARNING: ACPI MADT is missing or truncated\n");
 		return NULL;
 	}
 
@@ -190,7 +190,7 @@ static struct acpi_madt_hdr *acpi_get_madt_hdr(void)
 	    madt_hdr->hdr.length < sizeof(*madt_hdr) ||
 	    madt_hdr->hdr.length > table_len ||
 	    acpi_check_csum(&madt_hdr->hdr, madt_hdr->hdr.length)) {
-		printf("WARNING: ACPI MADT header, length, or checksum is invalid\\n");
+		printf("WARNING: ACPI MADT header, length, or checksum is invalid\n");
 		madt_hdr = NULL;
 		return NULL;
 	}
