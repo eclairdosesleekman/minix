@@ -26,6 +26,7 @@
 #define _CPUF_I386_SYSCALL	17	/* AMD SYSCALL instrs */
 
 #define _CPUF_I386_PAE		18	/* Page Address Extension */
+#define _CPUF_I386_X2APIC	19	/* x2APIC MSR interface */
 
 int _cpufeature(int featureno);
 
