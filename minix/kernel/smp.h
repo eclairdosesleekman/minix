@@ -53,7 +53,7 @@ EXTERN struct cpu cpus[CONFIG_MAX_CPUS];
  */
 #define cpu_state(cpu) \
 	__sync_val_compare_and_swap(&cpus[cpu].state, \
-		CPU_STATE_OFFLINE, CPU_STATE_OFFLINE)
+		(u32_t)CPU_STATE_OFFLINE, (u32_t)CPU_STATE_OFFLINE)
 #define cpu_transition(cpu, from, to) \
 	__sync_bool_compare_and_swap(&cpus[cpu].state, \
 		(u32_t)(from), (u32_t)(to))
