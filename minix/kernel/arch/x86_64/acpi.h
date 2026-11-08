@@ -132,7 +132,7 @@ struct acpi_madt_lapic_address {
 	struct acpi_madt_item_hdr hdr;
 	u16_t	reserved;
 	u64_t	address;
-};
+} __packed;
 
 /* ACPI MADT type 9: processor Local x2APIC structure. */
 struct acpi_madt_x2apic {
