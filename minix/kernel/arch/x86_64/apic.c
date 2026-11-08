@@ -647,8 +647,8 @@ int lapic_prepare(void)
 	if (!lapic_mode_initialized) {
 		/* Prefer x2APIC when the bootstrap CPU advertises it. */
 		lapic_x2apic =
-			!!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) ||
-			x2_supported;
+		    !!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) ||
+		    x2_supported;
 		if (lapic_x2apic && !x2_supported) {
 			printf("ERROR: firmware enabled unsupported x2APIC mode\n");
 			return 0;
@@ -660,13 +660,34 @@ int lapic_prepare(void)
 	}
 
 	if (lapic_x2apic) {
-		msr_lo |= (1U << IA32_APIC_BASE_ENABLE_BIT) |
-		    (1U << IA32_APIC_BASE_X2APIC_BIT);
+		/*
+		 * Enter x2APIC in the architecturally-defined order: enable the
+		 * local APIC first, then set the x2APIC mode bit. Writing EXTD
+		 * while EN is clear is an invalid IA32_APIC_BASE combination.
+		 */
+		if (!(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT))) {
+			msr_lo |= 1U << IA32_APIC_BASE_ENABLE_BIT;
+			ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
+			ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+			if (!(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT)))
+				goto mode_error;
+		}
+		if (!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT))) {
+			msr_lo |= 1U << IA32_APIC_BASE_X2APIC_BIT;
+			ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
+			ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+			if (!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)))
+				goto mode_error;
+		}
+		if (!(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT)))
+			goto mode_error;
+
+		lapic_addr = 0; /* x2APIC registers are MSRs, not MMIO. */
+		lapic_addr_vaddr = 0;
 	} else {
 		/*
-		 * x2APIC -> xAPIC is legal only after disabling both mode bits.
-		 * Do this explicitly for a heterogeneous system rather than
-		 * attempting the architecturally-invalid EXTD=0, EN=1 write.
+		 * x2APIC -> xAPIC is legal only after both mode bits have been
+		 * cleared. Also disable an enabled xAPIC before changing its base.
 		 */
 		if (msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) {
 			msr_lo &= ~((1U << IA32_APIC_BASE_ENABLE_BIT) |
@@ -675,7 +696,7 @@ int lapic_prepare(void)
 			ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
 			if (msr_lo & ((1U << IA32_APIC_BASE_ENABLE_BIT) |
 			    (1U << IA32_APIC_BASE_X2APIC_BIT)))
-				return 0;
+				goto mode_error;
 		}
 
 		msr_value = ((u64_t)msr_hi << 32) | msr_lo;
@@ -689,33 +710,35 @@ int lapic_prepare(void)
 		    (sizeof(vir_bytes) < sizeof(u64_t) && (base >> 32))) {
 			printf("ERROR: unsupported Local APIC physical address 0x%llx\n",
 					(unsigned long long)base);
-			return 0;
+			goto mode_error;
 		}
-		lapic_phys_base = base;
-		msr_value = (msr_value & ~APIC_BASE_ADDRESS_MASK) | base;
-		msr_value |= (u64_t)1 << IA32_APIC_BASE_ENABLE_BIT;
-		msr_hi = (u32_t)(msr_value >> 32);
-		msr_lo = (u32_t)msr_value;
-	}
 
-	ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
-	ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
-
-	if (!(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT)) ||
-	    (!!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) !=
-		!!lapic_x2apic)) {
-		printf("ERROR: failed to enable requested Local APIC mode\n");
-		return 0;
-	}
-
-	if (lapic_x2apic) {
-		lapic_addr = 0; /* x2APIC registers are MSRs, not MMIO. */
-		lapic_addr_vaddr = 0;
-	} else {
 		msr_value = ((u64_t)msr_hi << 32) | msr_lo;
-		base = msr_value & APIC_BASE_ADDRESS_MASK;
-		if (base != lapic_phys_base && lapic_mode_initialized)
-			return 0;
+		if ((msr_value & APIC_BASE_ADDRESS_MASK) != base ||
+		    !(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT))) {
+			/* Base addresses must be changed with the APIC disabled. */
+			if (msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT)) {
+				msr_lo &= ~(1U << IA32_APIC_BASE_ENABLE_BIT);
+				ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
+				ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+				if (msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT))
+					goto mode_error;
+			}
+			msr_value = ((u64_t)msr_hi << 32) | msr_lo;
+			msr_value = (msr_value & ~APIC_BASE_ADDRESS_MASK) | base;
+			msr_value &= ~((u64_t)1 << IA32_APIC_BASE_X2APIC_BIT);
+			msr_value |= (u64_t)1 << IA32_APIC_BASE_ENABLE_BIT;
+			ia32_msr_write(IA32_APIC_BASE,
+			    (u32_t)(msr_value >> 32), (u32_t)msr_value);
+			ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+		}
+
+		msr_value = ((u64_t)msr_hi << 32) | msr_lo;
+		if (!(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT)) ||
+		    (msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) ||
+		    ((msr_value & APIC_BASE_ADDRESS_MASK) != base))
+			goto mode_error;
+
 		lapic_phys_base = base;
 		lapic_addr = (vir_bytes)base;
 		lapic_addr_vaddr = (u32_t)base;
@@ -724,8 +747,19 @@ int lapic_prepare(void)
 	lapic_mode_initialized = 1;
 	lapic_active = 1;
 	return 1;
-}
 
+mode_error:
+	/* Leave the local APIC disabled rather than using a partially set mode. */
+	ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
+	msr_lo &= ~((1U << IA32_APIC_BASE_ENABLE_BIT) |
+	    (1U << IA32_APIC_BASE_X2APIC_BIT));
+	ia32_msr_write(IA32_APIC_BASE, msr_hi, msr_lo);
+	lapic_active = 0;
+	lapic_addr = 0;
+	lapic_addr_vaddr = 0;
+	printf("ERROR: failed to configure Local APIC mode\n");
+	return 0;
+}
 int lapic_is_enabled(void)
 {
 	return lapic_active;
