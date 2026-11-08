@@ -1312,6 +1312,15 @@ int apic_single_cpu_init(void)
 	bsp_lapic_id = apicid();
 	printf("Boot cpu apic id %u\n", bsp_lapic_id);
 
+	/* IOAPIC redirection entries cannot target APIC IDs above 255. */
+	if (bsp_lapic_id > 0xff) {
+		printf("WARNING: BSP APIC ID %u exceeds the IOAPIC destination field\\n",
+				bsp_lapic_id);
+		lapic_disable();
+		lapic_addr = 0;
+		return 0;
+	}
+
 	if (!detect_ioapics()) {
 		lapic_disable();
 		lapic_addr = 0x0;
