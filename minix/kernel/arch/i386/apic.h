@@ -98,9 +98,17 @@
 #include "kernel/kernel.h"
 
 EXTERN vir_bytes lapic_addr;
-EXTERN vir_bytes lapic_eoi_addr;
 EXTERN int ioapic_enabled;
-EXTERN int bsp_lapic_id;
+EXTERN u32_t bsp_lapic_id;
+
+/* Local APIC access supports either xAPIC MMIO or x2APIC MSRs. */
+int lapic_prepare(void);
+int lapic_is_enabled(void);
+int lapic_is_x2apic(void);
+u32_t lapic_read_reg(vir_bytes reg);
+void lapic_write_reg(vir_bytes reg, u32_t value);
+void apic_eoi(void);
+u32_t apicid(void);
 
 #define MAX_NR_IOAPICS		32
 #define MAX_IOAPIC_IRQS		64
@@ -160,9 +168,7 @@ void lapic_restart_timer(void);
 void ioapic_set_irq(unsigned irq);
 void ioapic_unset_irq(unsigned irq);
 
-/* signal the end of interrupt handler to apic */
-#define apic_eoi() do { *((volatile u32_t *) lapic_eoi_addr) = 0; } while(0)
-
+/* Signal the end of a local APIC interrupt using the selected APIC mode. */
 void ioapic_eoi(int irq);
 
 void dump_apic_irq_state(void);
@@ -191,10 +197,8 @@ void apic_ipi_halt_intr(void);
 
 #define cpu_feature_apic_on_chip() _cpufeature(_CPUF_I386_APIC_ON_CHIP)
 
-#define lapic_read(what)	(*((volatile u32_t *)((what))))
-#define lapic_write(what, data)	do {			\
-	(*((volatile u32_t *)((what)))) = data;		\
-} while(0)
+#define lapic_read(what)	lapic_read_reg((vir_bytes)(what))
+#define lapic_write(what, data)	lapic_write_reg((vir_bytes)(what), (u32_t)(data))
 
 #endif /* __ASSEMBLY__ */
 
