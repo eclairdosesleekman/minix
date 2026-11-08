@@ -630,7 +630,7 @@ int lapic_prepare(void)
 
 	if ((msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) &&
 	    !(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT))) {
-		printf("ERROR: invalid IA32_APIC_BASE x2APIC/enable state\\n");
+		printf("ERROR: invalid IA32_APIC_BASE x2APIC/enable state\n");
 		return 0;
 	}
 
@@ -640,11 +640,11 @@ int lapic_prepare(void)
 			!!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) ||
 			x2_supported;
 		if (lapic_x2apic && !x2_supported) {
-			printf("ERROR: firmware enabled unsupported x2APIC mode\\n");
+			printf("ERROR: firmware enabled unsupported x2APIC mode\n");
 			return 0;
 		}
 	} else if (lapic_x2apic && !x2_supported) {
-		printf("ERROR: CPU %u cannot join the system in x2APIC mode\\n",
+		printf("ERROR: CPU %u cannot join the system in x2APIC mode\n",
 				(unsigned)cpuid);
 		return 0;
 	}
@@ -677,7 +677,7 @@ int lapic_prepare(void)
 			base = LOCAL_APIC_DEF_ADDR;
 		if ((base & 0xfff) != 0 ||
 		    (sizeof(vir_bytes) < sizeof(u64_t) && (base >> 32))) {
-			printf("ERROR: unsupported Local APIC physical address 0x%llx\\n",
+			printf("ERROR: unsupported Local APIC physical address 0x%llx\n",
 					(unsigned long long)base);
 			return 0;
 		}
@@ -694,7 +694,7 @@ int lapic_prepare(void)
 	if (!(msr_lo & (1U << IA32_APIC_BASE_ENABLE_BIT)) ||
 	    (!!(msr_lo & (1U << IA32_APIC_BASE_X2APIC_BIT)) !=
 		!!lapic_x2apic)) {
-		printf("ERROR: failed to enable requested Local APIC mode\\n");
+		printf("ERROR: failed to enable requested Local APIC mode\n");
 		return 0;
 	}
 
@@ -1208,7 +1208,7 @@ void apic_send_ipi(unsigned vector, unsigned cpu, int type)
 	if (ncpus <= 1)
 		return;
 	if (vector > APIC_ICR_VECTOR) {
-		printf("WARNING: invalid local APIC IPI vector %u\\n", vector);
+		printf("WARNING: invalid local APIC IPI vector %u\n", vector);
 		return;
 	}
 
@@ -1229,12 +1229,12 @@ void apic_send_ipi(unsigned vector, unsigned cpu, int type)
 		command |= APIC_ICR_DEST_ALL_BUT_SELF;
 		break;
 	default:
-		printf("WARNING: unknown local APIC IPI destination %d\\n", type);
+		printf("WARNING: unknown local APIC IPI destination %d\n", type);
 		return;
 	}
 
 	if (lapic_send_icr(destination, command))
-		printf("WARNING: failed to deliver local APIC IPI vector 0x%x\\n",
+		printf("WARNING: failed to deliver local APIC IPI vector 0x%x\n",
 				vector);
 }
 
@@ -1314,7 +1314,7 @@ int apic_single_cpu_init(void)
 
 	/* IOAPIC redirection entries cannot target APIC IDs above 255. */
 	if (bsp_lapic_id > 0xff) {
-		printf("WARNING: BSP APIC ID %u exceeds the IOAPIC destination field\\n",
+		printf("WARNING: BSP APIC ID %u exceeds the IOAPIC destination field\n",
 				bsp_lapic_id);
 		lapic_disable();
 		lapic_addr = 0;
