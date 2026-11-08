@@ -625,6 +625,12 @@ int lapic_prepare(void)
 	u64_t base, acpi_base, msr_value;
 	int x2_supported;
 
+	if (!cpu_feature_apic_on_chip()) {
+		printf("ERROR: CPU has no Local APIC capability\n");
+		lapic_active = 0;
+		return 0;
+	}
+
 	x2_supported = _cpufeature(_CPUF_I386_X2APIC);
 	ia32_msr_read(IA32_APIC_BASE, &msr_hi, &msr_lo);
 
@@ -813,7 +819,7 @@ void apic_eoi(void)
 		*((volatile u32_t *)(lapic_addr + 0x0b0)) = 0;
 }
 
-unsigned int apicid(void)
+u32_t apicid(void)
 {
 	u32_t id;
 
