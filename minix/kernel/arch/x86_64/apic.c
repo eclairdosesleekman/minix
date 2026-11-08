@@ -881,9 +881,6 @@ int lapic_enable(unsigned cpu)
 		return 0;
 	}
 
-	if (!lapic_enable_in_msr())
-		return 0;
-
 	/* set the highest priority for ever */
 	lapic_write(LAPIC_TPR, 0x0);
 
@@ -1321,14 +1318,14 @@ int apic_single_cpu_init(void)
 		return 0;
 	}
 
-	lapic_addr = LOCAL_APIC_DEF_ADDR;
+	acpi_init();
 	ioapic_enabled = 0;
 
 	if (!lapic_enable(0)) {
 #if defined(__x86_64__)
 		direct_com_print("MINIX/amd64: lapic_enable failed\r\n");
 #endif
-		lapic_addr = 0x0;
+		lapic_addr = 0;
 		return 0;
 	}
 #if defined(__x86_64__)
@@ -1336,9 +1333,8 @@ int apic_single_cpu_init(void)
 #endif
 
 	bsp_lapic_id = apicid();
-	printf("Boot cpu apic id %d\n", bsp_lapic_id);
+	printf("Boot cpu apic id %u\n", bsp_lapic_id);
 
-	acpi_init();
 #if defined(__x86_64__)
 	direct_com_print("MINIX/amd64: APIC acpi_init done\r\n");
 	direct_com_print("MINIX/amd64: before detect_ioapics\r\n");
