@@ -132,7 +132,7 @@ int init_local_timer(unsigned freq)
 {
 #ifdef USE_APIC
 	/* if we know the address, lapic is enabled and we should use it */
-	if (lapic_addr) {
+	if (lapic_is_enabled()) {
 		unsigned cpu = cpuid;
 		tsc_per_ms[cpu] = (unsigned)(cpu_get_freq(cpu) / 1000);
 		tsc_per_tick[cpu] = (unsigned)(cpu_get_freq(cpu) / system_hz);
@@ -155,7 +155,7 @@ int init_local_timer(unsigned freq)
 void stop_local_timer(void)
 {
 #ifdef USE_APIC
-	if (lapic_addr) {
+	if (lapic_is_enabled()) {
 		lapic_stop_timer();
 		apic_eoi();
 	} else
@@ -168,7 +168,7 @@ void stop_local_timer(void)
 void restart_local_timer(void)
 {
 #ifdef USE_APIC
-	if (lapic_addr) {
+	if (lapic_is_enabled()) {
 		lapic_restart_timer();
 	}
 #endif
@@ -177,7 +177,7 @@ void restart_local_timer(void)
 int register_local_timer_handler(const irq_handler_t handler)
 {
 #ifdef USE_APIC
-	if (lapic_addr) {
+	if (lapic_is_enabled()) {
 		/* Using APIC, it is configured in apic_idt_init() */
 		BOOT_VERBOSE(printf("Using LAPIC timer as tick source\n"));
 	} else
