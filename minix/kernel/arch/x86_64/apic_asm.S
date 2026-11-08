@@ -10,13 +10,11 @@
 	CALL_C_ALIGNED(_C_LABEL(irq_handle))				;
 
 /*
- * Call the LAPIC interrupt handler function, then signal EOI by writing 0
- * to the address stored in lapic_eoi_addr (a 64-bit vir_bytes global).
+ * Complete a LAPIC interrupt through the active xAPIC/x2APIC backend.
  */
 #define LAPIC_INTR_HANDLER(func)	\
 	CALL_C_ALIGNED(func)				;\
-	movq	_C_LABEL(lapic_eoi_addr)(%rip), %rax		;\
-	movl	$0, (%rax)					;
+	CALL_C_ALIGNED(_C_LABEL(arch_eoi))		;
 
 /*===========================================================================*/
 /*			interrupt handlers				     */
