@@ -62,11 +62,11 @@
 #define	OPEN_MAX		  128	/* max open files per process */
 #endif
 #define	PATH_MAX		 1024	/* max bytes in pathname */
-#if defined(__minix)
-#define	PIPE_BUF                32768   /* max bytes for atomic pipe writes */
-#else
+/*
+ * Keep atomic pipe writes within the capacity of a MINIX pipe
+ * (PIPE_SIZE in minix/include/minix/config.h). 512 is the POSIX minimum.
+ */
 #define	PIPE_BUF		  512	/* max bytes for atomic pipe writes */
-#endif /* defined(__minix) */
 
 #define	BC_BASE_MAX	      INT_MAX	/* max ibase/obase values in bc(1) */
 #define	BC_DIM_MAX		65535	/* max array elements in bc(1) */
