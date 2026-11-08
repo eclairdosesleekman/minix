@@ -154,7 +154,6 @@ void apic_idt_init(int reset);
 #ifdef CONFIG_SMP
 int apic_send_startup_ipi(unsigned cpu, phys_bytes trampoline);
 int apic_send_init_ipi(unsigned cpu, phys_bytes trampoline);
-unsigned int apicid(void);
 void ioapic_set_id(u32_t addr, unsigned int id);
 #else
 int apic_single_cpu_init(void);
