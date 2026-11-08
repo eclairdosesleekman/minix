@@ -114,6 +114,7 @@ struct acpi_madt_hdr {
 #define ACPI_MADT_TYPE_PLATFORM_INT_SRC	8
 #define ACPI_MADT_TYPE_Lx2APIC		9
 #define ACPI_MADT_TYPE_Lx2APIC_NMI	10
+#define ACPI_MADT_TYPE_X2APIC		ACPI_MADT_TYPE_Lx2APIC
 
 struct acpi_madt_item_hdr{
 	u8_t	type;
@@ -124,6 +125,26 @@ struct acpi_madt_lapic {
 	struct acpi_madt_item_hdr hdr;
 	u8_t	acpi_cpu_id;
 	u8_t	apic_id;
+	u32_t	flags;
+};
+
+struct acpi_madt_lapic_address {
+	struct acpi_madt_item_hdr hdr;
+	u16_t	reserved;
+	u64_t	address;
+};
+
+/* ACPI MADT type 9: processor Local x2APIC structure. */
+struct acpi_madt_x2apic {
+	struct acpi_madt_item_hdr hdr;
+	u16_t	reserved;
+	u32_t	apic_id;
+	u32_t	flags;
+	u32_t	acpi_cpu_id;
+};
+
+struct acpi_madt_cpu {
+	u32_t	apic_id;
 	u32_t	flags;
 };
 
@@ -159,7 +180,10 @@ void acpi_poweroff(void);
  * this function thus no memory needs to be freed
  */
 struct acpi_madt_ioapic * acpi_get_ioapic_next(void);
-/* same as above for local APICs */
+/* Legacy type-0 iterator retained for architecture-independent callers. */
 struct acpi_madt_lapic * acpi_get_lapic_next(void);
+/* Unified type-0/type-9 processor iterator and MADT Local APIC base. */
+int acpi_get_processor_next(struct acpi_madt_cpu *cpu);
+u64_t acpi_get_lapic_address(void);
 
 #endif /* __ACPI_H__ */
