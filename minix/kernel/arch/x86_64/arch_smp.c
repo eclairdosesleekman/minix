@@ -388,12 +388,12 @@ void smp_init (void)
 	acpi_init();
 	ioapic_enabled = 0;
 	if (!lapic_prepare()) {
-		printf("WARNING: unable to initialize local APIC mode\\n");
+		printf("WARNING: unable to initialize local APIC mode\n");
 		goto uniproc_fallback;
 	}
 
 	if (!discover_cpus()) {
-		printf("WARNING: ACPI did not report any enabled processors\\n");
+		printf("WARNING: ACPI did not report any enabled processors\n");
 		lapic_disable();
 		goto uniproc_fallback;
 	}
@@ -401,7 +401,7 @@ void smp_init (void)
 	boot_apic_id = apicid();
 	boot_cpu = logical_cpu_for_apicid(boot_apic_id);
 	if (boot_cpu < 0) {
-		printf("WARNING: bootstrap APIC ID %u is absent from the MADT\\n",
+		printf("WARNING: bootstrap APIC ID %u is absent from the MADT\n",
 				boot_apic_id);
 		lapic_disable();
 		goto uniproc_fallback;
@@ -436,7 +436,7 @@ void smp_init (void)
 	 * IOAPIC redirection entries have only an 8-bit physical destination.
 	 */
 	if (bsp_lapic_id > 0xff) {
-		printf("WARNING: BSP x2APIC ID %u cannot be targeted by this IOAPIC\\n",
+		printf("WARNING: BSP x2APIC ID %u cannot be targeted by this IOAPIC\n",
 				bsp_lapic_id);
 		lapic_disable();
 		goto uniproc_fallback;
