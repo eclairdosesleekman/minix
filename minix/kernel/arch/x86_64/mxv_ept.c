@@ -12,7 +12,6 @@
  */
 #include <sys/types.h>
 #include <string.h>
-#include <errno.h>
 #include <minix/mxvctl.h>
 
 #include "kernel/kernel.h"
@@ -337,7 +336,7 @@ mxv_pin_range(endpoint_t owner, vir_bytes user_virt, u64_t size,
 	if (!mxv_endpoint_live(owner) || !isokendpt(owner, &proc_nr))
 		return ESRCH;
 	target = proc_addr(proc_nr);
-	if (!HASPT(target))
+	if (target->p_seg.p_cr3 == 0)
 		return EFAULT;
 
 	/* Demand that the entire range is resident and physically contiguous. */
