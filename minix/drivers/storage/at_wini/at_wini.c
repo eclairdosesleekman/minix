@@ -66,6 +66,7 @@ static struct wini {		/* main drive struct, one entry per drive */
   unsigned char native;		/* if set, drive is native (not compat.) */
   unsigned char lba48;		/* if set, drive supports lba48 */
   unsigned char dma;		/* if set, drive supports dma */
+  unsigned char dma_pio_only;	/* if set, 32-bit DMA cannot address buffers */
   unsigned char dma_intseen;	/* if set, drive has seen an interrupt */
   int irq_hook_id;		/* id of irq hook at the kernel */
   unsigned cylinders;		/* physical number of cylinders */
@@ -315,6 +316,7 @@ static void init_drive(int drive, int base_cmd, int base_ctl, int base_dma,
   w->max_count = MAX_SECS << SECTOR_SHIFT;
   w->lba48 = 0;
   w->dma = 0;
+  w->dma_pio_only = 0;
 }
 
 /*===========================================================================*
@@ -586,7 +588,8 @@ static void check_dma(struct wini *wn)
 
 	wn->dma= 0;
 
-	if (disable_dma)
+	/* Do not re-enable bus-master DMA after an address-range fallback. */
+	if (disable_dma || wn->dma_pio_only)
 		return;
 
 	w= id_word(ID_CAPABILITIES);
@@ -1071,10 +1074,13 @@ static ssize_t w_transfer(
 		stop_dma(wn);
 		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, do_write);
 		if (r == DMA_SETUP_PIO) {
-			/* A 32-bit bus-master cannot reach this request's buffer.
-			 * PIO accesses the caller's virtual buffer and has no 4GB limit. */
-			printf("at_wini%ld: DMA buffer out of range; using PIO\n",
-				w_instance);
+			/* The bus-master cannot reach this buffer.  Disable DMA for
+			 * this drive so later requests use PIO without repeatedly
+			 * mapping the same high-memory buffers. */
+			printf("at_wini%ld: DMA buffer out of range; disabling DMA "
+				"for drive %td, using PIO\n", w_instance, wn - wini);
+			wn->dma = 0;
+			wn->dma_pio_only = 1;
 			do_dma = 0;
 		} else if (r == 0) {
 			return -errno;
@@ -1908,8 +1914,12 @@ static int atapi_transfer(
 		stop_dma(wn);
 		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, 0);
 		if (r == DMA_SETUP_PIO) {
-			printf("at_wini%ld: ATAPI DMA buffer out of range; using PIO\n",
-				w_instance);
+			/* Keep ATA and ATAPI transfers on the same per-drive fallback
+			 * path once this controller cannot address the buffer. */
+			printf("at_wini%ld: ATAPI DMA buffer out of range; disabling "
+				"DMA for drive %td, using PIO\n", w_instance, wn - wini);
+			wn->dma = 0;
+			wn->dma_pio_only = 1;
 			do_dma = 0;
 		} else if (r == 0) {
 			return errno;
