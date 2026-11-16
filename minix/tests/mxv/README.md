@@ -5,6 +5,20 @@ keeps EPTP detached from the Phase-1 VM-entry probe, so the checks below must
 be run on an Intel VT-x/EPT machine after the Phase-3 guest VMCS integration
 exists. They are not claimed as passing in this change.
 
+## SYS_MXVCTL message layout regression
+
+The kernel-call message must use the `mess_9` fields consistently. In that
+layout, `m9_s1` and `m9_s2` carry the API version and operation; the legacy
+`m1_i1` and `m1_i2` fields overlap `m9_ull2` and corrupt the second 64-bit
+argument. Verify that:
+
+1. An `MXV_OWNER_DIED` request for a valid endpoint succeeds.
+2. `MXV_PIN_RANGE` receives the exact virtual address in `m9_ull2`, and
+   returns the opaque pin token in that same field.
+3. `MXV_PIN_RELEASE` receives the complete opaque token in `m9_ull2`.
+4. The Phase-1 controls and Phase-2 memslot wrapper decode the version and
+   operation from `m9_s1` and `m9_s2`.
+
 ## VM-server pin lifecycle
 
 1. Allocate a page-aligned region using the existing contiguous anonymous

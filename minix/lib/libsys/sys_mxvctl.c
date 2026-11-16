@@ -7,6 +7,10 @@
 #include <string.h>
 
 /*
+ * Keep the control fields in mess_9's short fields: m1_i1/m1_i2 alias
+ * m9_ull2 in the message union and would overwrite the second 64-bit
+ * argument used by the Phase-2 request interface.
+ *
  * Invoke the Phase-1 MXV kernel control interface.
  *
  * The value is an input argument and, for operations that produce a value,
@@ -19,17 +23,17 @@ int sys_mxvctl(int operation, u64_t *value)
 	message m;
 	int r;
 
-	if (value == NULL)
+	if (value == NULL || operation < 0 || operation > SHRT_MAX)
 		return EINVAL;
 
 	memset(&m, 0, sizeof(m));
-	m.m1_i1 = MXVCTL_API_VERSION;
-	m.m1_i2 = operation;
-	m.m1_ull1 = *value;
+	m.m9_s1 = MXVCTL_API_VERSION;
+	m.m9_s2 = operation;
+	m.m9_ull1 = *value;
 
 	r = _kernel_call(SYS_MXVCTL, &m);
 	if (r == OK)
-		*value = m.m1_ull1;
+		*value = m.m9_ull1;
 
 	return r;
 }
@@ -42,12 +46,12 @@ sys_mxvctl_req(struct mxvctl_req *req)
 	int r;
 
 	if (req == NULL || req->version != MXVCTL_API_VERSION ||
-	    req->grant_id != 0 || req->flags != 0 ||
+	    req->operation > SHRT_MAX || req->grant_id != 0 || req->flags != 0 ||
 	    req->reserved[0] != 0 || req->reserved[1] != 0)
 		return EINVAL;
 	memset(&m, 0, sizeof(m));
-	m.m1_i1 = (int)req->version;
-	m.m1_i2 = (int)req->operation;
+	m.m9_s1 = (int)req->version;
+	m.m9_s2 = (int)req->operation;
 	m.m9_ull1 = req->object_handle;
 	m.m9_ull2 = req->arg0;
 	m.m9_l1 = (long)req->arg1;
@@ -73,8 +77,8 @@ sys_mxvctl_memslot(int operation, u64_t vm_handle,
 	     req->pin_token != 0 || req->flags != 0))
 		return EINVAL;
 	memset(&m, 0, sizeof(m));
-	m.m1_i1 = (int)req->version;
-	m.m1_i2 = operation;
+	m.m9_s1 = (int)req->version;
+	m.m9_s2 = operation;
 	m.m9_ull1 = vm_handle;
 	m.m9_ull2 = req->pin_token;
 	m.m9_l1 = (long)req->guest_phys;
