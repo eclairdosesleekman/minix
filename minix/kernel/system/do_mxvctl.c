@@ -16,6 +16,11 @@ mxv_unused_fields_zero(message *m)
 	    m->m9_l4 == 0 && m->m9_l5 == 0;
 }
 
+/*
+ * SYS_MXVCTL uses mess_9 consistently. In that layout, m9_s1/m9_s2 carry
+ * the version and operation; m1_i1/m1_i2 overlap m9_ull2 and corrupt the
+ * second 64-bit request argument.
+ */
 int
 do_mxvctl(struct proc *caller, message *m_ptr)
 {
@@ -27,15 +32,15 @@ do_mxvctl(struct proc *caller, message *m_ptr)
 	is_vm = (caller->p_nr == VM_PROC_NR);
 	if (!is_rs && !is_vm)
 		return EPERM;
-	if (m_ptr->m1_i1 != MXVCTL_API_VERSION)
+	if (m_ptr->m9_s1 != MXVCTL_API_VERSION)
 		return EINVAL;
 
-	value = m_ptr->m1_ull1;
-	switch (m_ptr->m1_i2) {
+	value = m_ptr->m9_ull1;
+	switch (m_ptr->m9_s2) {
 	case MXV_QUERY_CAPS:
 		if (!is_rs)
 			return EPERM;
-		m_ptr->m1_ull1 = mxv_vmx_capabilities();
+		m_ptr->m9_ull1 = mxv_vmx_capabilities();
 		return OK;
 	case MXV_VMXON:
 		if (!is_rs)
@@ -50,7 +55,7 @@ do_mxvctl(struct proc *caller, message *m_ptr)
 			return EPERM;
 		r = mxv_vcpu_create(caller->p_endpoint, &value);
 		if (r == OK)
-			m_ptr->m1_ull1 = value;
+			m_ptr->m9_ull1 = value;
 		return r;
 	case MXV_VCPU_DESTROY:
 		if (!is_rs)
@@ -61,7 +66,7 @@ do_mxvctl(struct proc *caller, message *m_ptr)
 			return EPERM;
 		r = mxv_vcpu_run_probe(caller->p_endpoint, value, &value);
 		if (r == OK)
-			m_ptr->m1_ull1 = value;
+			m_ptr->m9_ull1 = value;
 		return r;
 
 	case MXV_PIN_RANGE:
@@ -101,12 +106,12 @@ do_mxvctl(struct proc *caller, message *m_ptr)
 			return EPERM;
 		r = mxv_vm_create(caller->p_endpoint, &value);
 		if (r == OK)
-			m_ptr->m1_ull1 = value;
+			m_ptr->m9_ull1 = value;
 		return r;
 	case MXV_VM_DESTROY:
 		if (!is_rs)
 			return EPERM;
-		return mxv_vm_destroy(caller->p_endpoint, m_ptr->m1_ull1);
+		return mxv_vm_destroy(caller->p_endpoint, m_ptr->m9_ull1);
 	case MXV_MEM_ATTACH:
 		if (!is_rs)
 			return EPERM;
