@@ -1071,10 +1071,12 @@ static ssize_t w_transfer(
 		stop_dma(wn);
 		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, do_write);
 		if (r == DMA_SETUP_PIO) {
-			/* A 32-bit bus-master cannot reach this request's buffer.
-			 * PIO accesses the caller's virtual buffer and has no 4GB limit. */
-			printf("at_wini%ld: DMA buffer out of range; using PIO\n",
-				w_instance);
+			/* The bus-master cannot reach this buffer.  Disable DMA for
+			 * this drive so later requests use PIO without repeatedly
+			 * mapping the same high-memory buffers. */
+			printf("at_wini%ld: DMA buffer out of range; disabling DMA "
+				"for drive %td, using PIO\n", w_instance, wn - wini);
+			wn->dma = 0;
 			do_dma = 0;
 		} else if (r == 0) {
 			return -errno;
@@ -1908,8 +1910,11 @@ static int atapi_transfer(
 		stop_dma(wn);
 		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, 0);
 		if (r == DMA_SETUP_PIO) {
-			printf("at_wini%ld: ATAPI DMA buffer out of range; using PIO\n",
-				w_instance);
+			/* Keep ATA and ATAPI transfers on the same per-drive fallback
+			 * path once this controller cannot address the buffer. */
+			printf("at_wini%ld: ATAPI DMA buffer out of range; disabling "
+				"DMA for drive %td, using PIO\n", w_instance, wn - wini);
+			wn->dma = 0;
 			do_dma = 0;
 		} else if (r == 0) {
 			return errno;
