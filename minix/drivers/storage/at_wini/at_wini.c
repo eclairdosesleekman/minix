@@ -19,6 +19,7 @@
 #include <sys/ioc_disk.h>
 #include <machine/pci.h>
 #include <sys/mman.h>
+#include <string.h>
 
 /* Variables. */
 
@@ -127,11 +128,15 @@ static ssize_t w_transfer(devminor_t minor, int do_write, u64_t position,
 static int com_out(struct command *cmd);
 static int com_out_ext(struct command *cmd);
 /* setup_dma() can request PIO when a valid buffer is outside the 32-bit
- * address range supported by the IDE bus-master engine. */
+ * address range supported by the IDE bus-master engine and no bounce buffer
+ * is available. */
 #define DMA_SETUP_PIO 2
 
+static int copy_iovec_buffer(endpoint_t proc_nr, iovec_t *iov,
+	unsigned int nr_req, size_t addr_offset, void *buffer, size_t size,
+	int to_buffer);
 static int setup_dma(unsigned *sizep, endpoint_t proc_nr, iovec_t *iov,
-	size_t addr_offset, int do_write);
+	unsigned int nr_req, size_t addr_offset, int do_write, int *bouncedp);
 static void w_need_reset(void);
 static int w_do_close(devminor_t minor);
 static int w_ioctl(devminor_t minor, unsigned long request, endpoint_t endpt,
@@ -274,12 +279,13 @@ static int init_params(void)
   if (disable_dma) {
 	printf("at_wini%ld: DMA for ATA devices is disabled.\n", w_instance);
   } else {
-	/* Ask for anonymous memory for DMA, that is physically contiguous. */
-	dma_buf = alloc_contig(ATA_DMA_BUF_SIZE, 0, &dma_buf_phys);
-	/* The IDE bus-master PRD pointer is only 32 bits wide. Keep the
-	 * descriptor table below 16MB so it is always DMA-addressable. */
+	/* Keep both the DMA bounce buffer and the PRD table below 16MB.
+	 * The IDE bus-master engine can only address the first 4GB, and the
+	 * bounce buffer is used when a caller's buffer is above that limit. */
+	dma_buf = alloc_contig(ATA_DMA_BUF_SIZE, AC_LOWER16M, &dma_buf_phys);
 	prdt = alloc_contig(PRDT_BYTES, AC_LOWER16M, &prdt_phys);
-	if(!dma_buf || !prdt) {
+	if(!dma_buf || !prdt || dma_buf_phys > 0xFFFFFFFFULL ||
+	    (u64_t)ATA_DMA_BUF_SIZE > 0x100000000ULL - dma_buf_phys) {
 		disable_dma = 1;
 		printf("at_wini%ld: no dma\n", w_instance);
 	}
@@ -1025,7 +1031,7 @@ static ssize_t w_transfer(
 {
   struct wini *wn;
   iovec_t *iop, *iov_end = iov + nr_req;
-  int r, s, errors, do_dma;
+  int r, s, errors, do_dma, bounced;
   unsigned long block;
   u32_t w_status;
   u64_t dv_size;
@@ -1072,7 +1078,9 @@ static ssize_t w_transfer(
 
 	if (do_dma) {
 		stop_dma(wn);
-		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, do_write);
+		bounced = 0;
+		r = setup_dma(&nbytes, proc_nr, iov, nr_req, addr_offset,
+			do_write, &bounced);
 		if (r == DMA_SETUP_PIO) {
 			/* The bus-master cannot reach this buffer.  Disable DMA for
 			 * this drive so later requests use PIO without repeatedly
@@ -1135,6 +1143,17 @@ static ssize_t w_transfer(
 		}
 
 		stop_dma(wn);
+
+		/* A high-memory read was DMA-transferred through dma_buf.
+		 * Copy it back to the caller before advancing the iovec. */
+		if (bounced && !do_write) {
+			s = copy_iovec_buffer(proc_nr, iov, nr_req, addr_offset,
+				dma_buf, nbytes, 0);
+			if (s != OK) {
+				w_command = CMD_IDLE;
+				return s;
+			}
+		}
 
 		dma_buf_offset= 0;
 		while (r == OK && nbytes > 0)
@@ -1345,14 +1364,79 @@ static int com_out_ext(struct command *cmd)
   return(OK);
 }
 /*===========================================================================*
+ *				copy_iovec_buffer		     *
+ *===========================================================================*/
+/* Copy a portion of an iovec to or from the driver's low-memory DMA buffer.
+ * For remote endpoints, iov_addr contains a grant ID; for SELF it contains
+ * a virtual address in this process.
+ */
+static int copy_iovec_buffer(
+  endpoint_t proc_nr,
+  iovec_t *iov,
+  unsigned int nr_req,
+  size_t addr_offset,
+  void *buffer,
+  size_t size,
+  int to_buffer
+)
+{
+	unsigned int i;
+	size_t chunk, copied;
+	int r;
+
+	copied = 0;
+	for (i = 0; i < nr_req && size > 0; i++) {
+		if (addr_offset >= iov[i].iov_size) {
+			addr_offset -= iov[i].iov_size;
+			continue;
+		}
+
+		chunk = iov[i].iov_size - addr_offset;
+		if (chunk > size)
+			chunk = size;
+
+		if (proc_nr == SELF) {
+			if (to_buffer) {
+				memcpy((char *)buffer + copied,
+					(void *)(iov[i].iov_addr + addr_offset), chunk);
+			} else {
+				memcpy((void *)(iov[i].iov_addr + addr_offset),
+					(char *)buffer + copied, chunk);
+			}
+		} else if (to_buffer) {
+			r = sys_safecopyfrom(proc_nr,
+				(cp_grant_id_t)iov[i].iov_addr, addr_offset,
+				(vir_bytes)((char *)buffer + copied), chunk);
+			if (r != OK)
+				return r;
+		} else {
+			r = sys_safecopyto(proc_nr,
+				(cp_grant_id_t)iov[i].iov_addr, addr_offset,
+				(vir_bytes)((char *)buffer + copied), chunk);
+			if (r != OK)
+				return r;
+		}
+
+		size -= chunk;
+		copied += chunk;
+		addr_offset = 0;
+	}
+
+	return size == 0 ? OK : EINVAL;
+}
+
+
+/*===========================================================================*
  *				setup_dma				     *
  *===========================================================================*/
 static int setup_dma(
   unsigned *sizep,
   endpoint_t proc_nr,
   iovec_t *iov,
+  unsigned int nr_req,
   size_t addr_offset,
-  int do_write
+  int do_write,
+  int *bouncedp
 ){
 	/* vvec cannot be bigger than prdt, so I think it is a suitable size
 	 * Should not exhaust the stack */
@@ -1365,13 +1449,16 @@ static int setup_dma(
 	u32_t v;
 	struct wini *wn = w_wn;
 
+	if (bouncedp != NULL)
+		*bouncedp = 0;
+
 	size = *sizep;
 	i = 0;	/* pvec index */
 	j = 0;	/* prdt index */
 	vvec_len = 0;
 
 	/* Step 1: copy data from iov to vvec */
-	while (size > 0) {
+	while (size > 0 && vvec_len < (int)nr_req && vvec_len < N_PRDTE) {
 		if (proc_nr == SELF) {
 			vvec[vvec_len].vv_addr = iov[vvec_len].iov_addr;
 		}
@@ -1388,8 +1475,14 @@ static int setup_dma(
 		vvec_len++;
 	}
 
+	if (size > 0) {
+		printf("setup_dma: request has too many iovec entries\n");
+		errno = EINVAL;
+		return 0;
+	}
+
 	pcount = vvec_len;
-	
+
 	/* Step 2: sys_vumap */
 	/* sys_vumap should resolve all our addresses in one go,
 	 * since caller is required to provide us with physically
@@ -1420,18 +1513,74 @@ static int setup_dma(
 	size = 0;
 	offset = 0;
 	while (i < pcount) {
-		/* Bus-master IDE uses 32-bit physical addresses. Check the
-		 * complete segment before storing its base in the 32-bit PRD
-		 * field; a segment crossing 4GB must use PIO instead. */
+		/* Bus-master IDE uses 32-bit physical addresses. If any part of
+		 * a request is above 4GB, use the low-memory bounce buffer rather
+		 * than dropping the whole drive to sector-at-a-time PIO. */
 		bytes = pvec[i].vp_size - offset;
 		phys_addr = (u64_t)pvec[i].vp_addr + offset;
 		if (phys_addr > 0xFFFFFFFFULL ||
 		    (u64_t)bytes > 0x100000000ULL - phys_addr) {
-			printf("setup_dma: buffer outside 32-bit DMA range; using PIO\n");
-			return DMA_SETUP_PIO;
+			if (bouncedp == NULL || dma_buf == NULL ||
+			    dma_buf_phys > 0xFFFFFFFFULL ||
+			    (u64_t)ATA_DMA_BUF_SIZE >
+			    0x100000000ULL - dma_buf_phys) {
+				printf("setup_dma: buffer outside 32-bit DMA range; using PIO\n");
+				return DMA_SETUP_PIO;
+			}
+
+			/* Keep the bounce transfer bounded by the allocated buffer.
+			 * ATA_DMA_BUF_SIZE is sector-aligned and below 64KB. */
+			if (*sizep > ATA_DMA_BUF_SIZE)
+				*sizep = ATA_DMA_BUF_SIZE;
+			if (*sizep == 0 || (*sizep & SECTOR_MASK) != 0) {
+				errno = EINVAL;
+				return 0;
+			}
+
+			if (do_write) {
+				r = copy_iovec_buffer(proc_nr, iov, nr_req,
+					addr_offset, dma_buf, *sizep, 1);
+				if (r != OK) {
+					errno = r;
+					return 0;
+				}
+			}
+
+			/* A PRD may not cross a 64KB boundary. Split the small
+			 * bounce buffer when its physical base is not 64KB-aligned. */
+			i = 0;
+			j = 0;
+			size = 0;
+			phys_addr = dma_buf_phys;
+			bytes = *sizep;
+			while (bytes > 0) {
+				unsigned int prd_bytes;
+
+				prd_bytes = 0x10000 - (unsigned int)
+					(phys_addr & 0xFFFF);
+				if (prd_bytes > bytes)
+					prd_bytes = bytes;
+				if (j >= N_PRDTE) {
+					errno = EINVAL;
+					return 0;
+				}
+
+				prdt[j].prdte_base = (u32_t)phys_addr;
+				prdt[j].prdte_count = prd_bytes;
+				prdt[j].prdte_reserved = 0;
+				prdt[j].prdte_flags = 0;
+				phys_addr += prd_bytes;
+				bytes -= prd_bytes;
+				size += prd_bytes;
+				j++;
+			}
+			prdt[j - 1].prdte_flags |= PRDTE_FL_EOT;
+			*bouncedp = 1;
+			goto prdt_ready;
 		}
+
 		prdt[j].prdte_base = (u32_t)phys_addr;
-		
+
 		/* make sure PRD does not cross 64K boundary */
 		if (prdt[j].prdte_base / 0x10000 !=
 				(prdt[j].prdte_base + bytes - 1) / 0x10000) {
@@ -1474,6 +1623,7 @@ static int setup_dma(
 		return 0;
 	}
 
+prdt_ready:
 #if VERBOSE_DMA
 	printf("dma not bad\n");
 	for (i = 0; i < j; i++) {
@@ -1500,7 +1650,6 @@ static int setup_dma(
 
 	return 1;
 }
-
 
 /*===========================================================================*
  *				w_need_reset				     *
@@ -1912,7 +2061,8 @@ static int atapi_transfer(
 
 	if(do_dma) {
 		stop_dma(wn);
-		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, 0);
+		r = setup_dma(&nbytes, proc_nr, iov, nr_req, addr_offset,
+			0, NULL);
 		if (r == DMA_SETUP_PIO) {
 			/* Keep ATA and ATAPI transfers on the same per-drive fallback
 			 * path once this controller cannot address the buffer. */
