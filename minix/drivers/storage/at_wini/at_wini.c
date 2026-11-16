@@ -125,6 +125,10 @@ static ssize_t w_transfer(devminor_t minor, int do_write, u64_t position,
 	endpoint_t proc_nr, iovec_t *iov, unsigned int nr_req, int flags);
 static int com_out(struct command *cmd);
 static int com_out_ext(struct command *cmd);
+/* setup_dma() can request PIO when a valid buffer is outside the 32-bit
+ * address range supported by the IDE bus-master engine. */
+#define DMA_SETUP_PIO 2
+
 static int setup_dma(unsigned *sizep, endpoint_t proc_nr, iovec_t *iov,
 	size_t addr_offset, int do_write);
 static void w_need_reset(void);
@@ -271,7 +275,9 @@ static int init_params(void)
   } else {
 	/* Ask for anonymous memory for DMA, that is physically contiguous. */
 	dma_buf = alloc_contig(ATA_DMA_BUF_SIZE, 0, &dma_buf_phys);
-	prdt = alloc_contig(PRDT_BYTES, 0, &prdt_phys);
+	/* The IDE bus-master PRD pointer is only 32 bits wide. Keep the
+	 * descriptor table below 16MB so it is always DMA-addressable. */
+	prdt = alloc_contig(PRDT_BYTES, AC_LOWER16M, &prdt_phys);
 	if(!dma_buf || !prdt) {
 		disable_dma = 1;
 		printf("at_wini%ld: no dma\n", w_instance);
@@ -1064,7 +1070,13 @@ static ssize_t w_transfer(
 	if (do_dma) {
 		stop_dma(wn);
 		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, do_write);
-		if (r == 0) {
+		if (r == DMA_SETUP_PIO) {
+			/* A 32-bit bus-master cannot reach this request's buffer.
+			 * PIO accesses the caller's virtual buffer and has no 4GB limit. */
+			printf("at_wini%ld: DMA buffer out of range; using PIO\n",
+				w_instance);
+			do_dma = 0;
+		} else if (r == 0) {
 			return -errno;
 		}
 #if 0
@@ -1342,6 +1354,7 @@ static int setup_dma(
 	struct vumap_phys pvec[N_PRDTE];
 
 	unsigned bytes, offset, size;
+	u64_t phys_addr;
 	int i, j, vvec_len, r, pcount;
 	u32_t v;
 	struct wini *wn = w_wn;
@@ -1401,16 +1414,17 @@ static int setup_dma(
 	size = 0;
 	offset = 0;
 	while (i < pcount) {
-		/* The IDE bus-master can only address 32 bits. If sys_vumap
-		 * handed us a buffer above 4GB, we cannot DMA to it; bail so
-		 * the caller falls back to PIO instead of truncating. */
-		if ((u64_t)pvec[i].vp_addr + offset > 0xFFFFFFFFULL) {
-			printf("setup_dma: buffer above 4GB, no DMA\n");
-			errno = EINVAL;
-			return 0;
-		}
-		prdt[j].prdte_base = pvec[i].vp_addr + offset;
+		/* Bus-master IDE uses 32-bit physical addresses. Check the
+		 * complete segment before storing its base in the 32-bit PRD
+		 * field; a segment crossing 4GB must use PIO instead. */
 		bytes = pvec[i].vp_size - offset;
+		phys_addr = (u64_t)pvec[i].vp_addr + offset;
+		if (phys_addr > 0xFFFFFFFFULL ||
+		    (u64_t)bytes > 0x100000000ULL - phys_addr) {
+			printf("setup_dma: buffer outside 32-bit DMA range; using PIO\n");
+			return DMA_SETUP_PIO;
+		}
+		prdt[j].prdte_base = (u32_t)phys_addr;
 		
 		/* make sure PRD does not cross 64K boundary */
 		if (prdt[j].prdte_base / 0x10000 !=
@@ -1893,7 +1907,11 @@ static int atapi_transfer(
 	if(do_dma) {
 		stop_dma(wn);
 		r = setup_dma(&nbytes, proc_nr, iov, addr_offset, 0);
-		if (r == 0) {
+		if (r == DMA_SETUP_PIO) {
+			printf("at_wini%ld: ATAPI DMA buffer out of range; using PIO\n",
+				w_instance);
+			do_dma = 0;
+		} else if (r == 0) {
 			return errno;
 		} else if(nbytes != nblocks * CD_SECTOR_SIZE) {
 			stop_dma(wn);
