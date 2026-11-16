@@ -16,6 +16,7 @@
 #include <minix/mxvctl.h>
 
 #include <errno.h>
+#include <string.h>
 #include <assert.h>
 
 #include "glo.h"
