@@ -1364,7 +1364,7 @@ static int com_out_ext(struct command *cmd)
   return(OK);
 }
 /*===========================================================================*
- *				setup_dma				     *
+ *				copy_iovec_buffer		     *
  *===========================================================================*/
 /* Copy a portion of an iovec to or from the driver's low-memory DMA buffer.
  * For remote endpoints, iov_addr contains a grant ID; for SELF it contains
