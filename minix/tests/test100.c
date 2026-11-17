@@ -17,7 +17,7 @@ static const struct {
 	{ (phys_clicks)0x0fffff, (phys_bytes)0x00fffff000ULL },
 	{ (phys_clicks)0x100000, (phys_bytes)0x0100000000ULL },
 	{ (phys_clicks)0x100001, (phys_bytes)0x0100001000ULL },
-	{ (phys_clicks)0xffffff, (phys_bytes)0x0fffffff000ULL },
+	{ (phys_clicks)0xffffff, (phys_bytes)0x0ffffff000ULL },
 	{ (phys_clicks)0x1000000,(phys_bytes)0x1000000000ULL }
 };
 
