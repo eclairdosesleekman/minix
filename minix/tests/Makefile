@@ -88,6 +88,10 @@ MINIX_TESTS+= \
    62
 .endif #  ${MACHINE_ARCH} == "i386"
 
+.if ${MACHINE_ARCH} == "x86_64"
+MINIX_TESTS+= 100
+.endif #  ${MACHINE_ARCH} == "x86_64"
+
 .for t in ${MINIX_TESTS}
 PROGS+= test${t}
 .endfor

@@ -97,7 +97,10 @@
 */
 #define NR_MEMS            16
 
-#define CLICK2ABS(v) ((v) << CLICK_SHIFT)
+/* phys_clicks stays 32-bit on amd64.  Widen before shifting, or pages
+ * at and above 4GB wrap to low physical addresses.
+ */
+#define CLICK2ABS(v) (((unsigned long)(v)) << CLICK_SHIFT)
 #define ABS2CLICK(a) ((a) >> CLICK_SHIFT)
 
 /* Flag bits for i_mode in the inode. */
