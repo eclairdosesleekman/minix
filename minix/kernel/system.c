@@ -644,6 +644,10 @@ void kernel_call_resume(struct proc *caller)
  *===========================================================================*/
 int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 {
+#ifdef CONFIG_SMP
+	int stopped_remote = 0;
+#endif
+
 	/* Make sure the values given are within the allowed range.*/
 	if ((priority < TASK_Q && priority != -1) || priority > NR_SCHED_QUEUES)
 		return(EINVAL);
@@ -658,27 +662,29 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 		return EBADCPU;
 #endif
 
-	/* In some cases, we might be rescheduling a runnable process. In such
-	 * a case (i.e. if we are updating the priority) we set the NO_QUANTUM
-	 * flag before the generic unset to dequeue/enqueue the process
+	/* Reschedule runnable processes by removing them from their current
+	 * run queue before changing their scheduling parameters.
 	 */
-
-	/* FIXME this preempts the process, do we really want to do that ?*/
-
-	/* FIXME this is a problem for SMP if the processes currently runs on a
-	 * different CPU */
 	if (proc_is_runnable(p)) {
 #ifdef CONFIG_SMP
-		if (p->p_cpu != cpuid && cpu != -1 && cpu != p->p_cpu) {
-			smp_schedule_migrate_proc(p, cpu);
+		if (p->p_cpu != cpuid) {
+			if (cpu != -1 && cpu != p->p_cpu) {
+				/* Migration also saves any FPU state owned by the old CPU. */
+				smp_schedule_migrate_proc(p, cpu);
+			} else if (get_cpu_var(p->p_cpu, proc_ptr) == p) {
+				/*
+				 * The process is executing on another CPU, not waiting
+				 * on its run queue. Stop it there before changing its
+				 * flags; otherwise it can continue running while this
+				 * CPU removes and re-enqueues it.
+				 */
+				smp_schedule_stop_proc(p);
+				stopped_remote = 1;
+			}
 		}
 #endif
-
 		RTS_SET(p, RTS_NO_QUANTUM);
 	}
-
-	if (proc_is_runnable(p))
-		RTS_SET(p, RTS_NO_QUANTUM);
 
 	if (priority != -1)
 		p->p_priority = priority;
@@ -696,8 +702,15 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 	else
 		p->p_misc_flags &= ~MF_NICED;
 
-	/* Clear the scheduling bit and enqueue the process */
+	/* Clear the scheduling bit and enqueue the process.  If it was
+	 * stopped on another CPU, release it only after its new scheduling
+	 * parameters have been installed.
+	 */
 	RTS_UNSET(p, RTS_NO_QUANTUM);
+#ifdef CONFIG_SMP
+	if (stopped_remote)
+		RTS_UNSET(p, RTS_PROC_STOP);
+#endif
 
 	return OK;
 }
