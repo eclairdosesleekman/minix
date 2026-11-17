@@ -212,10 +212,12 @@ static void smp_schedule_sync(struct proc * p, unsigned task)
 
 	assert(cpu != mycpu);
 	/*
-	 * if some other cpu made a request to the same cpu, wait until it is
-	 * done before proceeding
+	 * Several CPUs may wait for the same target while the BKL is dropped.
+	 * Recheck the slot after reacquiring the BKL: another waiter may have
+	 * reserved it and sent a new request in the meantime.  A single if here
+	 * lets a later waiter overwrite that request's process pointer.
 	 */
-	if (sched_ipi_data[cpu].flags != 0) {
+	while (sched_ipi_data[cpu].flags != 0) {
 		BKL_UNLOCK();
 		while (sched_ipi_data[cpu].flags != 0) {
 			if (sched_ipi_data[mycpu].flags) {
@@ -228,7 +230,7 @@ static void smp_schedule_sync(struct proc * p, unsigned task)
 	}
 
 	sched_ipi_data[cpu].data = (vir_bytes) p;
-	sched_ipi_data[cpu].flags |= task;
+	sched_ipi_data[cpu].flags = task;
 	__insn_barrier();
 	arch_send_smp_schedule_ipi(cpu);
 
