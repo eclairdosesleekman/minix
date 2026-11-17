@@ -644,6 +644,10 @@ void kernel_call_resume(struct proc *caller)
  *===========================================================================*/
 int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 {
+#ifdef CONFIG_SMP
+	int stopped_remote = 0;
+#endif
+
 	/* Make sure the values given are within the allowed range.*/
 	if ((priority < TASK_Q && priority != -1) || priority > NR_SCHED_QUEUES)
 		return(EINVAL);
@@ -661,9 +665,6 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 	/* Reschedule runnable processes by removing them from their current
 	 * run queue before changing their scheduling parameters.
 	 */
-#ifdef CONFIG_SMP
-	int stopped_remote = 0;
-#endif
 	if (proc_is_runnable(p)) {
 #ifdef CONFIG_SMP
 		if (p->p_cpu != cpuid) {
