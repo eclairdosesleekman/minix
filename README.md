@@ -1,7 +1,7 @@
 # MINIX 3.4.0 — amd64 UEFI branch
 
-This repository is a MINIX 3.4.0 with UEFI
-boot support and an x86_64 (amd64) port.
+This repository is a MINIX 3.4.0 with UEFI boot support and an x86_64 (amd64) port.
+This branch aims to revive MINIX 3 as a modern daily driver OS.
 
 ## Build an amd64 UEFI installation ISO
 
