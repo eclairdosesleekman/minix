@@ -379,6 +379,20 @@ not_runnable_pick_new:
 #endif
 	switch_address_space(p);
 
+#ifdef CONFIG_SMP
+	/*
+	 * Invalidate stale translations before running deferred kernel work.
+	 * delivermsg() and kernel_call_resume() may access userspace memory
+	 * while the process is still in the kernel; flushing only just before
+	 * returning to userspace is too late for those operations.
+	 */
+	if (p->p_misc_flags & MF_FLUSH_TLB) {
+		if (tlb_must_refresh)
+			refresh_tlb();
+		p->p_misc_flags &= ~MF_FLUSH_TLB;
+	}
+#endif
+
 check_misc_flags:
 
 	assert(p);
