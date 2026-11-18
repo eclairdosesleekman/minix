@@ -22,7 +22,10 @@
 
 #include "common.h"
 
-static message ipc_msg __attribute__((aligned(4096)));
+static union {
+	message msg;
+	unsigned char page[4096];
+} ipc_page __attribute__((aligned(4096)));
 
 static int
 run_child(void)
@@ -31,12 +34,12 @@ run_child(void)
 
 	/* A broken retry can repeatedly fault or terminate this child. */
 	alarm(15);
-	r = ipc_sendrec(PM_PROC_NR, &ipc_msg);
+	r = ipc_sendrec(PM_PROC_NR, &ipc_page.msg);
 	if (r != 0)
 		return 1;
-	if (ipc_msg.m_type != getpid())
+	if (ipc_page.msg.m_type != getpid())
 		return 2;
-	if (ipc_msg.m_pm_lc_getpid.parent_pid != getppid())
+	if (ipc_page.msg.m_pm_lc_getpid.parent_pid != getppid())
 		return 3;
 	alarm(0);
 
@@ -51,8 +54,8 @@ main(void)
 
 	start(102);
 
-	memset(&ipc_msg, 0, sizeof(ipc_msg));
-	ipc_msg.m_type = PM_GETPID;
+	memset(&ipc_page, 0, sizeof(ipc_page));
+	ipc_page.msg.m_type = PM_GETPID;
 
 	/*
 	 * Each child starts from the parent's unchanged message page.  Its
@@ -72,7 +75,7 @@ main(void)
 			    i, status);
 
 		/* The child's reply must not modify the parent's COW page. */
-		if (ipc_msg.m_type != PM_GETPID)
+		if (ipc_page.msg.m_type != PM_GETPID)
 			efmt("child modified parent's IPC buffer at iteration %d", i);
 	}
 
