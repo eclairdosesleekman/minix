@@ -671,6 +671,7 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 			if (cpu != -1 && cpu != p->p_cpu) {
 				/* Migration also saves any FPU state owned by the old CPU. */
 				smp_schedule_migrate_proc(p, cpu);
+				stopped_remote = 1;
 			} else if (get_cpu_var(p->p_cpu, proc_ptr) == p) {
 				/*
 				 * The process is executing on another CPU, not waiting
