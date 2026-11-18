@@ -38,6 +38,10 @@
 #include "kernel/type.h"
 #include "kernel/proc.h"
 
+#if NR_MEMS < MAXMEMMAP
+#error "VM memory chunk table must hold every kernel memory-map entry"
+#endif
+
 /*===========================================================================*
  *                              get_mem_chunks                               *
  *===========================================================================*/
@@ -54,9 +58,11 @@ struct memory *mem_chunks)                      /* store mem chunks here */
   /* Initialize everything to zero. */
   memset(mem_chunks, 0, NR_MEMS*sizeof(*mem_chunks));
 
-  /* Obtain and parse memory from kernel environment. */
-  /* XXX Any memory chunk in excess of NR_MEMS is silently ignored. */
-  for(i = 0; i < MIN(MAXMEMMAP, NR_MEMS); i++) {
+  /* Preserve the complete kernel map. The kernel may split available ranges
+   * while carving out the kernel and boot modules; truncating this list can
+   * discard high-memory chunks on amd64.
+   */
+  for(i = 0; i < MAXMEMMAP; i++) {
   	mem_chunks[i].base = kernel_boot_info.memmap[i].mm_base_addr;
   	mem_chunks[i].size = kernel_boot_info.memmap[i].mm_length;
   }
