@@ -7,9 +7,10 @@
  * the kernel must copy the reply back to that COW page, ask VM to resolve
  * the write fault, and retry the copy with the refreshed mapping.
  *
- * On SMP amd64, VMCTL_VMINHIBIT_CLEAR marks per-CPU stale-TLB bits after
- * changing the mapping.  The kernel copy path must consume that bit and
- * reload CR3 before retrying the copyout.
+ * On SMP amd64, VM marks the inhibited process for a TLB refresh after
+ * changing its mapping.  switch_to_user() must refresh before deferred
+ * message delivery; doing it only just before returning to user mode is
+ * too late because delivermsg() copies the reply while still in the kernel.
  */
 #include <sys/wait.h>
 
