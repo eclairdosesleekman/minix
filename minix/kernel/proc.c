@@ -331,9 +331,7 @@ void switch_to_user(void)
 	 */
 	struct proc * p;
 #ifdef CONFIG_SMP
-	int tlb_must_refresh;
 not_runnable_pick_new:
-	tlb_must_refresh = 0;
 #endif
 	p = get_cpulocal_var(proc_ptr);
 	/*
@@ -373,13 +371,23 @@ not_runnable_pick_new:
 	/* update the global variable */
 	get_cpulocal_var(proc_ptr) = p;
 
-#ifdef CONFIG_SMP
-	if (p->p_misc_flags & MF_FLUSH_TLB && get_cpulocal_var(ptproc) == p)
-		tlb_must_refresh = 1;
-#endif
 	switch_address_space(p);
 
 check_misc_flags:
+#ifdef CONFIG_SMP
+	/*
+	 * Invalidate stale translations before running deferred kernel work.
+	 * This label is also reached directly when the current process is
+	 * still runnable, bypassing pick_proc() and switch_address_space().
+	 * In either case p is the current address space, so a pending flush
+	 * must be performed before delivermsg() or kernel_call_resume() can
+	 * access its userspace memory.
+	 */
+	if (p->p_misc_flags & MF_FLUSH_TLB) {
+		refresh_tlb();
+		p->p_misc_flags &= ~MF_FLUSH_TLB;
+	}
+#endif
 
 	assert(p);
 #ifdef CONFIG_SMP
@@ -521,9 +529,9 @@ check_misc_flags:
 	assert(p->p_seg.p_ttbr != 0);
 #endif
 #ifdef CONFIG_SMP
+	/* A deferred operation may have requested another mapping update. */
 	if (p->p_misc_flags & MF_FLUSH_TLB) {
-		if (tlb_must_refresh)
-			refresh_tlb();
+		refresh_tlb();
 		p->p_misc_flags &= ~MF_FLUSH_TLB;
 	}
 #endif
