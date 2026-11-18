@@ -211,13 +211,25 @@ static int lin_lin_copy(struct proc *srcproc, vir_bytes srclinaddr,
 		}
 #endif
 
-		/* Resolve addresses via identity map.  The destination is resolved
+		/* Resolve addresses through the kernel direct map, or through the
+		 * current process's virtual mapping.  The destination is resolved
 		 * with writable=1 so a present-but-read-only page is also reported
 		 * not-present (see createpde): the kernel direct-map alias is always
 		 * writable and would otherwise bypass the page's RO protection. */
 		srcptr = createpde(srcproc, srclinaddr, &chunk, 0, &changed);
 		dstptr = createpde(dstproc, dstlinaddr, &chunk, 1, &changed);
-		/* changed is never set to 1 on x86_64; no CR3 reload needed. */
+
+		/*
+		 * createpde() does not install a temporary mapping on x86_64, but
+		 * VM can still leave stale translations on this CPU after changing
+		 * the current process's mappings.  This happens, for example, when
+		 * VM resolves a COW fault while delivering an IPC message.  The
+		 * retried copy uses the process virtual address directly, so flush
+		 * before touching it.  The i386 path performs the same reload when
+		 * changed is set.
+		 */
+		if (changed)
+			reload_cr3();
 
 		/* createpde() returns 0 when a process page is not present (e.g. a
 		 * demand-zero stack page during an exec frame copy), and for the
