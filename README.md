@@ -166,7 +166,7 @@ These specifications describe the intended MXV architecture and feature set; the
 
 #### Development Status
 
-MXV is currently under active development, and **Phase 1 has been implemented**.
+MXV is currently under active development, and **Phase 2 has been implemented**.
 
 The first milestone focuses on establishing the kernel-side hardware virtualization foundation, including:
 
