@@ -95,7 +95,11 @@
  * namely low mem below 1M, 1M-16M, and mem after 16M. More chunks are needed
  * for DOS MINIX.
 */
-#define NR_MEMS            16
+/* The VM must be able to retain every entry in the kernel's memory map.
+ * MAXMEMMAP is 40 (minix/param.h); boot-module reservations can split
+ * available ranges, so the historical 16-entry VM limit drops usable RAM.
+ */
+#define NR_MEMS            40
 
 /* phys_clicks stays 32-bit on amd64.  Widen before shifting, or pages
  * at and above 4GB wrap to low physical addresses.
