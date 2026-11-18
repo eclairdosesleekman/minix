@@ -283,9 +283,12 @@ void smp_schedule_migrate_proc(struct proc * p, unsigned dest_cpu)
 	smp_schedule_sync(p, SCHED_IPI_STOP_PROC | SCHED_IPI_SAVE_CTX);
 	assert(RTS_ISSET(p, RTS_PROC_STOP));
 	
-	/* assign the new cpu and let the process run again */
+	/*
+	 * Keep the process stopped after changing its CPU.  The caller must
+	 * finish updating its scheduling parameters before making it runnable;
+	 * releasing it here can wake the destination CPU too early.
+	 */
 	p->p_cpu = dest_cpu;
-	RTS_UNSET(p, RTS_PROC_STOP);
 }
 
 void smp_sched_handler(void)
