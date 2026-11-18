@@ -76,6 +76,21 @@ int do_fork(struct proc * caller, message * m_ptr)
   rpc->p_nr = m_ptr->m_lsys_krn_sys_fork.slot;	/* this was obliterated by copy */
   rpc->p_endpoint = _ENDPOINT(gen, rpc->p_nr);	/* new endpoint of slot */
 
+  /*
+   * The child inherits the receive side of the parent's SENDREC: PM must
+   * be able to deliver the fork reply to both processes.  The send-side IPC
+   * state belongs only to the parent.  In particular, p_caller_q is the
+   * queue of processes blocked sending to this process, and p_q_link links
+   * this process into another process's queue.  Copying either pointer
+   * would make the parent and child share IPC queue state.
+   */
+  rpc->p_rts_flags &= ~RTS_SENDING;
+  rpc->p_caller_q = NULL;
+  rpc->p_q_link = NULL;
+  rpc->p_sendto_e = NONE;
+  memset(&rpc->p_sendmsg, 0, sizeof(rpc->p_sendmsg));
+  rpc->p_nextready = NULL;
+
   rpc->p_reg.retreg = 0;	/* child sees pid = 0 to know it is child */
   rpc->p_user_time = 0;		/* set all the accounting times to 0 */
   rpc->p_sys_time = 0;
