@@ -530,13 +530,14 @@ static u32_t ext4_read32(const unsigned char *p)
  * not authoritative until ext4 initializes it from group metadata.
  */
 static int
-verify_one_group_bitmap(dev_t dev, struct super_block *sp, u32_t group,
+verify_one_group_bitmap(dev_t dev, struct super_block *sp,
 	block64_t bitmap_block, const unsigned char *raw_desc,
 	unsigned int checksum_offset, unsigned int checksum_hi_offset,
-	unsigned int desc_size, unsigned char *bitmap)
+	unsigned int desc_size, unsigned int bitmap_bytes,
+	unsigned char *bitmap)
 {
 	u64_t disk_offset;
-	u32_t group_le, crc, stored;
+	u32_t crc, stored;
 	int r;
 
 	if (bitmap_block >= sp->s_blocks_count)
@@ -549,10 +550,15 @@ verify_one_group_bitmap(dev_t dev, struct super_block *sp, u32_t group,
 	    sp->s_block_size, BDEV_NOFLAGS);
 	if (r != (int)sp->s_block_size)
 		return(EIO);
+	if (bitmap_bytes == 0 || bitmap_bytes > sp->s_block_size)
+		return(EINVAL);
 
-	group_le = (u32_t)conv4(le_CPU, group);
-	crc = ext4_crc32c(sp->s_csum_seed, &group_le, sizeof(group_le));
-	crc = ext4_crc32c(crc, bitmap, sp->s_block_size);
+	/*
+	 * Linux ext4 hashes only the bitmap's defined bytes. With bigalloc
+	 * disabled, block bitmap size is blocks_per_group / 8; inode bitmap
+	 * size is inodes_per_group / 8.
+	 */
+	crc = ext4_crc32c(sp->s_checksum_seed, bitmap, bitmap_bytes);
 
 	stored = ext4_read32(raw_desc + checksum_offset);
 	/* The low checksum field occupies 16 bits, not 32. */
@@ -588,9 +594,9 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 		flags = ext4_read16(desc + 18);
 
 		if (!(flags & EXT4_BG_BLOCK_UNINIT)) {
-			r = verify_one_group_bitmap(dev, sp, i,
+			r = verify_one_group_bitmap(dev, sp,
 			    groups[i].block_bitmap, desc, 24, 56,
-			    desc_size, bitmap);
+			    desc_size, sp->s_blocks_per_group / 8, bitmap);
 			if (r != OK) {
 				printf("ext4: block bitmap checksum mismatch in group %u\\n",
 				    i);
@@ -600,9 +606,9 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 		}
 
 		if (!(flags & EXT4_BG_INODE_UNINIT)) {
-			r = verify_one_group_bitmap(dev, sp, i,
+			r = verify_one_group_bitmap(dev, sp,
 			    groups[i].inode_bitmap, desc, 26, 58,
-			    desc_size, bitmap);
+			    desc_size, sp->s_inodes_per_group / 8, bitmap);
 			if (r != OK) {
 				printf("ext4: inode bitmap checksum mismatch in group %u\\n",
 				    i);
