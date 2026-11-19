@@ -6,8 +6,8 @@
  *
  */
 
-#ifndef EXT2_SUPER_H
-#define EXT2_SUPER_H
+#ifndef EXT4_SUPER_H
+#define EXT4_SUPER_H
 
 /* super_block (on-disk part) was taken from linux/include/linux/ext2_fs.h */
 EXTERN struct super_block {
@@ -121,10 +121,10 @@ struct group_desc
     u32_t free_blocks_count;
     u32_t free_inodes_count;
     u32_t used_dirs_count;
-}
+};
 
 #define IMAP	0           /* operating on the inode bit map */
 #define BMAP	1           /* operating on the block bit map */
 #define IMAPD	2           /* operating on the inode bit map, inode is dir */
 
-#endif /* EXT2_SUPER_H */
+#endif /* EXT4_SUPER_H */
