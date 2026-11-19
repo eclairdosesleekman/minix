@@ -13,8 +13,8 @@ struct super_block;
 
 /* balloc.c */
 void discard_preallocated_blocks(struct inode *rip);
-block_t alloc_block(struct inode *rip, block_t goal);
-void free_block(struct super_block *sp, bit_t bit);
+block64_t alloc_block(struct inode *rip, block64_t goal);
+void free_block(struct super_block *sp, block64_t bit);
 
 /* ialloc.c */
 struct inode *alloc_inode(struct inode *parent, mode_t bits, uid_t uid,
@@ -108,7 +108,7 @@ int unsetbit(bitchunk_t *bitmap, bit_t bit);
 /* write.c */
 struct buf *new_block(struct inode *rip, off_t position);
 void zero_block(struct buf *bp);
-int write_map(struct inode *, off_t, block_t, int);
-int ext4_extent_write_map(struct inode *, off_t, block_t, int);
+int write_map(struct inode *, off_t, block64_t, int);
+int ext4_extent_write_map(struct inode *, off_t, block64_t, int);
 
 #endif /* EXT2_PROTO_H */
