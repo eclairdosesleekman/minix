@@ -114,8 +114,17 @@ int read_super(register struct super_block *sp)
 		    ondisk_superblock, 0x3fc);
 		if (stored_checksum != calculated_checksum)
 			return(EINVAL);
-		sp->s_csum_seed = ext4_crc32c(~0U, sp->s_uuid,
-		    sizeof(sp->s_uuid));
+		if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_CSUM_SEED)) {
+			/* s_checksum_seed is at offset 0x270 in the ext4 superblock. */
+			sp->s_csum_seed = ext4_read32(
+			    (const unsigned char *)ondisk_superblock + 0x270);
+		} else {
+			sp->s_csum_seed = ext4_crc32c(~0U, sp->s_uuid,
+			    sizeof(sp->s_uuid));
+		}
+	} else if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_CSUM_SEED)) {
+		/* A checksum seed has no meaning without metadata_csum. */
+		return(EINVAL);
 	}
 	sp->s_is_ext4 = TRUE;
 	if (sp->s_magic != SUPER_MAGIC || sp->s_log_block_size > 6)
