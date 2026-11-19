@@ -349,6 +349,13 @@ struct buf *new_block(register struct inode *rip, off_t position)
 		ext2_debug("write_map failed\n");
 		return(NULL);
 	}
+	/* An unwritten ext4 extent keeps its original physical block. */
+	err_code = OK;
+	b = read_map(rip, position, 0);
+	if (err_code != OK || b == NO_BLOCK) {
+		err_code = EIO;
+		return(NULL);
+	}
 	rip->i_last_pos_bl_alloc = position;
 	if (position == 0) {
 		/* rip->i_last_pos_bl_alloc points to the block position,
