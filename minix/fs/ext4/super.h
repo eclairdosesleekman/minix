@@ -103,6 +103,8 @@ EXTERN struct super_block {
     off_t   s_max_size;         /* maximum file size on this device */
     dev_t   s_dev;              /* whose super block is this? */
     int     s_rd_only;          /* set to 1 if file sys mounted read only */
+    u32_t   s_checksum_seed;    /* UUID-derived metadata checksum seed */
+    int     s_metadata_csum;    /* metadata_csum feature is enabled */
     block64_t s_bsearch;	/* all data blocks  below this block are in use*/
     int     s_igsearch; /* all groups below this one have no free inodes */
     u32_t   s_dirs_counter;
