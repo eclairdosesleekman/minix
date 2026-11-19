@@ -183,20 +183,29 @@ int
 ext4_verify_extent_checksum(struct inode *rip, const unsigned char *data,
 	size_t block_size)
 {
-	u32_t stored, calculated;
-	u32_t seed, generation_le;
+	u32_t stored, calculated, seed, generation_le;
+	u16_t max_entries;
+	size_t tail_offset;
 
 	if (!rip->i_sp->s_metadata_csum)
 		return(OK);
-	if (block_size < sizeof(u32_t))
+	if (block_size < 16)
 		return(EIO);
 
-	stored = ext4_get_le32(data + block_size - sizeof(u32_t));
+	/*
+	 * The extent tail follows the number of slots advertised by eh_max,
+	 * not necessarily the final four bytes of the block.
+	 */
+	max_entries = ext4_get_le16(data + 4);
+	if (max_entries > (block_size - 16) / 12)
+		return(EIO);
+	tail_offset = 12 + (size_t)max_entries * 12;
+	stored = ext4_get_le32(data + tail_offset);
+
 	generation_le = (u32_t)conv4(le_CPU, rip->i_generation);
 	seed = ext4_inode_seed(rip->i_sp, rip->i_num,
 	    (const unsigned char *)&generation_le);
-	calculated = ext4_crc32c(seed, data,
-	    block_size - sizeof(u32_t));
+	calculated = ext4_crc32c(seed, data, tail_offset);
 
 	return(stored == calculated ? OK : EIO);
 }
