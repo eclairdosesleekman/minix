@@ -29,7 +29,7 @@ void init_inode_cache(void);
 struct inode *get_inode(dev_t dev, ino_t numb);
 void put_inode(struct inode *rip);
 void update_times(struct inode *rip);
-void rw_inode(struct inode *rip, int rw_flag);
+int rw_inode(struct inode *rip, int rw_flag);
 
 /* link.c */
 int fs_trunc(ino_t ino_nr, off_t start, off_t end);
@@ -92,6 +92,18 @@ struct group_desc* get_group_desc(unsigned int bnum);
 
 /* time.c */
 int fs_utime(ino_t ino, struct timespec *atime, struct timespec *mtime);
+
+/* checksum.c */
+u32_t ext4_crc32c(u32_t crc, const void *data, size_t length);
+int ext4_verify_super_checksum(const unsigned char *raw_super);
+int ext4_verify_group_desc_checksum(struct super_block *sp, u32_t group,
+	const unsigned char *raw_desc);
+int ext4_verify_inode_checksum(struct super_block *sp, ino_t ino,
+	const unsigned char *raw_inode, size_t inode_size);
+int ext4_verify_extent_checksum(struct inode *rip, const unsigned char *data,
+	size_t block_size);
+int ext4_verify_dir_checksum(struct inode *rip, const unsigned char *data,
+	size_t block_size, u64_t logical_block);
 
 /* utility.c */
 struct buf *get_block(dev_t dev, block64_t block, int how);
