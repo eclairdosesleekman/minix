@@ -7,6 +7,7 @@
 #include "inode.h"
 #include "super.h"
 #include <stdlib.h>
+#include <string.h>
 #include <minix/vfsif.h>
 #include <minix/bdev.h>
 
@@ -66,8 +67,9 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: orphan list is not empty; run fsck first\\n");
 		goto bad_mount;
 	}
-	if (sp->s_state & EXT2_ERROR_FS) {
-		printf("ext4: filesystem has errors; run fsck first\\n");
+	if (!(sp->s_state & EXT2_VALID_FS) ||
+	    (sp->s_state & EXT2_ERROR_FS)) {
+		printf("ext4: filesystem is not clean; run fsck first\\n");
 		goto bad_mount;
 	}
 

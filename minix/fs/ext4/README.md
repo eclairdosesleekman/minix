@@ -21,7 +21,7 @@ This is not a complete ext4 implementation. It does not replay the journal,
 recover orphan inodes, update metadata, or validate ext4 metadata checksums.
 It rejects unsupported incompatible and read-only-compatible feature flags,
 including journal recovery, meta_bg, MMP, inline data, encryption, casefold,
-bigalloc, huge_file, gdt_csum, and metadata_csum. It also rejects a non-empty
+bigalloc, huge_file, gdt_csum, and metadata_csum. It also requires the clean filesystem state and rejects a non-empty
 legacy orphan list and the orphan-file feature. Use a clean, unmounted
 filesystem and run `e2fsck` before mounting.
 
