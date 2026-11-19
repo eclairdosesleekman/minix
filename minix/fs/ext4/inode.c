@@ -340,6 +340,16 @@ void rw_inode(
   offset &= (sp->s_block_size - 1);
   dip = (d_inode*) (b_data(bp) + offset);
 
+  /* Refuse to interpret an inode whose metadata checksum is invalid. */
+  if (rw_flag == READING &&
+      HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+      !ext4_verify_inode_csum(sp, rip->i_num,
+      (const unsigned char *)dip, EXT2_INODE_SIZE(sp))) {
+	put_block(bp);
+	panic("ext4: inode %llu has an invalid metadata checksum",
+	    (unsigned long long)rip->i_num);
+  }
+
   /* Do the read or write. */
   if (rw_flag == WRITING) {
 	if (rip->i_update)
