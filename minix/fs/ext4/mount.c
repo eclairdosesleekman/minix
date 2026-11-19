@@ -59,6 +59,11 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		    unsupported);
 		goto bad_mount;
 	}
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+	    sp->s_creator_os != EXT4_OS_LINUX) {
+		printf("ext4: metadata checksums require a Linux-created filesystem\\n");
+		goto bad_mount;
+	}
 	if (sp->s_feature_compat & COMPAT_ORPHAN_FILE) {
 		printf("ext4: orphan-file feature is not supported\\n");
 		goto bad_mount;
@@ -91,6 +96,15 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	if (!readonly &&
 	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_HUGE_FILE)) {
 		printf("ext4: read-write mounts require ^huge_file\\n");
+		goto bad_mount;
+	}
+
+	/* Metadata checksums are verified on reads but not rewritten by this
+	 * server's metadata mutation paths, so such volumes must stay read-only.
+	 */
+	if (!readonly &&
+	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+		printf("ext4: read-write mounts require ^metadata_csum\\n");
 		goto bad_mount;
 	}
 
