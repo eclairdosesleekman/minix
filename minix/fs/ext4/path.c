@@ -247,6 +247,15 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 		}
 
 		prev_dp = dp;
+
+		/* In an indexed ext4 directory, the dx root info follows ".."
+		 * in logical block zero. It is index metadata, not a dirent.
+		 * Leaf blocks are still scanned linearly by this read-only server.
+		 */
+		if (flag == LOOK_UP && pos == 0 &&
+		    (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
+		    ansi_strcmp(dp->d_name, "..", dp->d_name_len) == 0)
+			break;
 	}
 
 	/* The whole block has been searched or ENTER has a free slot. */

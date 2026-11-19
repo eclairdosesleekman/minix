@@ -436,7 +436,7 @@ struct buf *get_block_map(register struct inode *rip, u64_t position)
 	if ((r = lmfs_get_block_ino(&bp, rip->i_dev, b, NORMAL, rip->i_num,
 	    position)) != OK)
 		panic("ext2: error getting block (%llu,%llu): %d",
-		    (unsigned long long)rip->i_dev, b, r);
+		    (unsigned long long)rip->i_dev, (unsigned long long)b, r);
 	return bp;
 }
 
@@ -688,6 +688,12 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 			new_pos = ent_pos;
 			break;
 		}
+
+		/* Skip the dx root-info/index area after ".." in block zero. */
+		if (block_pos == 0 && (rip->i_flags & EXT2_INDEX_FL) &&
+		    len == 2 && d_desc->d_name[0] == '.' &&
+		    d_desc->d_name[1] == '.')
+			break;
 	}
 
 	put_block(bp);

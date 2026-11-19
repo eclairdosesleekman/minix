@@ -10,8 +10,8 @@ existing ext2 server.
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock.
 - 64-bit regular-file sizes using the inode size-high field.
-- Linear directory traversal, including directories carrying the htree index
-  flag; the index itself is not used.
+- Linear directory traversal of htree leaf blocks; the dx root metadata after
+  `..` is skipped in the first directory block.
 - VFS writes, metadata mutations, and raw block writes are rejected with
   `EROFS`. Mounts must explicitly be read-only.
 
