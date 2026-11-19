@@ -109,5 +109,6 @@ int unsetbit(bitchunk_t *bitmap, bit_t bit);
 struct buf *new_block(struct inode *rip, off_t position);
 void zero_block(struct buf *bp);
 int write_map(struct inode *, off_t, block_t, int);
+int ext4_extent_write_map(struct inode *, off_t, block_t, int);
 
 #endif /* EXT2_PROTO_H */
