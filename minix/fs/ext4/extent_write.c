@@ -125,7 +125,7 @@ extent_root(struct inode *rip, unsigned char **rootp, u16_t *entriesp,
 
 int
 ext4_extent_write_map(struct inode *rip, off_t position,
-	block_t new_wblock, int op)
+	block64_t new_wblock, int op)
 {
 	unsigned char *root, *entry;
 	struct ext4_extent ex, previous, next;
@@ -195,7 +195,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		}
 
 		extent_put16(root + 2, entries);
-		free_block(rip->i_sp, (block_t)block_to_free);
+		free_block(rip->i_sp, block_to_free);
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
 		rip->i_dirt = IN_DIRTY;
 		return(OK);
