@@ -170,7 +170,11 @@ ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 		count_offset = 32;
 	} else if ((rip->i_flags & EXT2_INDEX_FL) &&
 	    ext4_csum_read32(data) == 0 && data[6] == 0 &&
-	    ext4_dir_rec_len(first, block_size) == block_size) {
+	    ext4_dir_rec_len(first, block_size) == block_size &&
+	    ext4_csum_read16(data + 8) != 0 &&
+	    ext4_csum_read16(data + 10) != 0 &&
+	    ext4_csum_read16(data + 10) <= ext4_csum_read16(data + 8) &&
+	    ext4_csum_read16(data + 8) <= (block_size - 16) / 8) {
 		/* Internal htree node: fake full-block dirent precedes dx entries. */
 		count_offset = 8;
 	} else {
@@ -195,8 +199,6 @@ ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 		return(FALSE);
 	tail_offset = count_offset + limit * 8;
 	tail = data + tail_offset;
-	if (ext4_csum_read32(tail) != 0)
-		return(FALSE);
 	stored = ext4_csum_read32(tail + 4);
 	crc = ext4_crc32c(seed, data, count_offset + count * 8);
 	crc = ext4_crc32c(crc, tail, 4);
