@@ -102,6 +102,7 @@ int read_super(register struct super_block *sp)
 
 	sp->s_block_size = 1024U << sp->s_log_block_size;
 	if (sp->s_block_size < PAGE_SIZE ||
+	    sp->s_block_size >= (1U << 16) || /* 64 KiB dirent rec_len needs decoding */
 	    (sp->s_block_size % 512) != 0 ||
 	    SUPER_SIZE_D > sp->s_block_size)
 		return(EINVAL);
