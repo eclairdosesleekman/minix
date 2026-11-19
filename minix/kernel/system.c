@@ -523,7 +523,14 @@ static void clear_ipc(
       xpp = &proc_addr(target_proc)->p_caller_q; /* destination's queue */
       while (*xpp) {		/* check entire queue */
           if (*xpp == rc) {			/* process is on the queue */
-              *xpp = (*xpp)->p_q_link;		/* replace by next process */
+              *xpp = rc->p_q_link;		/* replace by next process */
+              /*
+               * p_q_link is an intrusive queue link.  Once removed, it
+               * must not retain the old successor: clear_ipc_refs() may
+               * unblock this process, and its next mini_send() requires
+               * p_q_link to be NULL before it joins another queue.
+               */
+              rc->p_q_link = NULL;
 #if DEBUG_ENABLE_IPC_WARNINGS
 	      printf("endpoint %d / %s removed from queue at %d\n",
 	          rc->p_endpoint, rc->p_name, rc->p_sendto_e);
