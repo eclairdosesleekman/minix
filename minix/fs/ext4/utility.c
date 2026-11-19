@@ -158,7 +158,8 @@ ext4_verify_xattr_block_csum(struct super_block *sp, dev_t dev,
 	if (sp->s_creator_os != EXT4_OS_LINUX ||
 	    sp->s_block_size < 20 ||
 	    block <= sp->s_first_data_block ||
-	    block >= sp->s_blocks_count)
+	    block >= sp->s_blocks_count ||
+	    block > (((u64_t)~0 >> 1) / sp->s_block_size))
 		return(FALSE);
 
 	bp = get_block(dev, block, NORMAL);
