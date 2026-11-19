@@ -14,12 +14,15 @@ read-write mode.
 - 64-bit regular-file sizes using the inode size-high field.
 - Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
-  group descriptors, Linux inodes, directory leaf/htree blocks, and external
-  extent-tree nodes. Both UUID-derived and `metadata_csum_seed` checksum seeds
-  are supported. When both `metadata_csum` and the legacy `gdt_csum` flag are
-  present, the metadata_csum algorithm is used. Unknown checksum types and
-  non-Linux metadata checksum formats are rejected.
-  An invalid inode checksum is reported as `EIO` and the inode is not cached.
+  group descriptors, initialized block/inode bitmaps, Linux inodes, directory
+  leaf/htree blocks, and external extent-tree nodes. Bitmap checksums are
+  verified for every initialized group during mount, before the filesystem is
+  exposed. Uninitialized bitmaps are skipped according to their group flags.
+  Both UUID-derived and `metadata_csum_seed` checksum seeds are supported.
+  When both `metadata_csum` and the legacy `gdt_csum` flag are present, the
+  metadata_csum algorithm is used. Unknown checksum types and non-Linux
+  metadata checksum formats are rejected. An invalid inode checksum is
+  reported as `EIO` and the inode is not cached.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -44,10 +47,12 @@ implementation.
 
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
-- **Read-only metadata checksums:** `metadata_csum` is verified on the
-  metadata structures traversed by the read path. Writable mounts reject it
-  because allocation, inode and directory mutation paths do not update
-  checksums. Legacy `gdt_csum` without `metadata_csum` remains unsupported.
+- **Read-only metadata checksums:** `metadata_csum` superblock, group
+  descriptor, initialized bitmap, inode, directory, and external extent-node
+  checksums are verified. All initialized block and inode bitmaps are scanned
+  at mount time. Writable mounts reject `metadata_csum` because allocation,
+  inode and directory mutation paths do not update checksums. Legacy
+  `gdt_csum` without `metadata_csum` remains unsupported.
 - **No indexed directories:** writable mounts reject `dir_index`; htree
   directory updates are not implemented.
 - **Inline extent root only for extent mutations:** the inode root has room
@@ -116,9 +121,10 @@ records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
 indexed directories, nested external extent trees, and large inode tables.
-Corrupt one copy of each checksum-protected structure and confirm the server
-rejects the affected metadata rather than following it. Use `e2fsck -fn` on
-the unmounted image after each test.
+Include groups with both initialized and uninitialized block/inode bitmaps.
+Corrupt one copy of each checksum-protected structure, including each bitmap
+type, and confirm the server rejects the affected metadata rather than
+following it. Use `e2fsck -fn` on the unmounted image after each test.
 
 The large-file read path should be tested with files larger than 2 TiB on
 4 KiB-block volumes and with sizes near the 32-bit logical-block boundary on
