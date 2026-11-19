@@ -30,6 +30,29 @@ struct buf *get_block(dev_t dev, block64_t block, int how)
 
 
 
+/*
+ * Validate an on-disk ext directory entry before following its record
+ * length or accessing its name. Directory blocks are untrusted input.
+ */
+int ext4_valid_dirent(const struct ext2_disk_dir_desc *dp,
+    unsigned int offset, unsigned int block_size)
+{
+    unsigned int rec_len;
+
+    if (offset > block_size || block_size - offset < MIN_DIR_ENTRY_SIZE)
+        return FALSE;
+
+    rec_len = conv2(le_CPU, dp->d_rec_len);
+    if (rec_len < MIN_DIR_ENTRY_SIZE ||
+        (rec_len & (DIR_ENTRY_ALIGN - 1)) != 0 ||
+        rec_len > block_size - offset ||
+        dp->d_name_len > rec_len - MIN_DIR_ENTRY_SIZE)
+        return FALSE;
+
+    return TRUE;
+}
+
+
 /*===========================================================================*
  *				conv2														 *
  *				norm: TRUE if no swap, FALSE for byte swap					 *
