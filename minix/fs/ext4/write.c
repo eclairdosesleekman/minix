@@ -56,6 +56,9 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 
   if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_EXTENTS_FL))
 	return(ext4_extent_write_map(rip, position, new_wblock, op));
+  if (rip->i_sp->s_is_ext4 && !(op & WMAP_FREE) &&
+      new_wblock > UINT32_MAX)
+	return(EFBIG);
 
   if (first_time) {
 	addr_in_block = rip->i_sp->s_block_size / BLOCK_ADDRESS_BYTES;
@@ -76,7 +79,7 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 		rip->i_block[block_pos] = NO_BLOCK;
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
 	} else {
-		rip->i_block[block_pos] = new_wblock;
+		rip->i_block[block_pos] = (u32_t)new_wblock;
 		rip->i_blocks += rip->i_sp->s_sectors_in_block;
 	}
 	return(OK);
@@ -225,7 +228,7 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 			}
 		}
 	} else {
-		wr_indir(bp, index1, new_wblock);
+		wr_indir(bp, index1, (block_t)new_wblock);
 		rip->i_blocks += rip->i_sp->s_sectors_in_block;
 	}
 	/* b1 equals NO_BLOCK only when we are freeing up the indirect block. */
