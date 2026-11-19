@@ -15,8 +15,10 @@ read-write mode.
 - Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, Linux inodes, directory leaf/htree blocks, and external
-  extent-tree nodes. Unknown checksum types and non-Linux metadata checksum
-  formats are rejected.
+  extent-tree nodes. Both UUID-derived and `metadata_csum_seed` checksum seeds
+  are supported. When both `metadata_csum` and the legacy `gdt_csum` flag are
+  present, the metadata_csum algorithm is used. Unknown checksum types and
+  non-Linux metadata checksum formats are rejected.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -44,7 +46,7 @@ implementation.
 - **Read-only metadata checksums:** `metadata_csum` is verified on the
   metadata structures traversed by the read path. Writable mounts reject it
   because allocation, inode and directory mutation paths do not update
-  checksums. Legacy `gdt_csum` remains unsupported.
+  checksums. Legacy `gdt_csum` without `metadata_csum` remains unsupported.
 - **No indexed directories:** writable mounts reject `dir_index`; htree
   directory updates are not implemented.
 - **Inline extent root only for extent mutations:** the inode root has room
@@ -60,9 +62,8 @@ implementation.
 - The `huge_file` feature is supported only for read-only mounts. Read-write
   mounts reject it because the current inode writer does not persist the high
   16 bits of `i_blocks`.
-- The `metadata_csum` feature is supported only for read-only mounts. The
-  `metadata_csum_seed` incompat feature is not implemented and remains
-  rejected by the incompat-feature check.
+- The `metadata_csum` and `metadata_csum_seed` features are supported only
+  for read-only mounts.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
   rebalancing, metadata checksums, quota updates, or the full set of ext4
   features. A power loss or server crash during metadata updates can leave
