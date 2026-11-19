@@ -160,7 +160,9 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
 	  /* Actually try to unlink the file; fails if parent is mode 0 etc. */
 	  if (r == OK) r = unlink_file(rldirp, rip, name);
   } else {
-	  if (has_external_extent_tree(rip))
+	  if ((rip->i_mode & I_TYPE) != I_DIRECTORY)
+		  r = ENOTDIR;
+	  else if (has_external_extent_tree(rip))
 		  r = EOPNOTSUPP;
 	  else
 		  r = remove_dir(rldirp, rip, name); /* call is RMDIR */
