@@ -83,6 +83,12 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 
+	/* The current metadata writer does not recompute ext4 CRC32C checksums. */
+	if (!readonly && sp->s_metadata_csum) {
+		printf("ext4: metadata_csum volumes are read-only\\n");
+		goto bad_mount;
+	}
+
 	/*
 	 * The current write path updates only the low 32 bits of i_blocks.
 	 * Until inode high-counter serialization is implemented, volumes
