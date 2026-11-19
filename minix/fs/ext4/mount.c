@@ -21,12 +21,12 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	struct inode *root_ip;
 	struct super_block *sp;
 	u32_t unsupported;
+	int readonly;
 
-	/* Writable mounts are intentionally not supported. */
-	if (!(flags & REQ_RDONLY))
-		return(EROFS);
+	readonly = (flags & REQ_RDONLY) ? TRUE : FALSE;
 	fs_dev = dev;
-	if (bdev_open(fs_dev, BDEV_R_BIT) != OK)
+	if (bdev_open(fs_dev, readonly ? BDEV_R_BIT :
+	    (BDEV_R_BIT | BDEV_W_BIT)) != OK)
 		return(EINVAL);
 
 	if ((superblock = malloc(sizeof(*superblock))) == NULL)
@@ -36,7 +36,7 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	sp->s_dev = fs_dev;
 	if (read_super(sp) != OK)
 		goto bad_mount;
-	sp->s_rd_only = TRUE;
+	sp->s_rd_only = readonly;
 
 	if (sp->s_rev_level != EXT2_DYNAMIC_REV) {
 		printf("ext4: dynamic-revision superblock required\\n");
@@ -72,6 +72,16 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: filesystem is not clean; run fsck first\\n");
 		goto bad_mount;
 	}
+	/* This server has no journal replay/commit or directory-index update
+	 * implementation.  Refuse read-write mounts that would need either. */
+	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_HAS_JOURNAL)) {
+		printf("ext4: read-write mounts require ^has_journal\\n");
+		goto bad_mount;
+	}
+	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_DIR_INDEX)) {
+		printf("ext4: read-write mounts require ^dir_index\\n");
+		goto bad_mount;
+	}
 
 	lmfs_set_blocksize(sp->s_block_size);
 	lmfs_set_blockusage(sp->s_blocks_count,
@@ -92,6 +102,15 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	root_node->fn_uid = root_ip->i_uid;
 	root_node->fn_gid = root_ip->i_gid;
 	root_node->fn_dev = NO_DEV;
+
+	if (!readonly) {
+		/* Mark the volume unclean before accepting the first write. */
+		sp->s_state &= ~EXT2_VALID_FS;
+		sp->s_mnt_count++;
+		sp->s_mtime = clock_time(NULL);
+		write_super(sp);
+	}
+
 	*res_flags = RES_64BIT;
 	return(OK);
 
