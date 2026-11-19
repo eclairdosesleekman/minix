@@ -99,6 +99,8 @@ u32_t ext4_crc32c(u32_t crc, const void *data, size_t len);
 u32_t ext4_inode_csum_seed(struct inode *rip);
 int ext4_verify_inode_csum(struct super_block *sp, ino_t ino,
 	const unsigned char *raw, size_t inode_size);
+int ext4_verify_xattr_block_csum(struct super_block *sp, dev_t dev,
+	block64_t block);
 int ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 	unsigned int logical_block);
 unsigned conv2(int norm, int w);

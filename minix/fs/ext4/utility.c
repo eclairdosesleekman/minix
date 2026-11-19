@@ -137,6 +137,61 @@ ext4_verify_inode_csum(struct super_block *sp, ino_t ino,
 }
 
 /*
+ * Verify an external ext4 xattr block. Linux computes h_checksum over the
+ * little-endian 64-bit block number followed by the complete block, with the
+ * checksum field (offset 16) treated as zero. The checksum is independent of
+ * the referencing inode, so blocks shared by multiple inodes use the same
+ * calculation.
+ */
+int
+ext4_verify_xattr_block_csum(struct super_block *sp, dev_t dev,
+    block64_t block)
+{
+	struct buf *bp;
+	const unsigned char *data;
+	unsigned char block_nr_le[8];
+	u32_t block_lo, block_hi, magic, refcount, blocks;
+	u32_t stored, crc, zero32 = 0;
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+		return(TRUE);
+	if (sp->s_creator_os != EXT4_OS_LINUX ||
+	    sp->s_block_size < 20 ||
+	    block <= sp->s_first_data_block ||
+	    block >= sp->s_blocks_count ||
+	    block > (((u64_t)~0 >> 1) / sp->s_block_size))
+		return(FALSE);
+
+	bp = get_block(dev, block, NORMAL);
+	if (bp == NULL)
+		return(FALSE);
+	data = (const unsigned char *)b_data(bp);
+
+	magic = ext4_csum_read32(data);
+	refcount = ext4_csum_read32(data + 4);
+	blocks = ext4_csum_read32(data + 8);
+	if (magic != EXT4_XATTR_MAGIC || refcount == 0 ||
+	    refcount > EXT4_XATTR_REFCOUNT_MAX || blocks != 1) {
+		put_block(bp);
+		return(FALSE);
+	}
+
+	block_lo = (u32_t)conv4(le_CPU, (u32_t)block);
+	block_hi = (u32_t)conv4(le_CPU, (u32_t)(block >> 32));
+	memcpy(block_nr_le, &block_lo, sizeof(block_lo));
+	memcpy(block_nr_le + sizeof(block_lo), &block_hi, sizeof(block_hi));
+
+	stored = ext4_csum_read32(data + 16);
+	crc = ext4_crc32c(sp->s_csum_seed, block_nr_le, sizeof(block_nr_le));
+	crc = ext4_crc32c(crc, data, 16);
+	crc = ext4_crc32c(crc, &zero32, sizeof(zero32));
+	crc = ext4_crc32c(crc, data + 20, sp->s_block_size - 20);
+
+	put_block(bp);
+	return(stored == crc);
+}
+
+/*
  * Verify one ext4 directory block. Leaf blocks end in a fake dirent checksum
  * tail; htree root and internal nodes instead have a dx_tail after their
  * count/limit and entry array.

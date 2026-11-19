@@ -15,7 +15,9 @@ read-write mode.
 - Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
-  leaf/htree blocks, and external extent-tree nodes. Bitmap checksums are
+  leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
+  The 48-bit `i_file_acl` pointer is range-checked and shared xattr blocks use
+  the block-number-based checksum defined by Linux ext4. Bitmap checksums are
   verified for every initialized group during mount, before the filesystem is
   exposed. Uninitialized bitmaps are skipped according to their group flags.
   Both UUID-derived and `metadata_csum_seed` checksum seeds are supported.
@@ -48,8 +50,8 @@ implementation.
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
 - **Read-only metadata checksums:** `metadata_csum` superblock, group
-  descriptor, initialized bitmap, inode, directory, and external extent-node
-  checksums are verified. All initialized block and inode bitmaps are scanned
+  descriptor, initialized bitmap, inode, directory, external extent-node, and
+  external xattr-block checksums are verified. All initialized block and inode bitmaps are scanned
   at mount time. Writable mounts reject `metadata_csum` because allocation,
   inode and directory mutation paths do not update checksums. Legacy
   `gdt_csum` without `metadata_csum` remains unsupported.
@@ -122,9 +124,13 @@ For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
 indexed directories, nested external extent trees, and large inode tables.
 Include groups with both initialized and uninitialized block/inode bitmaps.
-Corrupt one copy of each checksum-protected structure, including each bitmap
-type, and confirm the server rejects the affected metadata rather than
-following it. Use `e2fsck -fn` on the unmounted image after each test.
+Create external xattr blocks by adding enough attributes to files to exceed
+inode-body xattr space; repeat identical attribute sets on multiple files to
+exercise shared xattr blocks. Read/stat those inodes, then corrupt the xattr
+block checksum and confirm the server reports `EIO`. Also corrupt one copy of
+each other checksum-protected structure, including each bitmap type, and
+confirm the server rejects the affected metadata rather than following it.
+Use `e2fsck -fn` on the unmounted image after each test.
 
 The large-file read path should be tested with files larger than 2 TiB on
 4 KiB-block volumes and with sizes near the 32-bit logical-block boundary on
