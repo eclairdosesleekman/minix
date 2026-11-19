@@ -23,7 +23,7 @@
 #include "super.h"
 #include "const.h"
 
-static off_t ext2_max_size(int block_size);
+static off_t ext2_max_size(struct super_block *sp);
 static u32_t ext2_count_dirs(struct super_block *sp);
 
 static void super_copy(register struct super_block *dest, register
@@ -148,7 +148,7 @@ int read_super(register struct super_block *sp)
 		return(EINVAL);
 
 	sp->s_blocksize_bits = sp->s_log_block_size + 10;
-	sp->s_max_size = ext2_max_size(sp->s_block_size);
+	sp->s_max_size = ext2_max_size(sp);
 	sp->s_inodes_per_block = sp->s_block_size / EXT2_INODE_SIZE(sp);
 	if (sp->s_inodes_per_block == 0 || sp->s_inodes_per_group == 0)
 		return(EINVAL);
@@ -343,13 +343,22 @@ static u32_t ext2_count_dirs(struct super_block *sp)
  * Anyway this function is safe for any change.
  * Note: there is also limitation from VFS (to LONG_MAX, i.e. 2GB).
  */
-static off_t ext2_max_size(int block_size)
+static off_t ext2_max_size(struct super_block *sp)
 {
 	u64_t max_bytes, logical_limit;
 
-	/* Without HUGE_FILE, i_blocks is a 32-bit count of 512-byte sectors. */
-	max_bytes = (u64_t)UINT32_MAX * 512;
-	logical_limit = ((u64_t)UINT32_MAX + 1) * (u64_t)block_size;
+	/*
+	 * Without HUGE_FILE, i_blocks is a 32-bit count of 512-byte sectors.
+	 * With the ext4 huge_file feature, the on-disk counter is 48 bits
+	 * wide (and may be expressed in filesystem blocks), so the extent
+	 * logical-block limit becomes the tighter bound.
+	 */
+	logical_limit = ((u64_t)UINT32_MAX + 1) * sp->s_block_size;
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_HUGE_FILE))
+		max_bytes = logical_limit;
+	else
+		max_bytes = (u64_t)UINT32_MAX * 512;
+
 	if (max_bytes > logical_limit)
 		max_bytes = logical_limit;
 	return((off_t)max_bytes);

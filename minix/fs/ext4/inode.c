@@ -385,8 +385,21 @@ static void icopy(
 	rip->i_dtime   = conv4(norm,dip->i_dtime);
 	rip->i_gid     = conv2(norm,dip->i_gid);
 	rip->i_links_count  = conv2(norm,dip->i_links_count);
-	rip->i_blocks	= conv4(norm,dip->i_blocks);
 	rip->i_flags	= conv4(norm,dip->i_flags);
+	rip->i_blocks	= (u64_t)(u32_t)conv4(norm,dip->i_blocks);
+	if (HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_HUGE_FILE)) {
+		u16_t blocks_high;
+
+		/*
+		 * ext4 reuses the first 16 bits of osd2 for i_blocks_high.
+		 * The combined value is in 512-byte sectors unless the inode's
+		 * HUGE_FILE flag says it is in filesystem blocks.
+		 */
+		memcpy(&blocks_high, &dip->osd2, sizeof(blocks_high));
+		rip->i_blocks |= (u64_t)(u16_t)conv2(norm, blocks_high) << 32;
+		if (rip->i_flags & EXT4_HUGE_FILE_FL)
+			rip->i_blocks *= rip->i_sp->s_sectors_in_block;
+	}
 	/* Minix doesn't touch osd1 and osd2 either, so just copy. */
 	memcpy(&rip->osd1, &dip->osd1, sizeof(rip->osd1));
 	for (i = 0; i < EXT2_N_BLOCKS; i++)
@@ -414,7 +427,7 @@ static void icopy(
 	dip->i_dtime   = conv4(norm,rip->i_dtime);
 	dip->i_gid     = conv2(norm,rip->i_gid);
 	dip->i_links_count  = conv2(norm,rip->i_links_count);
-	dip->i_blocks	= conv4(norm,rip->i_blocks);
+	dip->i_blocks	= conv4(norm, (u32_t)rip->i_blocks);
 	dip->i_flags	= conv4(norm,rip->i_flags);
 	/* Minix doesn't touch osd1 and osd2 either, so just copy. */
 	memcpy(&dip->osd1, &rip->osd1, sizeof(dip->osd1));

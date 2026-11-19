@@ -148,7 +148,8 @@
                                       RO_COMPAT_LARGE_FILE | \
                                       RO_COMPAT_BTREE_DIR | \
                                       RO_COMPAT_DIR_NLINK | \
-                                      RO_COMPAT_EXTRA_ISIZE)
+                                      RO_COMPAT_EXTRA_ISIZE | \
+                                      RO_COMPAT_HUGE_FILE)
 
 /* Ext2 directory file types. Only the low 3 bits are used.
  * The other bits are reserved for now.
@@ -175,6 +176,7 @@
 /* hash-indexed directory */
 #define EXT2_INDEX_FL			0x00001000
 #define EXT4_EXTENTS_FL		0x00080000
+#define EXT4_HUGE_FILE_FL		0x00040000
 #define EXT4_EXTENT_MAGIC		0xF30A
 #define EXT4_EXTENT_MAX_DEPTH	5
 /* Top of directory hierarchies*/
