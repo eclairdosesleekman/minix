@@ -39,9 +39,6 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
  * the double/triple indirect block.
  * It's the only function which should take care about rip->i_blocks counter.
  */
-  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_EXTENTS_FL))
-	return(ext4_extent_write_map(rip, position, new_wblock, op));
-
   int index1 = 0, index2 = 0, index3 = 0; /* indexes in single..triple indirect blocks */
   long excess, block_pos;
   char new_ind = 0, new_dbl = 0, new_triple = 0;
@@ -56,6 +53,9 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
   static long doub_ind_s;
   static long triple_ind_s;
   static long out_range_s;
+
+  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_EXTENTS_FL))
+	return(ext4_extent_write_map(rip, position, new_wblock, op));
 
   if (first_time) {
 	addr_in_block = rip->i_sp->s_block_size / BLOCK_ADDRESS_BYTES;
@@ -368,7 +368,8 @@ struct buf *new_block(register struct inode *rip, off_t position)
   r = lmfs_get_block_ino(&bp, rip->i_dev, b, NO_READ, rip->i_num,
 	rounddown(position, rip->i_sp->s_block_size));
   if (r != OK)
-	panic("ext2: error getting block (%llu,%u): %d", (unsigned long long)rip->i_dev, b, r);
+	panic("ext2: error getting block (%llu,%llu): %d",
+	    (unsigned long long)rip->i_dev, (unsigned long long)b, r);
   zero_block(bp);
   return(bp);
 }
