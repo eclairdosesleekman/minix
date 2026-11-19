@@ -335,8 +335,11 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 			bp = get_block(rip->i_dev, child, NORMAL);
 			if (bp == NULL)
 				goto corrupt;
-			node = (const unsigned char *)b_data(bp);
 			node_size = rip->i_sp->s_block_size;
+			if (ext4_verify_extent_checksum(rip,
+			    (const unsigned char *)b_data(bp), node_size) != OK)
+				goto corrupt;
+			node = (const unsigned char *)b_data(bp);
 			expected_depth = depth - 1;
 		}
 	}
@@ -438,6 +441,18 @@ struct buf *get_block_map(register struct inode *rip, u64_t position)
 	    position)) != OK)
 		panic("ext2: error getting block (%llu,%llu): %d",
 		    (unsigned long long)rip->i_dev, (unsigned long long)b, r);
+
+	if ((rip->i_mode & I_TYPE) == I_DIRECTORY &&
+	    rip->i_sp->s_metadata_csum) {
+		r = ext4_verify_dir_checksum(rip,
+		    (const unsigned char *)b_data(bp), block_size,
+		    position / block_size);
+		if (r != OK) {
+			put_block(bp);
+			err_code = r;
+			return(NULL);
+		}
+	}
 	return bp;
 }
 
