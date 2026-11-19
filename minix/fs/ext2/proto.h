@@ -74,7 +74,8 @@ int fs_chown(ino_t ino_nr, uid_t uid, gid_t gid, mode_t *mode);
 ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	off_t pos, int call);
 block_t rd_indir(struct buf *bp, int index);
-block_t read_map(struct inode *rip, off_t pos, int opportunistic);
+block64_t read_map(struct inode *rip, off_t pos, int opportunistic);
+block64_t ext4_read_map(struct inode *rip, u64_t logical, int how);
 struct buf *get_block_map(register struct inode *rip, u64_t position);
 ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	off_t *posp);
@@ -94,7 +95,7 @@ struct group_desc* get_group_desc(unsigned int bnum);
 int fs_utime(ino_t ino, struct timespec *atime, struct timespec *mtime);
 
 /* utility.c */
-struct buf *get_block(dev_t dev, block_t block, int how);
+struct buf *get_block(dev_t dev, block64_t block, int how);
 unsigned conv2(int norm, int w);
 long conv4(int norm, long x);
 int ansi_strcmp(register const char* ansi_s, register const char *s2,

@@ -11,7 +11,7 @@
 /*===========================================================================*
  *				get_block				     *
  *===========================================================================*/
-struct buf *get_block(dev_t dev, block_t block, int how)
+struct buf *get_block(dev_t dev, block64_t block, int how)
 {
 /* Wrapper routine for lmfs_get_block(). This ext2 implementation does not deal
  * well with block read errors pretty much anywhere. To prevent corruption due

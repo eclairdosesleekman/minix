@@ -119,6 +119,14 @@
 #define RO_COMPAT_SPARSE_SUPER     0x0001
 #define RO_COMPAT_LARGE_FILE       0x0002
 #define RO_COMPAT_BTREE_DIR        0x0004
+#define RO_COMPAT_HUGE_FILE         0x0008
+#define RO_COMPAT_GDT_CSUM          0x0010
+#define RO_COMPAT_DIR_NLINK         0x0020
+#define RO_COMPAT_EXTRA_ISIZE       0x0040
+#define RO_COMPAT_BIGALLOC          0x0200
+#define RO_COMPAT_METADATA_CSUM     0x0400
+#define RO_COMPAT_READONLY          0x1000
+#define RO_COMPAT_PROJECT            0x2000
 #define RO_COMPAT_ANY              0xffffffff
 
 #define INCOMPAT_COMPRESSION       0x0001
@@ -126,12 +134,26 @@
 #define INCOMPAT_RECOVER           0x0004
 #define INCOMPAT_JOURNAL_DEV       0x0008
 #define INCOMPAT_META_BG           0x0010
+#define INCOMPAT_EXTENTS            0x0040
+#define INCOMPAT_64BIT              0x0080
+#define INCOMPAT_FLEX_BG            0x0200
+#define INCOMPAT_CSUM_SEED           0x2000
 #define INCOMPAT_ANY               0xffffffff
 
 /* What do we support? */
-#define SUPPORTED_INCOMPAT_FEATURES	(INCOMPAT_FILETYPE)
-#define SUPPORTED_RO_COMPAT_FEATURES	(RO_COMPAT_SPARSE_SUPER | \
-					 RO_COMPAT_LARGE_FILE)
+/*
+ * Features understood by the read-only ext4 path.  Journal recovery,
+ * meta_bg and bigalloc deliberately remain unsupported.
+ */
+#define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
+        INCOMPAT_64BIT | INCOMPAT_FLEX_BG | INCOMPAT_CSUM_SEED)
+#define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \
+        RO_COMPAT_LARGE_FILE | RO_COMPAT_HUGE_FILE | RO_COMPAT_GDT_CSUM | \
+        RO_COMPAT_DIR_NLINK | RO_COMPAT_EXTRA_ISIZE | \
+        RO_COMPAT_METADATA_CSUM | RO_COMPAT_READONLY | RO_COMPAT_PROJECT)
+#define EXT4_EXTENTS_FL              0x00080000
+#define EXT4_EXTENT_MAGIC            0xf30a
+#define EXT4_EXTENT_MAX_DEPTH        5
 
 /* Ext2 directory file types. Only the low 3 bits are used.
  * The other bits are reserved for now.

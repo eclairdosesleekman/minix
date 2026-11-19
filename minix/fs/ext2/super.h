@@ -76,10 +76,23 @@ EXTERN struct super_block {
     u32_t   s_hash_seed[4];         /* HTREE hash seed */
     u8_t    s_def_hash_version;     /* Default hash version to use */
     u8_t    s_reserved_char_pad;
-    u16_t   s_reserved_word_pad;
+    u16_t   s_desc_size;           /* ext4 group descriptor size */
     u32_t   s_default_mount_opts;
     u32_t   s_first_meta_bg;        /* First metablock block group */
-    u32_t   s_reserved[190];        /* Padding to the end of the block */
+    u32_t   s_blocks_count_hi;      /* ext4 64-bit block count */
+    u32_t   s_r_blocks_count_hi;   /* ext4 reserved block count high */
+    u32_t   s_free_blocks_count_hi;/* ext4 free block count high */
+    u32_t   s_reserved[187];       /* Padding to the end of the block */
+
+    /*
+     * Runtime-only fields.  The on-disk prefix above remains exactly 1024
+     * bytes; do not move these fields into that prefix.
+     */
+    u64_t   s_blocks_count64;
+    u64_t   s_r_blocks_count64;
+    u64_t   s_free_blocks_count64;
+    u16_t   s_desc_size_mem;      /* 32 for ext2, normally 64 for ext4 */
+    int     s_is_ext4;            /* ext4 feature set, mounted read-only */
 
     /* The following items are only used when the super_block is in memory. */
     u32_t   s_inodes_per_block;     /* Number of inodes per block */
@@ -95,7 +108,7 @@ EXTERN struct super_block {
 
     u16_t   s_block_size;       /* block size in bytes. */
     u16_t   s_sectors_in_block; /* s_block_size / 512 */
-    u32_t   s_max_size;         /* maximum file size on this device */
+    off_t   s_max_size;         /* maximum file size on this device */
     dev_t   s_dev;              /* whose super block is this? */
     int     s_rd_only;          /* set to 1 if file sys mounted read only */
     block_t s_bsearch;	/* all data blocks  below this block are in use*/
@@ -108,16 +121,19 @@ EXTERN struct super_block {
 /* Structure of a blocks group descriptor.
  * On disk stored in little endian format.
  */
+/*
+ * Host-side group descriptor.  This is intentionally not an on-disk
+ * structure: ext2 descriptors are 32 bytes while ext4 64-bit descriptors
+ * are at least 64 bytes.
+ */
 struct group_desc
 {
-    u32_t  block_bitmap;        /* Blocks bitmap block */
-    u32_t  inode_bitmap;        /* Inodes bitmap block */
-    u32_t  inode_table;         /* Inodes table block */
-    u16_t  free_blocks_count;   /* Free blocks count */
-    u16_t  free_inodes_count;   /* Free inodes count */
-    u16_t  used_dirs_count;     /* Directories count */
-    u16_t  pad;
-    u32_t  reserved[3];
+    block64_t block_bitmap;
+    block64_t inode_bitmap;
+    block64_t inode_table;
+    u32_t free_blocks_count;
+    u32_t free_inodes_count;
+    u32_t used_dirs_count;
 };
 
 #define IMAP	0           /* operating on the inode bit map */
