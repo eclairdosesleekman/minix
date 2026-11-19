@@ -159,8 +159,18 @@ struct inode *get_inode(
   rip->i_dev = dev;
   rip->i_num = numb;
   rip->i_count = 1;
-  if (dev != NO_DEV)
-	rw_inode(rip, READING);    /* get inode from disk */
+  if (dev != NO_DEV) {
+	if ((r = rw_inode(rip, READING)) != OK) {
+		/* Do not cache an inode whose metadata checksum failed. */
+		rip->i_count = 0;
+		rip->i_num = NO_ENTRY;
+		rip->i_dev = NO_DEV;
+		rip->i_sp = NULL;
+		TAILQ_INSERT_HEAD(&unused_inodes, rip, i_unused);
+		err_code = r;
+		return(NULL);
+	}
+  }
   rip->i_update = 0;        /* all the times are initially up-to-date */
   rip->i_last_dpos = 0;     /* no dentries searched for yet */
   rip->i_bsearch = NO_BLOCK;
@@ -304,7 +314,7 @@ void update_times(
 /*===========================================================================*
  *                rw_inode                                                   *
  *===========================================================================*/
-void rw_inode(
+int rw_inode(
   register struct inode *rip,         /* pointer to inode to be read/written */
   int rw_flag                         /* READING or WRITING */
 )
@@ -318,6 +328,7 @@ void rw_inode(
   u32_t block_group_number;
   block64_t b;
   size_t offset;
+  int r;
 
   /* Get the block where the inode resides. */
   sp = get_super(rip->i_dev);     /* get pointer to super block */
@@ -340,6 +351,16 @@ void rw_inode(
   offset &= (sp->s_block_size - 1);
   dip = (d_inode*) (b_data(bp) + offset);
 
+  /* Verify untrusted inode metadata before making it visible to VFS. */
+  if (rw_flag == READING && sp->s_metadata_csum) {
+	r = ext4_verify_inode_checksum(sp, rip->i_num,
+	    (const unsigned char *)dip, EXT2_INODE_SIZE(sp));
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
+  }
+
   /* Do the read or write. */
   if (rw_flag == WRITING) {
 	if (rip->i_update)
@@ -352,6 +373,7 @@ void rw_inode(
 
   put_block(bp);
   rip->i_dirt = IN_CLEAN;
+  return(OK);
 }
 
 
