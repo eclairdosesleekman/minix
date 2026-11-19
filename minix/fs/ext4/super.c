@@ -540,7 +540,8 @@ verify_one_group_bitmap(dev_t dev, struct super_block *sp,
 	u32_t crc, stored;
 	int r;
 
-	if (bitmap_block >= sp->s_blocks_count)
+	if (bitmap_block <= sp->s_first_data_block ||
+	    bitmap_block >= sp->s_blocks_count)
 		return(EIO);
 	if (bitmap_block > (((u64_t)~0 >> 1) / sp->s_block_size))
 		return(EFBIG);
