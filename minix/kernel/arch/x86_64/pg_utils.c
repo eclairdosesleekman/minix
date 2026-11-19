@@ -201,6 +201,49 @@ void pg_clear(void)
 	memset(pg_pd_kern,   0, sizeof(pg_pd_kern));
 }
 
+/*
+ * A highest-address value does not describe the physical memory layout.
+ * On a PC with more than 3 GB of RAM, firmware commonly places PCI BARs in
+ * the 3-4 GB hole and remaps the RAM above 4 GB.  Treating every address below
+ * mem_high_phys as RAM then creates a write-back direct-map alias for MMIO.
+ *
+ * The available-memory map has the kernel and boot modules carved out, so
+ * include those module ranges as RAM as well.  Require complete coverage of
+ * the 2 MB leaf: a leaf that straddles RAM and a reserved/MMIO range must not
+ * be mapped write-back.
+ */
+static int pg_range_is_ram(const kinfo_t *cbi, phys_bytes start,
+	phys_bytes end)
+{
+	while (start < end) {
+		phys_bytes covered = start;
+		int m;
+
+		for (m = 0; m < cbi->mmap_size; m++) {
+			phys_bytes base = cbi->memmap[m].mm_base_addr;
+			phys_bytes limit = base + cbi->memmap[m].mm_length;
+
+			if (cbi->memmap[m].mm_length != 0 &&
+			    base <= start && limit > covered)
+				covered = limit;
+		}
+
+		for (m = 0; m < cbi->mods_with_kernel; m++) {
+			phys_bytes base = cbi->module_list[m].mod_start;
+			phys_bytes limit = cbi->module_list[m].mod_end;
+
+			if (base <= start && limit > covered)
+				covered = limit;
+		}
+
+		if (covered == start)
+			return 0;
+		start = covered;
+	}
+
+	return 1;
+}
+
 void pg_identity(kinfo_t *cbi)
 {
 	int i, j, num_pds;
@@ -231,7 +274,8 @@ void pg_identity(kinfo_t *cbi)
 
 		for (j = 0; j < 512; j++) {
 			u64_t flags = PG_PRESENT | PG_WRITE | PG_PS;
-			if (phys >= cbi->mem_high_phys || PG_APIC_MMIO(phys))
+			if (!pg_range_is_ram(cbi, phys, phys + PAGE_2MB) ||
+			    PG_APIC_MMIO(phys))
 				flags |= PG_PWT | PG_PCD;
 			pg_pd_ident[i][j] = phys | flags;
 			phys += PAGE_2MB;
@@ -250,7 +294,8 @@ void pg_identity(kinfo_t *cbi)
 		pg_pdpt_high[i] = vir2phys(pg_pd_dm[i]) | PG_PRESENT | PG_WRITE;
 		for (j = 0; j < 512; j++) {
 			u64_t flags = PG_PRESENT | PG_WRITE | PG_PS;
-			if (phys >= cbi->mem_high_phys || PG_APIC_MMIO(phys))
+			if (!pg_range_is_ram(cbi, phys, phys + PAGE_2MB) ||
+			    PG_APIC_MMIO(phys))
 				flags |= PG_PWT | PG_PCD;
 			pg_pd_dm[i][j] = phys | flags;
 			phys += PAGE_2MB;
