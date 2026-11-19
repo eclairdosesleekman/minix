@@ -473,8 +473,14 @@ verify_group_descriptor_checksums(struct super_block *sp,
 		crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
 		if (desc_size > 32)
 			crc = ext4_crc32c(crc, p + 32, desc_size - 32);
-		if ((u16_t)crc != ext4_read16(p + 30))
-			return(FALSE);
+		{
+			u16_t stored;
+
+			memcpy(&stored, p + 30, sizeof(stored));
+			stored = (u16_t)conv2(le_CPU, stored);
+			if ((u16_t)crc != stored)
+				return(FALSE);
+		}
 	}
 	return(TRUE);
 }
