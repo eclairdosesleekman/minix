@@ -201,9 +201,54 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		return(OK);
 	}
 
-	/* Normal allocation must not overlap an initialized or unwritten extent. */
-	if (i != entries)
-		return(EEXIST);
+	/*
+	 * An unwritten extent already owns its physical blocks.  Convert just
+	 * the block being written to an initialized extent and return the
+	 * speculative allocation made by new_block().
+	 */
+	if (i != entries) {
+		u64_t old_physical;
+
+		if (!ex.unwritten)
+			return(EEXIST);
+		offset = logical - ex.logical;
+		old_physical = ex.physical + offset;
+		if (offset == 0 && ex.length == 1) {
+			extent_put(entry, logical, old_physical, 1, FALSE);
+		} else if (offset == 0) {
+			if (entries >= max_entries)
+				return(EFBIG);
+			memmove(entry + 12, entry,
+			    (entries - i) * 12);
+			extent_put(entry, logical, old_physical, 1, FALSE);
+			extent_put(entry + 12, logical + 1, old_physical + 1,
+			    ex.length - 1, TRUE);
+			entries++;
+		} else if (offset == ex.length - 1) {
+			if (entries >= max_entries)
+				return(EFBIG);
+			extent_put(entry, ex.logical, ex.physical, ex.length - 1,
+			    TRUE);
+			memmove(entry + 24, entry + 12,
+			    (entries - i - 1) * 12);
+			extent_put(entry + 12, logical, old_physical, 1, FALSE);
+			entries++;
+		} else {
+			if (entries > max_entries - 2)
+				return(EFBIG);
+			memmove(entry + 36, entry + 12,
+			    (entries - i - 1) * 12);
+			extent_put(entry, ex.logical, ex.physical, offset, TRUE);
+			extent_put(entry + 12, logical, old_physical, 1, FALSE);
+			extent_put(entry + 24, logical + 1, old_physical + 1,
+			    ex.length - offset - 1, TRUE);
+			entries += 2;
+		}
+		extent_put16(root + 2, entries);
+		free_block(rip->i_sp, new_wblock);
+		rip->i_dirt = IN_DIRTY;
+		return(OK);
+	}
 
 	physical = (u64_t)new_wblock;
 	if (physical == 0 || physical >= rip->i_sp->s_blocks_count ||
