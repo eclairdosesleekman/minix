@@ -400,7 +400,14 @@ static void icopy(
 	/* Copying inode to disk from the in-core table. */
 	dip->i_mode    = conv2(norm,rip->i_mode);
 	dip->i_uid     = conv2(norm,rip->i_uid);
-	dip->i_size    = conv4(norm,rip->i_size);
+	if (rip->i_sp->s_is_ext4 &&
+	    (rip->i_mode & I_TYPE) == I_REGULAR) {
+		u64_t size = (u64_t)rip->i_size;
+		dip->i_size = conv4(norm, (u32_t)size);
+		dip->i_dir_acl = conv4(norm, (u32_t)(size >> 32));
+	} else {
+		dip->i_size = conv4(norm, rip->i_size);
+	}
 	dip->i_atime   = conv4(norm,rip->i_atime);
 	dip->i_ctime   = conv4(norm,rip->i_ctime);
 	dip->i_mtime   = conv4(norm,rip->i_mtime);
