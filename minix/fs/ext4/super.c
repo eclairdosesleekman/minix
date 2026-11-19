@@ -31,6 +31,7 @@ static void super_copy(register struct super_block *dest, register
 static void copy_group_descriptors(struct group_desc *dest_array,
 	const unsigned char *source_array, unsigned int ngroups,
 	unsigned int desc_size, int is64);
+static u32_t ext4_read32(const unsigned char *p);
 
 static off_t super_block_offset;
 
