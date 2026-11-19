@@ -115,6 +115,7 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   int extended = 0;
   int required_space = 0;
   int string_len = 0;
+  unsigned int block_off;
 
   /* If 'ldir_ptr' is not a pointer to a dir inode, error. */
   if ( (ldir_ptr->i_mode & I_TYPE) != I_DIRECTORY)  {
@@ -150,9 +151,17 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	/* Search a directory block.
 	 * Note, we set prev_dp at the end of the loop.
 	 */
-	for (dp = (struct ext2_disk_dir_desc*) &b_data(bp);
-	     CUR_DISC_DIR_POS(dp, &b_data(bp)) < ldir_ptr->i_sp->s_block_size;
-	     dp = NEXT_DISC_DIR_DESC(dp) ) {
+	for (block_off = 0, dp = (struct ext2_disk_dir_desc*) &b_data(bp);
+	     block_off < ldir_ptr->i_sp->s_block_size;
+	     block_off += conv2(le_CPU, dp->d_rec_len),
+	     dp = NEXT_DISC_DIR_DESC(dp)) {
+		/* Validate the record before touching its name or advancing. */
+		if (!ext4_valid_dirent(dp, block_off,
+		    ldir_ptr->i_sp->s_block_size)) {
+			put_block(bp);
+			return(EIO);
+		}
+
 		/* Match occurs if string found. */
 		if (flag != ENTER && dp->d_ino != NO_ENTRY) {
 			if (flag == IS_EMPTY) {
@@ -215,6 +224,11 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 			} else {
 				/* 'flag' is LOOK_UP */
 				*numb = (ino_t) conv4(le_CPU, dp->d_ino);
+				if (*numb == NO_ENTRY ||
+				    *numb > ldir_ptr->i_sp->s_inodes_count) {
+					put_block(bp);
+					return(EIO);
+				}
 			}
 			put_block(bp);
 			return(r);
