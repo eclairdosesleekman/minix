@@ -149,7 +149,8 @@
                                       RO_COMPAT_BTREE_DIR | \
                                       RO_COMPAT_DIR_NLINK | \
                                       RO_COMPAT_EXTRA_ISIZE | \
-                                      RO_COMPAT_HUGE_FILE)
+                                      RO_COMPAT_HUGE_FILE | \
+                                      RO_COMPAT_METADATA_CSUM)
 
 /* Ext2 directory file types. Only the low 3 bits are used.
  * The other bits are reserved for now.
