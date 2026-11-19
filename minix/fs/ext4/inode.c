@@ -122,7 +122,7 @@ struct inode *get_inode(
  */
   register struct inode *rip;
   int hashi;
-  int i;
+  int i, r;
 
   hashi = (int) numb & INODE_HASH_MASK;
 
@@ -159,8 +159,20 @@ struct inode *get_inode(
   rip->i_dev = dev;
   rip->i_num = numb;
   rip->i_count = 1;
-  if (dev != NO_DEV)
-	rw_inode(rip, READING);    /* get inode from disk */
+  if (dev != NO_DEV) {
+	if ((r = rw_inode(rip, READING)) != OK) {
+		/* A bad inode checksum is an I/O error, not a server panic. */
+		rip->i_count = 0;
+		rip->i_num = NO_ENTRY;
+		rip->i_dev = NO_DEV;
+		rip->i_sp = NULL;
+		rip->i_dirt = IN_CLEAN;
+		rip->i_update = 0;
+		TAILQ_INSERT_HEAD(&unused_inodes, rip, i_unused);
+		err_code = r;
+		return(NULL);
+	}
+  }
   rip->i_update = 0;        /* all the times are initially up-to-date */
   rip->i_last_dpos = 0;     /* no dentries searched for yet */
   rip->i_bsearch = NO_BLOCK;
@@ -304,7 +316,7 @@ void update_times(
 /*===========================================================================*
  *                rw_inode                                                   *
  *===========================================================================*/
-void rw_inode(
+int rw_inode(
   register struct inode *rip,         /* pointer to inode to be read/written */
   int rw_flag                         /* READING or WRITING */
 )
@@ -346,8 +358,7 @@ void rw_inode(
       !ext4_verify_inode_csum(sp, rip->i_num,
       (const unsigned char *)dip, EXT2_INODE_SIZE(sp))) {
 	put_block(bp);
-	panic("ext4: inode %llu has an invalid metadata checksum",
-	    (unsigned long long)rip->i_num);
+	return(EIO);
   }
 
   /* Do the read or write. */
@@ -362,6 +373,7 @@ void rw_inode(
 
   put_block(bp);
   rip->i_dirt = IN_CLEAN;
+  return(OK);
 }
 
 
