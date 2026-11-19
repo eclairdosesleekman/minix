@@ -84,7 +84,15 @@ int do_fork(struct proc * caller, message * m_ptr)
    * this process into another process's queue.  Copying either pointer
    * would make the parent and child share IPC queue state.
    */
-  rpc->p_rts_flags &= ~RTS_SENDING;
+  /*
+   * The child only inherits the receive side of the parent's SENDREC.
+   * Do not copy any other runtime block state: flags such as RTS_SENDING,
+   * RTS_VMREQUEST, RTS_PAGEFAULT, and RTS_PROC_STOP describe the parent
+   * and are not valid state for the new process.  The child is kept
+   * unscheduled below with RTS_NO_QUANTUM, and VM inhibition / privilege
+   * restrictions are applied explicitly by this function.
+   */
+  rpc->p_rts_flags = rpp->p_rts_flags & RTS_RECEIVING;
   rpc->p_caller_q = NULL;
   rpc->p_q_link = NULL;
   rpc->p_sendto_e = NONE;
