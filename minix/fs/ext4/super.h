@@ -102,7 +102,8 @@ EXTERN struct super_block {
     u16_t   s_sectors_in_block; /* s_block_size / 512 */
     off_t   s_max_size;         /* maximum file size on this device */
     dev_t   s_dev;              /* whose super block is this? */
-    int     s_rd_only;          /* set to 1 if file sys mounted read only */
+    int     s_rd_only;          /* metadata remains read-only in ext4 */
+    int     s_data_write_only; /* allow in-place writes to allocated data */
     block64_t s_bsearch;	/* all data blocks  below this block are in use*/
     int     s_igsearch; /* all groups below this one have no free inodes */
     u32_t   s_dirs_counter;

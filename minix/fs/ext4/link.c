@@ -39,7 +39,10 @@ int fs_link(ino_t dir_nr, char *name, ino_t ino_nr)
   register int r;
   struct inode *new_ip;
 
-  /* Temporarily open the file. */
+  if (superblock->s_data_write_only)
+	return(EROFS);
+
+  /* Temporarily open the file */
   if( (rip = get_inode(fs_dev, ino_nr)) == NULL)
 	  return(EINVAL);
 
@@ -112,6 +115,9 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
   register struct inode *rip;
   struct inode *rldirp;
   int r;
+
+  if (superblock->s_data_write_only)
+	return(EROFS);
 
   /* Temporarily open the dir. */
   if((rldirp = get_inode(fs_dev, dir_nr)) == NULL)
@@ -278,6 +284,9 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
   int odir, ndir;			/* TRUE iff {old|new} file is dir */
   int same_pdir = 0;			/* TRUE iff parent dirs are the same */
   ino_t numb;
+
+  if (superblock->s_data_write_only)
+	return(EROFS);
 
   /* Get old dir inode */
   if( (old_dirp = get_inode(fs_dev, old_dir_nr)) == NULL)
@@ -454,6 +463,9 @@ int fs_trunc(ino_t ino_nr, off_t start, off_t end)
 {
   struct inode *rip;
   int r;
+
+  if (superblock->s_data_write_only)
+	return(EROFS);
 
   if( (rip = find_inode(fs_dev, ino_nr)) == NULL)
 	  return(EINVAL);

@@ -21,6 +21,9 @@ int fs_create(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid,
 	struct fsdriver_node *node)
 {
   int r;
+
+  if (superblock->s_data_write_only)
+	return(EROFS);
   struct inode *ldirp;
   struct inode *rip;
 
@@ -64,6 +67,9 @@ int fs_mknod(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid,
 {
   struct inode *ip, *ldirp;
 
+  if (superblock->s_data_write_only)
+	return(EROFS);
+
   /* Get last directory inode */
   if((ldirp = get_inode(fs_dev, dir_nr)) == NULL)
 	  return(ENOENT);
@@ -85,6 +91,9 @@ int fs_mkdir(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid)
   int r1, r2;			/* status codes */
   ino_t dot, dotdot;		/* inode numbers for . and .. */
   struct inode *rip, *ldirp;
+
+  if (superblock->s_data_write_only)
+	return(EROFS);
 
   /* Get last directory inode */
   if((ldirp = get_inode(fs_dev, dir_nr)) == NULL)
@@ -141,6 +150,9 @@ int fs_slink(ino_t dir_nr, char *name, uid_t uid, gid_t gid,
   register int r;              /* error code */
   char* link_target_buf = NULL;       /* either sip->i_block or bp->b_data */
   struct buf *bp = NULL;    /* disk buffer for link */
+
+  if (superblock->s_data_write_only)
+	return(EROFS);
 
   /* Temporarily open the dir. */
   if( (ldirp = get_inode(fs_dev, dir_nr)) == NULL)

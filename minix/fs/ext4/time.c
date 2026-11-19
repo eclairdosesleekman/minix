@@ -15,6 +15,9 @@ int fs_utime(ino_t ino_nr, struct timespec *atime, struct timespec *mtime)
 {
   register struct inode *rip;
 
+  if (superblock->s_data_write_only)
+	return(EROFS);
+
   /* Temporarily open the file. */
   if( (rip = get_inode(fs_dev, ino_nr)) == NULL)
         return(EINVAL);

@@ -15,6 +15,9 @@ int fs_chmod(ino_t ino_nr, mode_t *mode)
 /* Perform the chmod(name, mode) system call. */
   register struct inode *rip;
 
+  if (superblock->s_data_write_only)
+	return(EROFS);
+
   /* Temporarily open the file. */
   if( (rip = get_inode(fs_dev, ino_nr)) == NULL)
 	  return(EINVAL);
@@ -38,6 +41,9 @@ int fs_chmod(ino_t ino_nr, mode_t *mode)
 int fs_chown(ino_t ino_nr, uid_t uid, gid_t gid, mode_t *mode)
 {
   register struct inode *rip;
+
+  if (superblock->s_data_write_only)
+	return(EROFS);
 
   /* Temporarily open the file. */
   if( (rip = get_inode(fs_dev, ino_nr)) == NULL)

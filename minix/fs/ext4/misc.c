@@ -19,6 +19,11 @@ void fs_sync(void)
  */
   struct inode *rip;
 
+  if (superblock->s_data_write_only) {
+	lmfs_flushall();
+	return;
+  }
+
   if (superblock->s_rd_only)
 	return; /* nothing to sync */
 

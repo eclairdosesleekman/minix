@@ -21,12 +21,12 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	struct inode *root_ip;
 	struct super_block *sp;
 	u32_t unsupported;
+	int writable;
 
-	/* Writable mounts are intentionally not supported. */
-	if (!(flags & REQ_RDONLY))
-		return(EROFS);
+	/* This server only supports data overwrites, not metadata updates. */
+	writable = !(flags & REQ_RDONLY);
 	fs_dev = dev;
-	if (bdev_open(fs_dev, BDEV_R_BIT) != OK)
+	if (bdev_open(fs_dev, BDEV_R_BIT | (writable ? BDEV_W_BIT : 0)) != OK)
 		return(EINVAL);
 
 	if ((superblock = malloc(sizeof(*superblock))) == NULL)
@@ -36,7 +36,9 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	sp->s_dev = fs_dev;
 	if (read_super(sp) != OK)
 		goto bad_mount;
+	/* Keep all filesystem metadata read-only, even for data-write mounts. */
 	sp->s_rd_only = TRUE;
+	sp->s_data_write_only = FALSE;
 
 	if (sp->s_rev_level != EXT2_DYNAMIC_REV) {
 		printf("ext4: dynamic-revision superblock required\\n");
@@ -57,6 +59,10 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	if (unsupported != 0) {
 		printf("ext4: unsupported read-only-compatible features 0x%x\\n",
 		    unsupported);
+		goto bad_mount;
+	}
+	if (writable && HAS_COMPAT_FEATURE(sp, COMPAT_HAS_JOURNAL)) {
+		printf("ext4: writable data-only mounts require no journal\\n");
 		goto bad_mount;
 	}
 	if (sp->s_feature_compat & COMPAT_ORPHAN_FILE) {
@@ -92,6 +98,7 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	root_node->fn_uid = root_ip->i_uid;
 	root_node->fn_gid = root_ip->i_gid;
 	root_node->fn_dev = NO_DEV;
+	sp->s_data_write_only = writable;
 	*res_flags = RES_64BIT;
 	return(OK);
 
@@ -158,8 +165,8 @@ void fs_unmount(void)
    * if it is missing then something strange happened with FS, so it's better
    * to not use possibly corrupted data for syncing.
    */
-  if (!superblock->s_rd_only) {
-	/* force any cached blocks out of memory */
+  if (!superblock->s_rd_only || superblock->s_data_write_only) {
+	/* Flush data blocks before closing a data-write-only mount. */
 	fs_sync();
   }
 

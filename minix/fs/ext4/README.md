@@ -1,7 +1,7 @@
-# MINIX ext4 file server (read-only)
+# MINIX ext4 file server
 
-This is an experimental, read-only ext4 file server kept separate from the
-existing ext2 server.
+This is an experimental ext4 file server kept separate from the existing
+ext2 server.
 
 ## Implemented
 
@@ -11,44 +11,67 @@ existing ext2 server.
   counters from the ext4 superblock.
 - 64-bit regular-file sizes using the inode size-high field.
 - Directory record lengths, names, and inode numbers are bounds-checked before use.
-- 64 KiB blocks are rejected because their extended `rec_len` encoding is not implemented.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block.
-- VFS writes, metadata mutations, and raw block writes are rejected with
-  `EROFS`. Mounts must explicitly be read-only.
+- Read-only mounts support clean ext4 volumes with the feature set documented
+  by the mount-time checks.
+- An opt-in writable mount mode supports in-place overwrites of existing data
+  in allocated, written extents on clean, unjournaled volumes.
 
-## Limitations
+## Writable mount restrictions
 
-This is not a complete ext4 implementation. It does not replay the journal,
-recover orphan inodes, update metadata, or validate ext4 metadata checksums.
-It rejects unsupported incompatible and read-only-compatible feature flags,
-including journal recovery, meta_bg, MMP, inline data, encryption, casefold,
-bigalloc, huge_file, gdt_csum, and metadata_csum. It also requires the clean filesystem state and rejects a non-empty
-legacy orphan list and the orphan-file feature. Use a clean, unmounted
-filesystem and run `e2fsck` before mounting.
+Writable mode is deliberately data-only. It does not modify ext4 metadata and
+is not a general-purpose read-write ext4 implementation.
 
-Treat the server as experimental and keep a backup of the volume. Do not
-attempt a read-write mount.
+- The volume must be clean and must not have the ext4 journal feature enabled.
+- Writes are accepted only for regular files and only when the entire write
+  range is already below EOF and maps to allocated, written extents.
+- Writes to holes or unwritten extents, file growth, allocation, truncation,
+  file/directory creation, unlink, rename, link, chmod, chown, and utimes are
+  rejected with `EROFS`.
+- Inode timestamps, extent trees, block/inode bitmaps, group descriptors, and
+  the superblock remain untouched.
+- Dirty data buffers are flushed by `sync` and at unmount. This mode does not
+  provide journaling or power-failure atomicity for file contents.
+
+For normal read-write filesystem use, journal replay and transactions,
+extent-tree updates, allocation, metadata checksums, orphan handling, and
+superblock/group-descriptor updates must be implemented first. Do not treat
+this limited mode as a substitute for full ext4 read-write support. Keep a
+backup and run `e2fsck` before and after testing.
 
 ## Build and test
 
 The normal `minix/fs` build includes this server. Start the installed server
-and mount a volume read-only (device name and service path may vary):
+and mount read-only:
 
 ```sh
 service up /service/ext4
 mount -r -t ext4 /dev/c0d0p1 /mnt
 ```
 
-A host-side test image can be prepared with e2fsprogs:
+To exercise the limited writable mode, prepare a clean unjournaled image on a
+host with e2fsprogs, populate it with a file before attaching it to MINIX, and
+run `e2fsck` after unmounting it:
 
 ```sh
 truncate -s 512M ext4-test.img
-mke2fs -F -t ext4 -b 4096 -O extent,64bit,^metadata_csum,^gdt_csum,^huge_file,^orphan_file ext4-test.img
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,64bit,^has_journal,^metadata_csum,^gdt_csum,^huge_file,^orphan_file \
+  ext4-test.img
+mkdir -p ext4-seed
+dd if=/dev/zero of=ext4-seed/overwrite.bin bs=4096 count=4
+debugfs -w -R 'write ext4-seed/overwrite.bin /overwrite.bin' ext4-test.img
 e2fsck -fn ext4-test.img
 ```
 
-Populate and check the image on the host before attaching it to MINIX. Test
-regular and sparse files, unwritten extents, large files, directories,
-symlinks, and reads past extent boundaries. The initial patch has not yet
-been built or runtime-tested.
+After mounting without `-r`, overwrite bytes inside the existing file without
+truncating it:
+
+```sh
+dd if=/dev/zero of=/mnt/overwrite.bin bs=512 count=1 conv=notrunc
+sync
+```
+
+Do not use a journaled or mounted-on-the-host image. Test on disposable images
+and verify the result with `e2fsck -fn` before relying on the data.

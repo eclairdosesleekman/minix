@@ -1,4 +1,4 @@
-/* Read-only ext4 file-system driver table. */
+/* ext4 file-system driver table. */
 
 #define _TABLE
 
@@ -10,8 +10,7 @@
 static ssize_t ext4_write(ino_t ino_nr, struct fsdriver_data *data,
     size_t bytes, off_t pos, int call)
 {
-	(void)ino_nr; (void)data; (void)bytes; (void)pos; (void)call;
-	return EROFS;
+	return fs_readwrite(ino_nr, data, bytes, pos, call);
 }
 
 static ssize_t ext4_bwrite(dev_t dev, struct fsdriver_data *data,
@@ -84,11 +83,14 @@ static int ext4_utime(ino_t ino_nr, struct timespec *atime,
 }
 static void ext4_sync(void)
 {
-	/* No blocks are dirtied by the read-only implementation. */
+	/* fs_sync flushes data-only mounts and is a no-op for read-only mounts. */
+	fs_sync();
 }
 static void ext4_bflush(dev_t dev)
 {
 	(void)dev;
+	if (superblock != NULL && superblock->s_data_write_only)
+		fs_sync();
 }
 
 struct fsdriver ext4_table = {

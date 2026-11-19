@@ -33,11 +33,10 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   mode_t mode_word;
   int completed;
   struct inode *rip;
+  off_t check_pos, end_pos;
+  block64_t check_block;
 
   r = OK;
-
-  if (call == FSC_WRITE)
-	return(EROFS);
 
   /* Find the inode referred */
   if ((rip = find_inode(fs_dev, ino_nr)) == NULL)
@@ -52,9 +51,22 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   if (f_size < 0) f_size = MAX_FILE_POS;
 
   if (call == FSC_WRITE) {
-	/* Check in advance to see if file will grow too big. */
-	if (position > (off_t) (rip->i_sp->s_max_size - nrbytes))
-		return(EFBIG);
+	/* Only overwrite existing regular-file data in already written extents. */
+	if (!rip->i_sp->s_data_write_only || mode_word != I_REGULAR)
+		return(EROFS);
+	if (position < 0 || position > f_size ||
+	    (u64_t)nrbytes > (u64_t)(f_size - position))
+		return(EROFS);
+	end_pos = position + (off_t)nrbytes;
+	for (check_pos = position; check_pos < end_pos; ) {
+		err_code = OK;
+		check_block = read_map(rip, check_pos, 0);
+		if (err_code != OK)
+			return(err_code);
+		if (check_block == NO_BLOCK)
+			return(EROFS);
+		check_pos += block_size - (check_pos % block_size);
+	}
   }
 
   cum_io = 0;
@@ -96,7 +108,9 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 	return r;
 
   if (call == FSC_READ) rip->i_update |= ATIME;
-  if (call == FSC_WRITE) rip->i_update |= CTIME | MTIME;
+	/* Data-only writes deliberately leave inode timestamps untouched. */
+  if (call == FSC_WRITE && !rip->i_sp->s_data_write_only)
+	rip->i_update |= CTIME | MTIME;
   if (!rip->i_sp->s_rd_only)
 	rip->i_dirt = IN_DIRTY;          /* inode is thus now dirty */
 
@@ -155,11 +169,8 @@ static int rw_chunk(register struct inode *rip, u64_t position, unsigned off,
 		lmfs_zero_block_ino(dev, ino, ino_off);
 		return OK;
 	} else {
-               /* Writing to a nonexistent block.
-                * Create and enter in inode.
-                */
-		if ((bp = new_block(rip, (off_t) ex64lo(position))) == NULL)
-			return(err_code);
+		/* Never allocate blocks or convert unwritten extents in data-only mode. */
+		return(EROFS);
         }
   } else if (call != FSC_WRITE) {
 	/* Extents are not necessarily physically contiguous. */
