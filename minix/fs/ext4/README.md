@@ -19,6 +19,7 @@ read-write mode.
   are supported. When both `metadata_csum` and the legacy `gdt_csum` flag are
   present, the metadata_csum algorithm is used. Unknown checksum types and
   non-Linux metadata checksum formats are rejected.
+  An invalid inode checksum is reported as `EIO` and the inode is not cached.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
