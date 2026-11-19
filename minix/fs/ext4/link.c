@@ -23,6 +23,23 @@ static off_t nextblock(off_t pos, int blocksize);
 static void zeroblock_half(struct inode *i, off_t p, int l);
 static void zeroblock_range(struct inode *i, off_t p, off_t h);
 
+/*
+ * Removing the last name of an inode with an external extent tree would
+ * require freeing its extent nodes.  That operation is intentionally not
+ * implemented by the bounded inline-root writer.  Keep the inode allocated
+ * rather than letting put_inode() discard it after a failed truncate.
+ */
+static int has_external_extent_tree(struct inode *rip)
+{
+	u16_t depth;
+
+	if (!rip->i_sp->s_is_ext4 || !(rip->i_flags & EXT4_EXTENTS_FL))
+		return(FALSE);
+	memcpy(&depth, (unsigned char *)rip->i_block + 6, sizeof(depth));
+	depth = (u16_t)conv2(le_CPU, depth);
+	return(depth != 0);
+}
+
 /* Args to zeroblock_half() */
 #define FIRST_HALF	0
 #define LAST_HALF	1
@@ -134,12 +151,19 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
 
   /* Now test if the call is allowed, separately for unlink() and rmdir(). */
   if (call == FSC_UNLINK) {
-	  if( (rip->i_mode & I_TYPE) == I_DIRECTORY) r = EPERM;
+	  if ((rip->i_mode & I_TYPE) == I_DIRECTORY) r = EPERM;
+	  /* Do not orphan an inode whose external extent tree we cannot free. */
+	  if (r == OK && rip->i_links_count <= 1 &&
+	      has_external_extent_tree(rip))
+		  r = EOPNOTSUPP;
 
 	  /* Actually try to unlink the file; fails if parent is mode 0 etc. */
 	  if (r == OK) r = unlink_file(rldirp, rip, name);
   } else {
-	  r = remove_dir(rldirp, rip, name); /* call is RMDIR */
+	  if (has_external_extent_tree(rip))
+		  r = EOPNOTSUPP;
+	  else
+		  r = remove_dir(rldirp, rip, name); /* call is RMDIR */
   }
 
   /* If unlink was possible, it has been done, otherwise it has not. */
@@ -374,6 +398,10 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 		ndir = ((new_ip->i_mode & I_TYPE) == I_DIRECTORY);/* dir ? */
 		if(odir == TRUE && ndir == FALSE) r = ENOTDIR;
 		if(odir == FALSE && ndir == TRUE) r = EISDIR;
+		/* Replacing the last name would otherwise leak external extents. */
+		if (r == OK && has_external_extent_tree(new_ip) &&
+		    (ndir || new_ip->i_links_count <= 1))
+			r = EOPNOTSUPP;
 	}
   }
 
