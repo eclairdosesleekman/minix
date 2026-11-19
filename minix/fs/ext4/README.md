@@ -12,6 +12,7 @@ read-write mode.
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock.
 - 64-bit regular-file sizes using the inode size-high field.
+- Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -99,6 +100,11 @@ extent root reaches its four-entry capacity. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 
-The 64 KiB directory-record change has not yet been compiled or runtime-tested
-in a MINIX build environment. Treat it as a review candidate and test it on
-disposable images only.
+The large-file read path should be tested with files larger than 2 TiB on
+4 KiB-block volumes and with sizes near the 32-bit logical-block boundary on
+larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
+the rest of this experimental server, run `e2fsck -fn` after clean unmount.
+
+The 64 KiB directory-record change and the `huge_file` extension have not yet
+been compiled or runtime-tested in a MINIX build environment. Treat this as a
+review candidate and test it on disposable images only.
