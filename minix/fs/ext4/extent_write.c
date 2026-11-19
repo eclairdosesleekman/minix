@@ -167,6 +167,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		block_to_free = ex.physical + offset;
 		if (rip->i_blocks < rip->i_sp->s_sectors_in_block)
 			return(EIO);
+		/* Splitting a middle extent consumes one additional root slot. */
+		if (offset != 0 && offset != ex.length - 1 &&
+		    entries >= max_entries)
+			return(EFBIG);
 
 		if (ex.length == 1) {
 			memmove(entry, entry + 12,
