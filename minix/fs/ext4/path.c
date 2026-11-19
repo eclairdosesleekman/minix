@@ -146,6 +146,13 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	if(!(bp = get_block_map(ldir_ptr, rounddown(pos, block_size))))
 		return(err_code != OK ? err_code : EIO);
 
+	if (!ext4_verify_dir_block(ldir_ptr,
+	    (const unsigned char *)b_data(bp),
+	    (unsigned int)(pos / block_size))) {
+		put_block(bp);
+		return(EIO);
+	}
+
 	prev_dp = NULL; /* New block - new first dentry, so no prev. */
 
 	/*
