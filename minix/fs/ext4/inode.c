@@ -122,7 +122,7 @@ struct inode *get_inode(
  */
   register struct inode *rip;
   int hashi;
-  int i;
+  int i, r;
 
   hashi = (int) numb & INODE_HASH_MASK;
 
