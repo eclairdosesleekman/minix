@@ -64,6 +64,13 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: metadata checksums require a Linux-created filesystem\\n");
 		goto bad_mount;
 	}
+
+	/* Older gdt_csum is understood only when metadata_csum supersedes it. */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) &&
+	    !HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+		printf("ext4: legacy gdt_csum without metadata_csum is unsupported\\n");
+		goto bad_mount;
+	}
 	if (sp->s_feature_compat & COMPAT_ORPHAN_FILE) {
 		printf("ext4: orphan-file feature is not supported\\n");
 		goto bad_mount;
