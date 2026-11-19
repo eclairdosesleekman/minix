@@ -560,7 +560,7 @@ verify_one_group_bitmap(dev_t dev, struct super_block *sp,
 	 */
 	crc = ext4_crc32c(sp->s_checksum_seed, bitmap, bitmap_bytes);
 
-	stored = ext4_read32(raw_desc + checksum_offset);
+	stored = ext4_read16(raw_desc + checksum_offset);
 	/* The low checksum field occupies 16 bits, not 32. */
 	stored &= 0xffffU;
 	if (desc_size >= 64) {
