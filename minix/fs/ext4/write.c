@@ -28,7 +28,7 @@ static int empty_indir(struct buf *, struct super_block *);
  *				new_wblock: block # to be inserted							 *
  *				op: special actions											 *
  *===========================================================================*/
-int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
+int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 {
 /* Write a new block into an inode.
  *
@@ -312,14 +312,14 @@ struct buf *new_block(register struct inode *rip, off_t position)
 /* Acquire a new block and return a pointer to it. */
   struct buf *bp;
   int r;
-  block_t b;
+  block64_t b;
 
   /* Is another block available? */
   if ( (b = read_map(rip, position, 0)) == NO_BLOCK) {
 	/* Check if this position follows last allocated
 	 * block.
 	 */
-	block_t goal = NO_BLOCK;
+	block64_t goal = NO_BLOCK;
 	if (rip->i_last_pos_bl_alloc != 0) {
 		off_t position_diff = position - rip->i_last_pos_bl_alloc;
 		if (rip->i_bsearch == 0) {
