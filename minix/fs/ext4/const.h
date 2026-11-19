@@ -184,6 +184,8 @@
 #define EXT4_HUGE_FILE_FL		0x00040000
 #define EXT4_OS_LINUX			0
 #define EXT4_CRC32C_CHKSUM		1
+#define EXT4_XATTR_MAGIC		0xEA020000U
+#define EXT4_XATTR_REFCOUNT_MAX		1024U
 #define EXT4_EXTENT_MAGIC		0xF30A
 #define EXT4_EXTENT_MAX_DEPTH	5
 /* Top of directory hierarchies*/
