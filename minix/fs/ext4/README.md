@@ -49,9 +49,11 @@ implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
-  encryption, casefold, bigalloc, huge_file, orphan_file, and unsupported
-  feature flags are rejected. The filesystem must be clean, with an empty
-  legacy orphan list.
+  encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
+  are rejected. The filesystem must be clean, with an empty legacy orphan list.
+- The `huge_file` feature is supported only for read-only mounts. Read-write
+  mounts reject it because the current inode writer does not persist the high
+  16 bits of `i_blocks`.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
   rebalancing, metadata checksums, quota updates, or the full set of ext4
   features. A power loss or server crash during metadata updates can leave
