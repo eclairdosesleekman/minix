@@ -176,6 +176,7 @@
 /* hash-indexed directory */
 #define EXT2_INDEX_FL			0x00001000
 #define EXT4_EXTENTS_FL		0x00080000
+#define EXT4_HUGE_FILE_FL		0x00040000
 #define EXT4_EXTENT_MAGIC		0xF30A
 #define EXT4_EXTENT_MAX_DEPTH	5
 /* Top of directory hierarchies*/
