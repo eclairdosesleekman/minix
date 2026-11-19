@@ -64,12 +64,12 @@
 			DIR_ENTRY_ALIGN - (DIR_ENTRY_CONTENTS_SIZE(d) & 0x03) ))
 
 /* How many bytes can be taken from the end of dentry */
-#define DIR_ENTRY_SHRINK(d)    (conv2(le_CPU, (d)->d_rec_len) \
-					- DIR_ENTRY_ACTUAL_SIZE(d))
+#define DIR_ENTRY_SHRINK(d, bs) \
+	(ext4_dir_rec_len((d), (bs)) - DIR_ENTRY_ACTUAL_SIZE(d))
 
 /* Dentry can have padding, which can be used to enlarge namelen */
-#define DIR_ENTRY_MAX_NAME_LEN(d)	(conv2(le_CPU, (d)->d_rec_len) \
-						- MIN_DIR_ENTRY_SIZE)
+#define DIR_ENTRY_MAX_NAME_LEN(d, bs) \
+	(ext4_dir_rec_len((d), (bs)) - MIN_DIR_ENTRY_SIZE)
 
 /* Constants relative to the data blocks */
 /* When change EXT2_NDIR_BLOCKS, modify ext2_max_size()!!!*/

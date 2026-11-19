@@ -14,8 +14,8 @@ read-write mode.
 - 64-bit regular-file sizes using the inode size-high field.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
-- 64 KiB blocks are rejected because their extended `rec_len` encoding is not
-  implemented.
+- 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
+  decoded and encoded consistently by directory traversal and mutation paths.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block.
 - Read-write support for filesystems without a journal and without indexed
@@ -82,12 +82,23 @@ mke2fs -F -t ext4 -b 4096 \
 e2fsck -fn ext4-rw-test.img
 ```
 
-Attach the image to MINIX, then test creating, writing, overwriting, appending,
+A separate image exercises the 64 KiB directory-record encoding:
+
+```sh
+truncate -s 512M ext4-64k-test.img
+mke2fs -F -t ext4 -b 65536 \
+  -O extent,^has_journal,^dir_index,^metadata_csum,^gdt_csum,\
+^huge_file,^orphan_file ext4-64k-test.img
+e2fsck -fn ext4-64k-test.img
+```
+
+Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
 and long symlinks. Include files with unwritten extents and files whose inline
-extent root reaches its four-entry capacity. Unmount cleanly and run
-`e2fsck -fn` on the host after each test.
+extent root reaches its four-entry capacity. For the 64 KiB image, exercise
+directory enumeration and enough create/unlink operations to split and merge
+records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 
-The patch has not yet been compiled or runtime-tested in a MINIX build
-environment. Treat it as a draft for review and testing on disposable images
-only.
+The 64 KiB directory-record change has not yet been compiled or runtime-tested
+in a MINIX build environment. Treat it as a review candidate and test it on
+disposable images only.

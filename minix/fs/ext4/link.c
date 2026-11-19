@@ -561,7 +561,7 @@ static int freesp_inode(register struct inode *rip, off_t start, off_t end)
  */
   off_t p, e;
   int r;
-  unsigned short block_size = rip->i_sp->s_block_size;
+  unsigned int block_size = rip->i_sp->s_block_size;
   int zero_last, zero_first;
 
   discard_preallocated_blocks(rip);

@@ -97,6 +97,10 @@ int fs_utime(ino_t ino, struct timespec *atime, struct timespec *mtime);
 struct buf *get_block(dev_t dev, block64_t block, int how);
 unsigned conv2(int norm, int w);
 long conv4(int norm, long x);
+unsigned int ext4_dir_rec_len(const struct ext2_disk_dir_desc *dp,
+	unsigned int block_size);
+void ext4_set_dir_rec_len(struct ext2_disk_dir_desc *dp,
+	unsigned int rec_len, unsigned int block_size);
 int ext4_valid_dirent(const struct ext2_disk_dir_desc *dp,
 	unsigned int offset, unsigned int block_size);
 int ansi_strcmp(register const char* ansi_s, register const char *s2,

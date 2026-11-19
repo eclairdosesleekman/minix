@@ -31,6 +31,49 @@ struct buf *get_block(dev_t dev, block64_t block, int how)
 
 
 /*
+ * ext4 reserves 0xffff (and, for larger block sizes, zero) to represent
+ * an entire directory block. For block sizes above 64 KiB, the low two
+ * bits of the disk value hold the high two bits of the decoded length.
+ * Keep decoding and encoding shared by all directory paths.
+ */
+unsigned int
+ext4_dir_rec_len(const struct ext2_disk_dir_desc *dp, unsigned int block_size)
+{
+	unsigned int rec_len;
+
+	rec_len = conv2(le_CPU, dp->d_rec_len);
+	if (rec_len == 0xffffU || rec_len == 0)
+		return block_size;
+	if (block_size < (1U << 16))
+		return rec_len;
+
+	return (rec_len & 0xfffcU) | ((rec_len & 0x0003U) << 16);
+}
+
+void
+ext4_set_dir_rec_len(struct ext2_disk_dir_desc *dp, unsigned int rec_len,
+    unsigned int block_size)
+{
+	unsigned int encoded;
+
+	if (rec_len < MIN_DIR_ENTRY_SIZE || rec_len > block_size ||
+	    (rec_len & (DIR_ENTRY_ALIGN - 1)) != 0)
+		panic("ext4: invalid directory record length %u/%u",
+		    rec_len, block_size);
+
+	if (rec_len < (1U << 16))
+		encoded = rec_len;
+	else if (rec_len == block_size && block_size == (1U << 16))
+		encoded = 0xffffU;
+	else if (rec_len == block_size)
+		encoded = 0;
+	else
+		encoded = (rec_len & 0xfffcU) | ((rec_len >> 16) & 0x0003U);
+
+	dp->d_rec_len = (u16_t)conv2(le_CPU, (int)encoded);
+}
+
+/*
  * Validate an on-disk ext directory entry before following its record
  * length or accessing its name. Directory blocks are untrusted input.
  */
@@ -42,11 +85,11 @@ int ext4_valid_dirent(const struct ext2_disk_dir_desc *dp,
     if (offset > block_size || block_size - offset < MIN_DIR_ENTRY_SIZE)
         return FALSE;
 
-    rec_len = conv2(le_CPU, dp->d_rec_len);
+    rec_len = ext4_dir_rec_len(dp, block_size);
     if (rec_len < MIN_DIR_ENTRY_SIZE ||
         (rec_len & (DIR_ENTRY_ALIGN - 1)) != 0 ||
         rec_len > block_size - offset ||
-        dp->d_name_len > rec_len - MIN_DIR_ENTRY_SIZE)
+        DIR_ENTRY_ACTUAL_SIZE(dp) > rec_len)
         return FALSE;
 
     return TRUE;
