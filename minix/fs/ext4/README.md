@@ -12,7 +12,12 @@ read-write mode.
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock.
 - 64-bit regular-file sizes using the inode size-high field.
-- Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
+- Read-only support for the `huge_file` feature, including the 48-bit `i_blocks`
+  counter and the per-inode `HUGE_FILE` block-unit flag.
+- Read-only CRC32C verification for `metadata_csum` superblocks, group
+  descriptors, inodes, external extent blocks, and ordinary directory leaf
+  blocks. Indexed-directory root blocks are rejected with `EOPNOTSUPP` until
+  their separate dx-tail checksum format is implemented.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -37,8 +42,13 @@ implementation.
 
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
-- **No metadata checksums:** `metadata_csum` and `gdt_csum` remain
-  unsupported and are rejected by the feature check.
+- **Metadata checksum scope:** `metadata_csum` is accepted only for
+  read-only mounts. CRC32C is checked for the superblock, group descriptors,
+  inodes, external extent nodes, and ordinary directory blocks. Indexed
+  directory roots return `EOPNOTSUPP`; `gdt_csum`, the incompatible
+  `csum_seed` feature, bitmap checksum verification, xattr block checksums,
+  and checksum updates are not implemented. Writable mounts reject
+  `metadata_csum` because metadata updates do not recalculate checksums.
 - **No indexed directories:** writable mounts reject `dir_index`; htree
   directory updates are not implemented.
 - **Inline extent root only for extent mutations:** the inode root has room
@@ -55,9 +65,9 @@ implementation.
   mounts reject it because the current inode writer does not persist the high
   16 bits of `i_blocks`.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
-  rebalancing, metadata checksums, quota updates, or the full set of ext4
-  features. A power loss or server crash during metadata updates can leave
-  the volume inconsistent.
+  rebalancing, quota updates, or the full set of ext4 features. A power loss
+  or server crash during metadata updates can leave a writable volume
+  inconsistent.
 
 Do not use writable mode on valuable data. Run `e2fsck` on the unmounted
 volume after every test session.
@@ -73,9 +83,9 @@ service up /service/ext4
 mount -t ext4 /dev/c0d0p1 /mnt
 ```
 
-A host-side test image can be prepared with e2fsprogs. The feature list below
-disables journaling, indexed directories, and checksum features that this
-server does not update:
+A host-side read-write test image can be prepared with e2fsprogs. The feature
+list below disables journaling, indexed directories, and checksum features
+that this server does not update:
 
 ```sh
 truncate -s 512M ext4-rw-test.img
@@ -84,6 +94,20 @@ mke2fs -F -t ext4 -b 4096 \
 ^huge_file,^orphan_file ext4-rw-test.img
 e2fsck -fn ext4-rw-test.img
 ```
+
+A read-only image exercises metadata checksums on the supported paths:
+
+```sh
+truncate -s 512M ext4-csum-test.img
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,64bit,metadata_csum,^has_journal,^dir_index,\
+^huge_file,^orphan_file ext4-csum-test.img
+e2fsck -fn ext4-csum-test.img
+```
+
+Keep indexed directories disabled for this checksum test because their dx-tail
+checksum format is not yet supported. Mount the image read-only and test inode
+lookup, file data reads, external extent trees, and directory enumeration.
 
 A separate image exercises the 64 KiB directory-record encoding:
 
@@ -107,6 +131,7 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The 64 KiB directory-record change and the `huge_file` extension have not yet
-been compiled or runtime-tested in a MINIX build environment. Treat this as a
-review candidate and test it on disposable images only.
+The 64 KiB directory-record change, the `huge_file` extension, and the
+`metadata_csum` verification path have not yet been compiled or runtime-tested
+in a MINIX build environment. Treat this as a review candidate and test it on
+disposable images only.
