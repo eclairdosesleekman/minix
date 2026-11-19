@@ -106,6 +106,7 @@ EXTERN struct super_block {
     block64_t s_bsearch;	/* all data blocks  below this block are in use*/
     int     s_igsearch; /* all groups below this one have no free inodes */
     u32_t   s_dirs_counter;
+    u32_t   s_csum_seed;          /* CRC32C seed for metadata_csum */
 
 } *superblock, *ondisk_superblock;
 

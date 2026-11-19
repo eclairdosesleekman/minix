@@ -31,6 +31,183 @@ struct buf *get_block(dev_t dev, block64_t block, int how)
 
 
 /*
+ * ext4 metadata_csum uses the reflected Castagnoli CRC32C polynomial.
+ * The seed and return value match the Linux crc32c() API, without a final
+ * complement, so checksum streams can be updated incrementally.
+ */
+u32_t
+ext4_crc32c(u32_t crc, const void *data, size_t len)
+{
+	const unsigned char *p = data;
+	unsigned int bit;
+
+	while (len-- != 0) {
+		crc ^= *p++;
+		for (bit = 0; bit < 8; bit++)
+			crc = (crc >> 1) ^
+			    (0x82f63b78U & (u32_t)-(int)(crc & 1));
+	}
+	return(crc);
+}
+
+static u16_t
+ext4_csum_read16(const unsigned char *p)
+{
+	u16_t value;
+
+	memcpy(&value, p, sizeof(value));
+	return((u16_t)conv2(le_CPU, value));
+}
+
+static u32_t
+ext4_csum_read32(const unsigned char *p)
+{
+	u32_t value;
+
+	memcpy(&value, p, sizeof(value));
+	return((u32_t)conv4(le_CPU, value));
+}
+
+/* Per-inode seed: filesystem UUID seed, inode number, then generation. */
+u32_t
+ext4_inode_csum_seed(struct inode *rip)
+{
+	u32_t inum, generation, crc;
+
+	inum = (u32_t)conv4(le_CPU, (u32_t)rip->i_num);
+	generation = (u32_t)conv4(le_CPU, rip->i_generation);
+	crc = ext4_crc32c(rip->i_sp->s_csum_seed, &inum, sizeof(inum));
+	return(ext4_crc32c(crc, &generation, sizeof(generation)));
+}
+
+/*
+ * Verify the Linux ext4 inode checksum. The checksum-low field is at
+ * offset 124; checksum-high is at offset 130 when i_extra_isize includes it.
+ */
+int
+ext4_verify_inode_csum(struct super_block *sp, ino_t ino,
+	const unsigned char *raw, size_t inode_size)
+{
+	static const u16_t zero16 = 0;
+	u32_t inum, generation, seed, crc, provided;
+	u16_t extra_isize, checksum_lo, checksum_hi;
+	size_t offset;
+	int have_hi = FALSE;
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+		return(TRUE);
+	if (sp->s_creator_os != EXT4_OS_LINUX || ino > UINT32_MAX ||
+	    inode_size < 128)
+		return(FALSE);
+
+	inum = (u32_t)conv4(le_CPU, (u32_t)ino);
+	generation = (u32_t)conv4(le_CPU, ext4_csum_read32(raw + 100));
+	seed = ext4_crc32c(sp->s_csum_seed, &inum, sizeof(inum));
+	seed = ext4_crc32c(seed, &generation, sizeof(generation));
+
+	checksum_lo = ext4_csum_read16(raw + 124);
+	crc = ext4_crc32c(seed, raw, 124);
+	crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
+	crc = ext4_crc32c(crc, raw + 126, 2);
+
+	provided = checksum_lo;
+	offset = 128;
+	if (inode_size > 128) {
+		if (inode_size < 130)
+			return(FALSE);
+		extra_isize = ext4_csum_read16(raw + 128);
+		if (extra_isize > inode_size - 128)
+			return(FALSE);
+
+		crc = ext4_crc32c(crc, raw + 128, 2);
+		offset = 130;
+		if (extra_isize >= 4 && inode_size >= 132) {
+			checksum_hi = ext4_csum_read16(raw + 130);
+			provided |= (u32_t)checksum_hi << 16;
+			crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
+			offset = 132;
+			have_hi = TRUE;
+		}
+		if (offset < inode_size)
+			crc = ext4_crc32c(crc, raw + offset, inode_size - offset);
+	}
+	if (!have_hi)
+		crc &= 0xffffU;
+	return(provided == crc);
+}
+
+/*
+ * Verify one ext4 directory block. Leaf blocks end in a fake dirent checksum
+ * tail; htree root and internal nodes instead have a dx_tail after their
+ * count/limit and entry array.
+ */
+int
+ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
+	unsigned int logical_block)
+{
+	const struct ext2_disk_dir_desc *first, *second;
+	const unsigned char *tail;
+	unsigned int block_size, count_offset, tail_offset, count, limit;
+	u32_t seed, crc, stored, zero32 = 0;
+
+	if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM))
+		return(TRUE);
+
+	block_size = rip->i_sp->s_block_size;
+	if (block_size < 32)
+		return(FALSE);
+	seed = ext4_inode_csum_seed(rip);
+	first = (const struct ext2_disk_dir_desc *)data;
+
+	/* HTree root: "." is 12 bytes and ".." spans the remainder. */
+	if ((rip->i_flags & EXT2_INDEX_FL) && logical_block == 0) {
+		if (ext4_dir_rec_len(first, block_size) != 12)
+			return(FALSE);
+		second = (const struct ext2_disk_dir_desc *)(data + 12);
+		if (ext4_dir_rec_len(second, block_size) != block_size - 12 ||
+		    ext4_csum_read32(data + 24) != 0 || data[29] != 8)
+			return(FALSE);
+		count_offset = 32;
+	} else if ((rip->i_flags & EXT2_INDEX_FL) &&
+	    ext4_csum_read32(data) == 0 && data[6] == 0 &&
+	    ext4_dir_rec_len(first, block_size) == block_size &&
+	    ext4_csum_read16(data + 8) != 0 &&
+	    ext4_csum_read16(data + 10) != 0 &&
+	    ext4_csum_read16(data + 10) <= ext4_csum_read16(data + 8) &&
+	    ext4_csum_read16(data + 8) <= (block_size - 16) / 8) {
+		/* Internal htree node: fake full-block dirent precedes dx entries. */
+		count_offset = 8;
+	} else {
+		/* Directory leaf block checksum tail (12 bytes). */
+		tail_offset = block_size - 12;
+		tail = data + tail_offset;
+		if (ext4_csum_read32(tail) != 0 ||
+		    ext4_csum_read16(tail + 4) != 12 ||
+		    tail[6] != 0 || tail[7] != 0xde)
+			return(FALSE);
+		stored = ext4_csum_read32(tail + 8);
+		crc = ext4_crc32c(seed, data, tail_offset);
+		return(stored == crc);
+	}
+
+	if (count_offset + 4 > block_size)
+		return(FALSE);
+	limit = ext4_csum_read16(data + count_offset);
+	count = ext4_csum_read16(data + count_offset + 2);
+	if (limit == 0 || count == 0 || count > limit ||
+	    limit > (block_size - count_offset - 8) / 8)
+		return(FALSE);
+	tail_offset = count_offset + limit * 8;
+	tail = data + tail_offset;
+	stored = ext4_csum_read32(tail + 4);
+	crc = ext4_crc32c(seed, data, count_offset + count * 8);
+	crc = ext4_crc32c(crc, tail, 4);
+	crc = ext4_crc32c(crc, &zero32, sizeof(zero32));
+	return(stored == crc);
+}
+
+
+/*
  * ext4 reserves 0xffff (and, for larger block sizes, zero) to represent
  * an entire directory block. For block sizes above 64 KiB, the low two
  * bits of the disk value hold the high two bits of the decoded length.

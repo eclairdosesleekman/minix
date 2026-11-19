@@ -143,13 +143,16 @@
 
 /* Ext4 features understood by this server. */
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
-                                     INCOMPAT_64BIT | INCOMPAT_FLEX_BG)
+                                     INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
+                                     INCOMPAT_CSUM_SEED)
 #define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \
                                       RO_COMPAT_LARGE_FILE | \
                                       RO_COMPAT_BTREE_DIR | \
                                       RO_COMPAT_DIR_NLINK | \
                                       RO_COMPAT_EXTRA_ISIZE | \
-                                      RO_COMPAT_HUGE_FILE)
+                                      RO_COMPAT_HUGE_FILE | \
+                                      RO_COMPAT_METADATA_CSUM | \
+                                      RO_COMPAT_GDT_CSUM)
 
 /* Ext2 directory file types. Only the low 3 bits are used.
  * The other bits are reserved for now.
@@ -177,6 +180,8 @@
 #define EXT2_INDEX_FL			0x00001000
 #define EXT4_EXTENTS_FL		0x00080000
 #define EXT4_HUGE_FILE_FL		0x00040000
+#define EXT4_OS_LINUX			0
+#define EXT4_CRC32C_CHKSUM		1
 #define EXT4_EXTENT_MAGIC		0xF30A
 #define EXT4_EXTENT_MAX_DEPTH	5
 /* Top of directory hierarchies*/

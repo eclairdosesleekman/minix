@@ -248,6 +248,22 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 		    entries > max_entries)
 			goto corrupt;
 
+		/* External extent nodes carry a checksum after their max array. */
+		if (bp != NULL &&
+		    HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM)) {
+			size_t tail_offset = 12 + (size_t)max_entries * 12;
+			u32_t stored, calculated;
+
+			if (tail_offset > node_size - sizeof(stored))
+				goto corrupt;
+			memcpy(&stored, node + tail_offset, sizeof(stored));
+			stored = (u32_t)conv4(le_CPU, stored);
+			calculated = ext4_crc32c(ext4_inode_csum_seed(rip),
+			    node, tail_offset);
+			if (stored != calculated)
+				goto corrupt;
+		}
+
 		if (depth == 0) {
 			for (i = 0; i < entries; i++) {
 				u32_t first, physical_lo;
@@ -648,6 +664,15 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 		int e = err_code != OK ? err_code : EIO;
 		put_inode(rip);
 		return(e);
+	}
+
+	/* Verify the checksum before interpreting directory entries. */
+	if (!ext4_verify_dir_block(rip,
+	    (const unsigned char *)b_data(bp),
+	    (unsigned int)(block_pos / block_size))) {
+		put_block(bp);
+		put_inode(rip);
+		return(EIO);
 	}
 
 	/* Search a directory block. */

@@ -13,6 +13,13 @@ read-write mode.
   counters from the ext4 superblock.
 - 64-bit regular-file sizes using the inode size-high field.
 - Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
+- Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
+  group descriptors, Linux inodes, directory leaf/htree blocks, and external
+  extent-tree nodes. Both UUID-derived and `metadata_csum_seed` checksum seeds
+  are supported. When both `metadata_csum` and the legacy `gdt_csum` flag are
+  present, the metadata_csum algorithm is used. Unknown checksum types and
+  non-Linux metadata checksum formats are rejected.
+  An invalid inode checksum is reported as `EIO` and the inode is not cached.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -37,8 +44,10 @@ implementation.
 
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
-- **No metadata checksums:** `metadata_csum` and `gdt_csum` remain
-  unsupported and are rejected by the feature check.
+- **Read-only metadata checksums:** `metadata_csum` is verified on the
+  metadata structures traversed by the read path. Writable mounts reject it
+  because allocation, inode and directory mutation paths do not update
+  checksums. Legacy `gdt_csum` without `metadata_csum` remains unsupported.
 - **No indexed directories:** writable mounts reject `dir_index`; htree
   directory updates are not implemented.
 - **Inline extent root only for extent mutations:** the inode root has room
@@ -54,9 +63,11 @@ implementation.
 - The `huge_file` feature is supported only for read-only mounts. Read-write
   mounts reject it because the current inode writer does not persist the high
   16 bits of `i_blocks`.
+- The `metadata_csum` and `metadata_csum_seed` features are supported only
+  for read-only mounts.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
-  rebalancing, metadata checksums, quota updates, or the full set of ext4
-  features. A power loss or server crash during metadata updates can leave
+  rebalancing, metadata checksum updates, quota updates, or the full set of
+  ext4 features. A power loss or server crash during metadata updates can leave
   the volume inconsistent.
 
 Do not use writable mode on valuable data. Run `e2fsck` on the unmounted
@@ -102,11 +113,18 @@ extent root reaches its four-entry capacity. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 
+For metadata checksum coverage, create a disposable Linux ext4 filesystem
+with `metadata_csum` enabled, mount it read-only, and exercise directories,
+indexed directories, nested external extent trees, and large inode tables.
+Corrupt one copy of each checksum-protected structure and confirm the server
+rejects the affected metadata rather than following it. Use `e2fsck -fn` on
+the unmounted image after each test.
+
 The large-file read path should be tested with files larger than 2 TiB on
 4 KiB-block volumes and with sizes near the 32-bit logical-block boundary on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The 64 KiB directory-record change and the `huge_file` extension have not yet
+The 64 KiB directory-record, `huge_file`, and `metadata_csum` extensions have not yet
 been compiled or runtime-tested in a MINIX build environment. Treat this as a
 review candidate and test it on disposable images only.
