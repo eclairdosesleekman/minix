@@ -21,11 +21,11 @@ int fs_create(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid,
 	struct fsdriver_node *node)
 {
   int r;
+  struct inode *ldirp;
+  struct inode *rip;
 
   if (superblock->s_data_write_only)
 	return(EROFS);
-  struct inode *ldirp;
-  struct inode *rip;
 
   /* Try to make the file. */
 

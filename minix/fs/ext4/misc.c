@@ -19,6 +19,10 @@ void fs_sync(void)
  */
   struct inode *rip;
 
+  /* Sync may be requested before the first mount or after unmount. */
+  if (superblock == NULL || superblock->s_dev == NO_DEV)
+	return;
+
   if (superblock->s_data_write_only) {
 	lmfs_flushall();
 	return;

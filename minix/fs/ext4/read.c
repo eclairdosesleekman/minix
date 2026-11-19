@@ -65,6 +65,10 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 			return(err_code);
 		if (check_block == NO_BLOCK)
 			return(EROFS);
+		/* Do not step past end_pos: it may be close to OFF_MAX. */
+		if ((u64_t)(end_pos - check_pos) <=
+		    (u64_t)(block_size - (check_pos % block_size)))
+			break;
 		check_pos += block_size - (check_pos % block_size);
 	}
   }

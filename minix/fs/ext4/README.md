@@ -13,12 +13,14 @@ ext2 server.
 - Directory record lengths, names, and inode numbers are bounds-checked before use.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block.
+- 64 KiB blocks are rejected because their extended `rec_len` encoding is
+  not implemented.
 - Read-only mounts support clean ext4 volumes with the feature set documented
   by the mount-time checks.
 - An opt-in writable mount mode supports in-place overwrites of existing data
   in allocated, written extents on clean, unjournaled volumes.
 
-## Writable mount restrictions
+## Limitations of writable mode
 
 Writable mode is deliberately data-only. It does not modify ext4 metadata and
 is not a general-purpose read-write ext4 implementation.
@@ -33,6 +35,14 @@ is not a general-purpose read-write ext4 implementation.
   the superblock remain untouched.
 - Dirty data buffers are flushed by `sync` and at unmount. This mode does not
   provide journaling or power-failure atomicity for file contents.
+
+This implementation still does not replay a journal, update extent trees,
+recover orphan inodes, or validate ext4 metadata checksums. Unsupported
+incompatible and read-only-compatible features are rejected at mount time;
+these include journal recovery, meta_bg, MMP, inline data, encryption,
+casefold, bigalloc, huge_file, gdt_csum, and metadata_csum. A non-empty
+legacy orphan list and the orphan-file feature are also rejected. Run
+`e2fsck` and use a clean, unmounted filesystem before attaching it to MINIX.
 
 For normal read-write filesystem use, journal replay and transactions,
 extent-tree updates, allocation, metadata checksums, orphan handling, and
