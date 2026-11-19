@@ -97,6 +97,23 @@ int read_super(register struct super_block *sp)
 	super_copy(sp, ondisk_superblock);
 	sp->s_dev = NO_DEV;
 	sp->s_is_ext4 = TRUE;
+
+	sp->s_metadata_csum = HAS_RO_COMPAT_FEATURE(sp,
+	    RO_COMPAT_METADATA_CSUM);
+	if (sp->s_metadata_csum) {
+		/*
+		 * The implementation verifies Linux ext4 CRC32C checksums.
+		 * Reject unknown checksum types and non-Linux inode checksum
+		 * layouts instead of silently treating them as valid.
+		 */
+		if (sp->s_creator_os != 0 ||
+		    !ext4_verify_super_checksum(
+		    (const unsigned char *)ondisk_superblock))
+			return(EINVAL);
+		sp->s_checksum_seed = ext4_crc32c((u32_t)~0U,
+		    sp->s_uuid, sizeof(sp->s_uuid));
+	}
+
 	if (sp->s_magic != SUPER_MAGIC || sp->s_log_block_size > 6)
 		return(EINVAL);
 
@@ -195,6 +212,19 @@ int read_super(register struct super_block *sp)
 			return(EINVAL);
 		}
 	}
+	if (sp->s_metadata_csum) {
+		for (i = 0; i < sp->s_groups_count; i++) {
+			const unsigned char *raw_desc = ondisk_group_descs +
+			    (size_t)i * sp->s_desc_size;
+
+			if (!ext4_verify_group_desc_checksum(sp, i, raw_desc)) {
+				printf("ext4: group descriptor %u checksum mismatch\\n",
+				    i);
+				return(EINVAL);
+			}
+		}
+	}
+
 	copy_group_descriptors(group_descs, ondisk_group_descs,
 	    sp->s_groups_count, sp->s_desc_size, is64);
 	sp->s_group_desc = group_descs;
