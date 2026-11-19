@@ -368,7 +368,7 @@ block64_t read_map(register struct inode *rip, off_t position,
 	block_pos = (u64_t)position / rip->i_sp->s_block_size;
 	if (rip->i_sp->s_is_ext4 &&
 	    (rip->i_flags & EXT4_EXTENTS_FL)) {
-		if (block_pos > UINT32_MAX) {
+		if (block_pos > ((u32_t)~0U)) {
 			err_code = EIO;
 			return(NO_BLOCK);
 		}
@@ -566,7 +566,7 @@ static struct buf *rahead(register struct inode *rip, block64_t baseblock,
 		break;
 	}
 	if (r != ENOENT)
-		panic("ext2: error getting block (%llu,%llu): %d", (unsigned long long)dev, block,
+		panic("ext2: error getting block (%llu,%llu): %d", (unsigned long long)dev, (unsigned long long)block,
 		    r);
   }
   lmfs_prefetch(dev, read_q, read_q_size);

@@ -160,13 +160,13 @@ int read_super(register struct super_block *sp)
 		return(EINVAL);
 	groups64 = ((sp->s_blocks_count - sp->s_first_data_block - 1) /
 	    sp->s_blocks_per_group) + 1;
-	if (groups64 > UINT32_MAX)
+	if (groups64 > ((u64_t)(u32_t)~0U))
 		return(EFBIG);
 	sp->s_groups_count = (u32_t)groups64;
 	sp->s_gdb_count = (sp->s_groups_count + sp->s_desc_per_block - 1) /
 	    sp->s_desc_per_block;
 
-	if (sp->s_gdb_count > SIZE_MAX / sp->s_block_size ||
+	if (sp->s_gdb_count > ((size_t)-1) / sp->s_block_size ||
 	    sp->s_groups_count > SIZE_MAX / sizeof(*group_descs))
 		return(EINVAL);
 	gd_size = (size_t)sp->s_gdb_count * sp->s_block_size;

@@ -42,7 +42,7 @@ A host-side test image can be prepared with e2fsprogs:
 
 ```sh
 truncate -s 512M ext4-test.img
-mke2fs -F -t ext4 -b 4096 -O extent,64bit,^metadata_csum,^gdt_csum ext4-test.img
+mke2fs -F -t ext4 -b 4096 -O extent,64bit,^metadata_csum,^gdt_csum,^huge_file,^orphan_file ext4-test.img
 e2fsck -fn ext4-test.img
 ```
 
