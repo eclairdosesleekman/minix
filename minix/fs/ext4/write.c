@@ -145,15 +145,16 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 			ext2_debug("failed to allocate dblock near %d\n", rip->i_block[0]);
 			return(ENOSPC);
 		}
+		if (rip->i_sp->s_is_ext4 && b2 > UINT32_MAX) {
+			free_block(rip->i_sp, b2);
+			if (bp_tindir != NULL)
+				put_block(bp_tindir);
+			return(EFBIG);
+		}
 		if (triple) {
 			wr_indir(bp_tindir, index3, b2);  /* update triple indir */
 			lmfs_markdirty(bp_tindir);
 		} else {
-			if (rip->i_sp->s_is_ext4 && b2 > UINT32_MAX) {
-				free_block(rip->i_sp, b2);
-				put_block(bp_tindir);
-				return(EFBIG);
-			}
 			rip->i_block[EXT2_DIND_BLOCK] = (u32_t)b2;
 		}
 		rip->i_blocks += rip->i_sp->s_sectors_in_block;
@@ -194,15 +195,15 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 		ext2_debug("failed to allocate dblock near %d\n", rip->i_block[0]);
 		return(ENOSPC);
 	}
+	if (rip->i_sp->s_is_ext4 && b1 > UINT32_MAX) {
+		free_block(rip->i_sp, b1);
+		if (bp_dindir != NULL)
+			put_block(bp_dindir);
+		if (bp_tindir != NULL)
+			put_block(bp_tindir);
+		return(EFBIG);
+	}
 	if (single) {
-		if (rip->i_sp->s_is_ext4 && b1 > UINT32_MAX) {
-			free_block(rip->i_sp, b1);
-			if (bp_dindir != NULL)
-				put_block(bp_dindir);
-			if (bp_tindir != NULL)
-				put_block(bp_tindir);
-			return(EFBIG);
-		}
 		rip->i_block[EXT2_NDIR_BLOCKS] = (u32_t)b1; /* update inode single indirect */
 	} else {
 		wr_indir(bp_dindir, index2, b1);  /* update dbl indir */
