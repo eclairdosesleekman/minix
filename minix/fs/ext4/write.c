@@ -18,7 +18,7 @@
 #include "inode.h"
 #include "super.h"
 
-static void wr_indir(struct buf *bp, int index, block_t block);
+static void wr_indir(struct buf *bp, int index, block64_t block);
 static int empty_indir(struct buf *, struct super_block *);
 
 /*===========================================================================*
@@ -43,7 +43,7 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
   long excess, block_pos;
   char new_ind = 0, new_dbl = 0, new_triple = 0;
   int single = 0, triple = 0;
-  block_t old_block = NO_BLOCK, b1 = NO_BLOCK, b2 = NO_BLOCK, b3 = NO_BLOCK;
+  block64_t old_block = NO_BLOCK, b1 = NO_BLOCK, b2 = NO_BLOCK, b3 = NO_BLOCK;
   struct buf *bp = NULL,
              *bp_dindir = NULL,
              *bp_tindir = NULL;
@@ -106,7 +106,11 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 				ext2_debug("failed to allocate tblock near %d\n", rip->i_block[0]);
 				return(ENOSPC);
 			}
-			rip->i_block[EXT2_TIND_BLOCK] = b3;
+			if (rip->i_sp->s_is_ext4 && b3 > UINT32_MAX) {
+				free_block(rip->i_sp, b3);
+				return(EFBIG);
+			}
+			rip->i_block[EXT2_TIND_BLOCK] = (u32_t)b3;
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
 			new_triple = TRUE;
 		}
@@ -145,7 +149,12 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 			wr_indir(bp_tindir, index3, b2);  /* update triple indir */
 			lmfs_markdirty(bp_tindir);
 		} else {
-			rip->i_block[EXT2_DIND_BLOCK] = b2;
+			if (rip->i_sp->s_is_ext4 && b2 > UINT32_MAX) {
+				free_block(rip->i_sp, b2);
+				put_block(bp_tindir);
+				return(EFBIG);
+			}
+			rip->i_block[EXT2_DIND_BLOCK] = (u32_t)b2;
 		}
 		rip->i_blocks += rip->i_sp->s_sectors_in_block;
 		new_dbl = TRUE; /* set flag for later */
@@ -186,7 +195,15 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 		return(ENOSPC);
 	}
 	if (single) {
-		rip->i_block[EXT2_NDIR_BLOCKS] = b1; /* update inode single indirect */
+		if (rip->i_sp->s_is_ext4 && b1 > UINT32_MAX) {
+			free_block(rip->i_sp, b1);
+			if (bp_dindir != NULL)
+				put_block(bp_dindir);
+			if (bp_tindir != NULL)
+				put_block(bp_tindir);
+			return(EFBIG);
+		}
+		rip->i_block[EXT2_NDIR_BLOCKS] = (u32_t)b1; /* update inode single indirect */
 	} else {
 		wr_indir(bp_dindir, index2, b1);  /* update dbl indir */
 		lmfs_markdirty(bp_dindir);
@@ -275,7 +292,7 @@ int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
  *				wrindex: index into *bp										 *
  *				block: block to write										 *
  *===========================================================================*/
-static void wr_indir(struct buf *bp, int wrindex, block_t block)
+static void wr_indir(struct buf *bp, int wrindex, block64_t block)
 {
 /* Given a pointer to an indirect block, write one entry. */
 
@@ -283,7 +300,9 @@ static void wr_indir(struct buf *bp, int wrindex, block_t block)
 	panic("wr_indir() on NULL");
 
   /* write a block into an indirect block */
-  b_ind(bp)[wrindex] = conv4(le_CPU, block);
+  if (block > UINT32_MAX)
+	panic("ext4: indirect block address exceeds 32 bits");
+  b_ind(bp)[wrindex] = conv4(le_CPU, (u32_t)block);
 }
 
 
