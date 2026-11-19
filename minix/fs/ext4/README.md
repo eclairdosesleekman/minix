@@ -65,8 +65,8 @@ implementation.
 - The `metadata_csum` and `metadata_csum_seed` features are supported only
   for read-only mounts.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
-  rebalancing, metadata checksums, quota updates, or the full set of ext4
-  features. A power loss or server crash during metadata updates can leave
+  rebalancing, metadata checksum updates, quota updates, or the full set of
+  ext4 features. A power loss or server crash during metadata updates can leave
   the volume inconsistent.
 
 Do not use writable mode on valuable data. Run `e2fsck` on the unmounted
