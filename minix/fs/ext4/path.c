@@ -115,13 +115,14 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   int extended = 0;
   int required_space = 0;
   int string_len = 0;
-  unsigned int block_off;
+  unsigned int block_size, block_off, rec_len, entry_rec_len;
 
   /* If 'ldir_ptr' is not a pointer to a dir inode, error. */
   if ( (ldir_ptr->i_mode & I_TYPE) != I_DIRECTORY)  {
 	return(ENOTDIR);
   }
 
+  block_size = ldir_ptr->i_sp->s_block_size;
   new_slots = 0;
   e_hit = FALSE;
   match = 0;    	/* set when a string match occurs */
@@ -140,27 +141,27 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 		pos = ldir_ptr->i_last_dpos;
   }
 
-  for (; pos < ldir_ptr->i_size; pos += ldir_ptr->i_sp->s_block_size) {
+  for (; pos < ldir_ptr->i_size; pos += block_size) {
 	/* Since directories don't have holes, 'b' cannot be NO_BLOCK. */
-	if(!(bp = get_block_map(ldir_ptr,
-	   rounddown(pos, ldir_ptr->i_sp->s_block_size))))
+	if(!(bp = get_block_map(ldir_ptr, rounddown(pos, block_size))))
 		return(err_code != OK ? err_code : EIO);
 
 	prev_dp = NULL; /* New block - new first dentry, so no prev. */
 
-	/* Search a directory block.
-	 * Note, we set prev_dp at the end of the loop.
+	/*
+	 * Search the block using the decoded record length. Never use the
+	 * on-disk 16-bit value for pointer arithmetic: 0xffff represents a
+	 * complete 64 KiB directory block.
 	 */
 	for (block_off = 0, dp = (struct ext2_disk_dir_desc*) &b_data(bp);
-	     block_off < ldir_ptr->i_sp->s_block_size;
-	     block_off += conv2(le_CPU, dp->d_rec_len),
-	     dp = NEXT_DISC_DIR_DESC(dp)) {
+	     block_off < block_size;) {
 		/* Validate the record before touching its name or advancing. */
-		if (!ext4_valid_dirent(dp, block_off,
-		    ldir_ptr->i_sp->s_block_size)) {
+		if (!ext4_valid_dirent(dp, block_off, block_size)) {
 			put_block(bp);
 			return(EIO);
 		}
+
+		rec_len = ext4_dir_rec_len(dp, block_size);
 
 		/* Match occurs if string found. */
 		if (flag != ENTER && dp->d_ino != NO_ENTRY) {
@@ -203,8 +204,7 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 					ldir_ptr->i_flags &= ~EXT2_INDEX_FL;
 				if (pos < ldir_ptr->i_last_dpos) {
 					ldir_ptr->i_last_dpos = pos;
-					ldir_ptr->i_last_dentry_size =
-						conv2(le_CPU, dp->d_rec_len);
+					ldir_ptr->i_last_dentry_size = rec_len;
 				}
 				ldir_ptr->i_update |= CTIME | MTIME;
 				ldir_ptr->i_dirt = IN_DIRTY;
@@ -214,12 +214,9 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 				 * correct, there is no way to spann a data block.
 				 */
 				if (prev_dp) {
-					u16_t temp = conv2(le_CPU,
-							prev_dp->d_rec_len);
-					temp += conv2(le_CPU,
-							dp->d_rec_len);
-					prev_dp->d_rec_len = conv2(le_CPU,
-							temp);
+					unsigned int temp = ext4_dir_rec_len(prev_dp, block_size);
+					temp += rec_len;
+					ext4_set_dir_rec_len(prev_dp, temp, block_size);
 				}
 			} else {
 				/* 'flag' is LOOK_UP */
@@ -237,22 +234,23 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 		/* Check for free slot for the benefit of ENTER. */
 		if (flag == ENTER && dp->d_ino == NO_ENTRY) {
 			/* we found a free slot, check if it has enough space */
-			if (required_space <= conv2(le_CPU, dp->d_rec_len)) {
+			if (required_space <= rec_len) {
 				e_hit = TRUE;	/* we found a free slot */
 				break;
 			}
 		}
 		/* Can we shrink dentry? */
-		if (flag == ENTER && required_space <= DIR_ENTRY_SHRINK(dp)) {
-			/* Shrink directory and create empty slot, now
-			 * dp->d_rec_len = DIR_ENTRY_ACTUAL_SIZE + DIR_ENTRY_SHRINK.
-			 */
-			int new_slot_size = conv2(le_CPU, dp->d_rec_len);
-			int actual_size = DIR_ENTRY_ACTUAL_SIZE(dp);
+		if (flag == ENTER &&
+		    required_space <= DIR_ENTRY_SHRINK(dp, block_size)) {
+			/* Split the record and use its tail as a free slot. */
+			unsigned int new_slot_size = rec_len;
+			unsigned int actual_size = DIR_ENTRY_ACTUAL_SIZE(dp);
+
 			new_slot_size -= actual_size;
-			dp->d_rec_len = conv2(le_CPU, actual_size);
-			dp = NEXT_DISC_DIR_DESC(dp);
-			dp->d_rec_len = conv2(le_CPU, new_slot_size);
+			ext4_set_dir_rec_len(dp, actual_size, block_size);
+			dp = (struct ext2_disk_dir_desc *)
+			    ((char *)dp + actual_size);
+			ext4_set_dir_rec_len(dp, new_slot_size, block_size);
 			/* if we fail before writing real ino */
 			dp->d_ino = NO_ENTRY;
 			lmfs_markdirty(bp);
@@ -270,6 +268,9 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 		    (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
 		    ansi_strcmp(dp->d_name, "..", dp->d_name_len) == 0)
 			break;
+
+		block_off += rec_len;
+		dp = (struct ext2_disk_dir_desc *)((char *)dp + rec_len);
 	}
 
 	/* The whole block has been searched or ENTER has a free slot. */
@@ -296,8 +297,8 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	if ( (bp = new_block(ldir_ptr, ldir_ptr->i_size)) == NULL)
 		return(err_code);
 	dp = (struct ext2_disk_dir_desc*) &b_data(bp);
-	dp->d_rec_len = conv2(le_CPU, ldir_ptr->i_sp->s_block_size);
-	dp->d_name_len = DIR_ENTRY_MAX_NAME_LEN(dp); /* for failure */
+	ext4_set_dir_rec_len(dp, block_size, block_size);
+	dp->d_name_len = DIR_ENTRY_MAX_NAME_LEN(dp, block_size); /* for failure */
 	extended = 1;
   }
 
@@ -323,13 +324,14 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	else
 		dp->d_file_type = EXT2_FT_UNKNOWN;
   }
+  entry_rec_len = ext4_dir_rec_len(dp, block_size);
   lmfs_markdirty(bp);
   put_block(bp);
   ldir_ptr->i_update |= CTIME | MTIME;	/* mark mtime for update later */
   ldir_ptr->i_dirt = IN_DIRTY;
 
   if (new_slots == 1) {
-	ldir_ptr->i_size += (off_t) conv2(le_CPU, dp->d_rec_len);
+	ldir_ptr->i_size += (off_t) entry_rec_len;
 	/* Send the change to disk if the directory is extended. */
 	if (extended) rw_inode(ldir_ptr, WRITING);
   }

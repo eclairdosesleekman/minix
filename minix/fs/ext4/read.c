@@ -661,22 +661,22 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 			put_inode(rip);
 			return(EIO);
 		}
-		rec_len = conv2(le_CPU, d_desc->d_rec_len);
+		rec_len = ext4_dir_rec_len(d_desc, block_size);
 		if (temp_pos + rec_len > pos || block_off + rec_len >= block_size)
 			break;
 		temp_pos += rec_len;
 		block_off += rec_len;
-		d_desc = NEXT_DISC_DIR_DESC(d_desc);
+		d_desc = (struct ext2_disk_dir_desc *)((char *)d_desc + rec_len);
 	}
 
 	for (; block_off < block_size;
-	     block_off += rec_len, d_desc = NEXT_DISC_DIR_DESC(d_desc)) {
+	     block_off += rec_len, d_desc = (struct ext2_disk_dir_desc *)((char *)d_desc + rec_len)) {
 		if (!ext4_valid_dirent(d_desc, block_off, block_size)) {
 			put_block(bp);
 			put_inode(rip);
 			return(EIO);
 		}
-		rec_len = conv2(le_CPU, d_desc->d_rec_len);
+		rec_len = ext4_dir_rec_len(d_desc, block_size);
 
 		if (d_desc->d_ino == 0)
 			continue; /* Entry is not in use */
