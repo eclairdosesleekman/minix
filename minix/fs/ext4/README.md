@@ -10,6 +10,7 @@ existing ext2 server.
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock.
 - 64-bit regular-file sizes using the inode size-high field.
+- Directory record lengths, names, and inode numbers are bounds-checked before use; 64 KiB blocks are rejected because their extended `rec_len` encoding is not implemented.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block.
 - VFS writes, metadata mutations, and raw block writes are rejected with
