@@ -24,6 +24,7 @@ static bit_t alloc_inode_bit(struct super_block *sp, struct inode
 static void free_inode_bit(struct super_block *sp, bit_t bit_returned,
 	int is_dir);
 static void wipe_inode(struct inode *rip);
+static void init_extent_root(struct inode *rip);
 
 
 /*===========================================================================*
@@ -79,6 +80,12 @@ struct inode *alloc_inode(struct inode *parent, mode_t bits, uid_t uid,
 	 * not to repeat the code twice.
 	 */
 	wipe_inode(rip);
+	if ((bits & I_TYPE) == I_REGULAR ||
+	    (bits & I_TYPE) == I_DIRECTORY ||
+	    (bits & I_TYPE) == I_SYMBOLIC_LINK) {
+		rip->i_flags = EXT4_EXTENTS_FL;
+		init_extent_root(rip);
+	}
   }
 
   return(rip);
@@ -444,6 +451,23 @@ static int find_group_orlov(struct super_block *sp, struct inode *parent)
   }
 
   return -1;
+}
+
+
+
+/* Set up the four-entry extent root stored in a new inode. */
+static void
+init_extent_root(struct inode *rip)
+{
+	unsigned char *root = (unsigned char *)rip->i_block;
+	u16_t value;
+
+	memset(root, 0, sizeof(rip->i_block));
+	value = (u16_t)conv2(le_CPU, EXT4_EXTENT_MAGIC);
+	memcpy(root, &value, sizeof(value));
+	value = (u16_t)conv2(le_CPU,
+	    (sizeof(rip->i_block) - 12) / 12);
+	memcpy(root + 4, &value, sizeof(value));
 }
 
 
