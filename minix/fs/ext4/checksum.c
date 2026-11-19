@@ -60,17 +60,24 @@ ext4_crc32c(u32_t crc, const void *data, size_t length)
 }
 
 static u32_t
-ext4_inode_checksum_seed(struct super_block *sp, ino_t ino,
-	const unsigned char *raw_inode)
+ext4_inode_seed(struct super_block *sp, ino_t ino,
+	const unsigned char *generation_le)
 {
-	u32_t inode_le;
-	u32_t crc;
+	u32_t inode_le, crc;
 
 	inode_le = (u32_t)conv4(le_CPU, (u32_t)ino);
 	crc = ext4_crc32c(sp->s_checksum_seed, &inode_le,
 	    sizeof(inode_le));
-	/* i_generation is already in little-endian on-disk byte order. */
-	return(ext4_crc32c(crc, raw_inode + EXT4_INODE_GENERATION, 4));
+	/* The generation argument is in little-endian on-disk byte order. */
+	return(ext4_crc32c(crc, generation_le, 4));
+}
+
+static u32_t
+ext4_inode_checksum_seed(struct super_block *sp, ino_t ino,
+	const unsigned char *raw_inode)
+{
+	return(ext4_inode_seed(sp, ino,
+	    raw_inode + EXT4_INODE_GENERATION));
 }
 
 /*
@@ -177,7 +184,7 @@ ext4_verify_extent_checksum(struct inode *rip, const unsigned char *data,
 	size_t block_size)
 {
 	u32_t stored, calculated;
-	u32_t seed;
+	u32_t seed, generation_le;
 
 	if (!rip->i_sp->s_metadata_csum)
 		return(OK);
@@ -185,8 +192,9 @@ ext4_verify_extent_checksum(struct inode *rip, const unsigned char *data,
 		return(EIO);
 
 	stored = ext4_get_le32(data + block_size - sizeof(u32_t));
-	seed = ext4_inode_checksum_seed(rip->i_sp, rip->i_num,
-	    (const unsigned char *)rip->i_block);
+	generation_le = (u32_t)conv4(le_CPU, rip->i_generation);
+	seed = ext4_inode_seed(rip->i_sp, rip->i_num,
+	    (const unsigned char *)&generation_le);
 	calculated = ext4_crc32c(seed, data,
 	    block_size - sizeof(u32_t));
 
@@ -199,7 +207,7 @@ ext4_verify_dir_checksum(struct inode *rip, const unsigned char *data,
 {
 	const unsigned char *tail;
 	u32_t stored, calculated;
-	u32_t seed;
+	u32_t seed, generation_le;
 
 	if (!rip->i_sp->s_metadata_csum)
 		return(OK);
@@ -221,8 +229,9 @@ ext4_verify_dir_checksum(struct inode *rip, const unsigned char *data,
 		return(EIO);
 
 	stored = ext4_get_le32(tail + 8);
-	seed = ext4_inode_checksum_seed(rip->i_sp, rip->i_num,
-	    (const unsigned char *)rip->i_block);
+	generation_le = (u32_t)conv4(le_CPU, rip->i_generation);
+	seed = ext4_inode_seed(rip->i_sp, rip->i_num,
+	    (const unsigned char *)&generation_le);
 	calculated = ext4_crc32c(seed, data,
 	    block_size - EXT4_DIR_ENTRY_TAIL_SIZE);
 
