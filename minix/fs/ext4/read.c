@@ -611,7 +611,7 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
   struct fsdriver_dentry fsdentry;
   struct inode *rip;
   int r, done;
-  unsigned int block_size, len;
+  unsigned int block_size, len, block_off, rec_len;
   off_t pos, off, block_pos, new_pos, ent_pos;
   struct buf *bp;
   struct ext2_disk_dir_desc *d_desc;
@@ -619,7 +619,7 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 
   /* Check whether the position is properly aligned */
   pos = *posp;
-  if ((unsigned int) pos % DIR_ENTRY_ALIGN)
+  if (pos < 0 || (unsigned int) pos % DIR_ENTRY_ALIGN)
 	return(ENOENT);
 
   if ((rip = get_inode(fs_dev, ino_nr)) == NULL)
@@ -652,28 +652,51 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	/* Search a directory block. */
 	d_desc = (struct ext2_disk_dir_desc*) &b_data(bp);
 
-	/* we need to seek to entry at off bytes.
-	* when NEXT_DISC_DIR_POS == block_size it's last dentry.
-	*/
-	for (; temp_pos + conv2(le_CPU, d_desc->d_rec_len) <= pos
-	       && NEXT_DISC_DIR_POS(d_desc, &b_data(bp)) < block_size;
-	       d_desc = NEXT_DISC_DIR_DESC(d_desc)) {
-		temp_pos += conv2(le_CPU, d_desc->d_rec_len);
+	/* Position at the first entry at or after the requested offset. */
+	block_off = 0;
+	while (block_off < block_size) {
+		if (!ext4_valid_dirent(d_desc, block_off, block_size)) {
+			put_block(bp);
+			put_inode(rip);
+			return(EIO);
+		}
+		rec_len = conv2(le_CPU, d_desc->d_rec_len);
+		if (temp_pos + rec_len > pos || block_off + rec_len >= block_size)
+			break;
+		temp_pos += rec_len;
+		block_off += rec_len;
+		d_desc = NEXT_DISC_DIR_DESC(d_desc);
 	}
 
-	for (; CUR_DISC_DIR_POS(d_desc, &b_data(bp)) < block_size;
-	     d_desc = NEXT_DISC_DIR_DESC(d_desc)) {
+	for (; block_off < block_size;
+	     block_off += rec_len, d_desc = NEXT_DISC_DIR_DESC(d_desc)) {
+		if (!ext4_valid_dirent(d_desc, block_off, block_size)) {
+			put_block(bp);
+			put_inode(rip);
+			return(EIO);
+		}
+		rec_len = conv2(le_CPU, d_desc->d_rec_len);
+
 		if (d_desc->d_ino == 0)
 			continue; /* Entry is not in use */
 
 		len = d_desc->d_name_len;
-		assert(len <= NAME_MAX);
-		assert(len <= EXT2_NAME_MAX);
+		if (len > NAME_MAX || len > EXT2_NAME_MAX) {
+			put_block(bp);
+			put_inode(rip);
+			return(EIO);
+		}
 
 		/* Need the position of this entry in the directory */
 		ent_pos = block_pos + ((char *)d_desc - b_data(bp));
 
 		child_nr = (ino_t) conv4(le_CPU, d_desc->d_ino);
+		if (child_nr == NO_ENTRY ||
+		    child_nr > rip->i_sp->s_inodes_count) {
+			put_block(bp);
+			put_inode(rip);
+			return(EIO);
+		}
 		r = fsdriver_dentry_add(&fsdentry, child_nr, d_desc->d_name,
 			len, get_dtype(d_desc));
 
