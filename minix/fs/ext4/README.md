@@ -43,8 +43,8 @@ implementation.
 - **Inline extent root only for extent mutations:** the inode root has room
   for four extent records. Allocation, unwritten-extent conversion, and
   truncation return `EOPNOTSUPP` or `EFBIG` when an external extent node or
-  additional root capacity would be required. Existing mapped blocks in
-  external extent trees can still be read and overwritten.
+  additional root capacity would be required. Initialized data blocks already
+  mapped by an external extent tree can still be read and overwritten.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
