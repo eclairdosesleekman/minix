@@ -34,6 +34,9 @@ static void copy_group_descriptors(struct group_desc *dest_array,
 
 static off_t super_block_offset;
 
+static int verify_group_descriptor_checksums(struct super_block *sp,
+	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size);
+
 
 /*===========================================================================*
  *                              get_super                                    *
@@ -96,6 +99,24 @@ int read_super(register struct super_block *sp)
 
 	super_copy(sp, ondisk_superblock);
 	sp->s_dev = NO_DEV;
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+		u32_t stored_checksum, calculated_checksum;
+
+		/* ext4 currently defines only CRC32C for metadata_csum. */
+		if (*((unsigned char *)ondisk_superblock + 0x175) !=
+		    EXT4_CRC32C_CHKSUM)
+			return(EINVAL);
+		memcpy(&stored_checksum,
+		    (unsigned char *)ondisk_superblock + 0x3fc,
+		    sizeof(stored_checksum));
+		stored_checksum = (u32_t)conv4(le_CPU, stored_checksum);
+		calculated_checksum = ext4_crc32c(~0U,
+		    ondisk_superblock, 0x3fc);
+		if (stored_checksum != calculated_checksum)
+			return(EINVAL);
+		sp->s_csum_seed = ext4_crc32c(~0U, sp->s_uuid,
+		    sizeof(sp->s_uuid));
+	}
 	sp->s_is_ext4 = TRUE;
 	if (sp->s_magic != SUPER_MAGIC || sp->s_log_block_size > 6)
 		return(EINVAL);
@@ -195,6 +216,10 @@ int read_super(register struct super_block *sp)
 			return(EINVAL);
 		}
 	}
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+	    !verify_group_descriptor_checksums(sp, ondisk_group_descs,
+	    sp->s_groups_count, sp->s_desc_size))
+		return(EINVAL);
 	copy_group_descriptors(group_descs, ondisk_group_descs,
 	    sp->s_groups_count, sp->s_desc_size, is64);
 	sp->s_group_desc = group_descs;
@@ -422,6 +447,37 @@ static void super_copy(
   dest->s_padding1 = conv2(le_CPU, source->s_padding1);
 }
 
+
+
+/*
+ * With metadata_csum, bg_checksum is the low 16 bits of CRC32C(seed,
+ * little-endian group number, descriptor with bg_checksum set to zero).
+ */
+static int
+verify_group_descriptor_checksums(struct super_block *sp,
+	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size)
+{
+	static const u16_t zero16 = 0;
+	unsigned int i;
+	u32_t group_le, crc;
+	const unsigned char *p;
+
+	if (desc_size < 32)
+		return(FALSE);
+	for (i = 0; i < ngroups; i++) {
+		p = raw + (size_t)i * desc_size;
+		group_le = (u32_t)conv4(le_CPU, i);
+		crc = ext4_crc32c(sp->s_csum_seed, &group_le,
+		    sizeof(group_le));
+		crc = ext4_crc32c(crc, p, 30);
+		crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
+		if (desc_size > 32)
+			crc = ext4_crc32c(crc, p + 32, desc_size - 32);
+		if ((u16_t)crc != ext4_read16(p + 30))
+			return(FALSE);
+	}
+	return(TRUE);
+}
 
 /*===========================================================================*
  *				gd_copy 				     *
