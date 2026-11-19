@@ -76,6 +76,7 @@ int read_super(register struct super_block *sp)
 	u16_t raw_desc_size;
 	u64_t groups64, gdt_position;
 	size_t gd_size, off, chunk;
+	unsigned int i;
 
 	ondisk_superblock = (struct super_block *)mmap(NULL, SUPER_SIZE_D,
 	    PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
