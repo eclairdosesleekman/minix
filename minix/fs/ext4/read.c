@@ -36,7 +36,8 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 
   r = OK;
 
-  if (call == FSC_WRITE)
+  /* The mount mode is enforced here as well as by VFS. */
+  if (call == FSC_WRITE && superblock->s_rd_only)
 	return(EROFS);
 
   /* Find the inode referred */

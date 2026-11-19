@@ -213,11 +213,90 @@ int read_super(register struct super_block *sp)
  *                              write_super									 *
  *                              super_block: pointer to a superblock		 *
  *===========================================================================*/
-void write_super(struct super_block *sp)
+static void
+ext4_store16(unsigned char *p, u16_t value)
 {
-	(void)sp;
-	panic("ext4: attempted metadata write on read-only filesystem");
-	return;
+	value = (u16_t)conv2(le_CPU, value);
+	memcpy(p, &value, sizeof(value));
+}
+
+static void
+ext4_store32(unsigned char *p, u32_t value)
+{
+	value = (u32_t)conv4(le_CPU, value);
+	memcpy(p, &value, sizeof(value));
+}
+
+/*===========================================================================*
+ *                              write_super                                  *
+ *===========================================================================*/
+void
+write_super(struct super_block *sp)
+{
+	int r;
+	size_t gd_size, off, chunk;
+	u64_t gdt_position;
+	unsigned int i;
+
+	if (sp->s_rd_only)
+		return;
+	if (sp->s_dev == NO_DEV)
+		panic("ext4: request to write superblock for NO_DEV");
+
+	/* Keep the low and high halves of the 64-bit free-block count in sync. */
+	sp->s_free_blocks_count_lo = (u32_t)sp->s_free_blocks_count;
+	sp->s_wtime = clock_time(NULL);
+
+	if (group_descriptors_dirty) {
+		gd_size = (size_t)sp->s_gdb_count * sp->s_block_size;
+		for (i = 0; i < sp->s_groups_count; i++) {
+			unsigned char *p = ondisk_group_descs +
+			    (size_t)i * sp->s_desc_size;
+			struct group_desc *gd = &sp->s_group_desc[i];
+
+			ext4_store16(p + 12, (u16_t)gd->free_blocks_count);
+			ext4_store16(p + 14, (u16_t)gd->free_inodes_count);
+			ext4_store16(p + 16, (u16_t)gd->used_dirs_count);
+			if (sp->s_desc_size == 64) {
+				ext4_store16(p + 44,
+				    (u16_t)(gd->free_blocks_count >> 16));
+				ext4_store16(p + 46,
+				    (u16_t)(gd->free_inodes_count >> 16));
+				ext4_store16(p + 48,
+				    (u16_t)(gd->used_dirs_count >> 16));
+			}
+		}
+
+		if (opt.block_with_super == 0)
+			gdt_position = ((u64_t)sp->s_first_data_block + 1) *
+			    sp->s_block_size;
+		else
+			gdt_position = ((u64_t)opt.block_with_super + 1) * 1024;
+
+		for (off = 0; off < gd_size; off += chunk) {
+			chunk = gd_size - off;
+			if (chunk > PAGE_SIZE)
+				chunk = PAGE_SIZE;
+			r = bdev_write(sp->s_dev, gdt_position + off,
+			    (char *)ondisk_group_descs + off, chunk,
+			    BDEV_NOFLAGS);
+			if (r != (ssize_t)chunk) {
+				printf("ext4: cannot write group descriptors\\n");
+				return;
+			}
+		}
+		group_descriptors_dirty = 0;
+	}
+
+	/* Preserve all feature and geometry fields while updating counters. */
+	super_copy(ondisk_superblock, sp);
+	ext4_store32((unsigned char *)ondisk_superblock + 0x158,
+	    (u32_t)(sp->s_free_blocks_count >> 32));
+
+	r = bdev_write(sp->s_dev, super_block_offset,
+	    (char *)ondisk_superblock, SUPER_SIZE_D, BDEV_NOFLAGS);
+	if (r != SUPER_SIZE_D)
+		printf("ext4: warning, failed to write superblock\\n");
 }
 
 /*===========================================================================*

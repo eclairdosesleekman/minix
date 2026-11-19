@@ -18,7 +18,7 @@
 #include "inode.h"
 #include "super.h"
 
-static void wr_indir(struct buf *bp, int index, block_t block);
+static void wr_indir(struct buf *bp, int index, block64_t block);
 static int empty_indir(struct buf *, struct super_block *);
 
 /*===========================================================================*
@@ -28,7 +28,7 @@ static int empty_indir(struct buf *, struct super_block *);
  *				new_wblock: block # to be inserted							 *
  *				op: special actions											 *
  *===========================================================================*/
-int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
+int write_map(struct inode *rip, off_t position, block64_t new_wblock, int op)
 {
 /* Write a new block into an inode.
  *
@@ -43,7 +43,7 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
   long excess, block_pos;
   char new_ind = 0, new_dbl = 0, new_triple = 0;
   int single = 0, triple = 0;
-  block_t old_block = NO_BLOCK, b1 = NO_BLOCK, b2 = NO_BLOCK, b3 = NO_BLOCK;
+  block64_t old_block = NO_BLOCK, b1 = NO_BLOCK, b2 = NO_BLOCK, b3 = NO_BLOCK;
   struct buf *bp = NULL,
              *bp_dindir = NULL,
              *bp_tindir = NULL;
@@ -53,6 +53,12 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
   static long doub_ind_s;
   static long triple_ind_s;
   static long out_range_s;
+
+  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_EXTENTS_FL))
+	return(ext4_extent_write_map(rip, position, new_wblock, op));
+  if (rip->i_sp->s_is_ext4 && !(op & WMAP_FREE) &&
+      new_wblock > UINT32_MAX)
+	return(EFBIG);
 
   if (first_time) {
 	addr_in_block = rip->i_sp->s_block_size / BLOCK_ADDRESS_BYTES;
@@ -73,7 +79,7 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
 		rip->i_block[block_pos] = NO_BLOCK;
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
 	} else {
-		rip->i_block[block_pos] = new_wblock;
+		rip->i_block[block_pos] = (u32_t)new_wblock;
 		rip->i_blocks += rip->i_sp->s_sectors_in_block;
 	}
 	return(OK);
@@ -100,7 +106,11 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
 				ext2_debug("failed to allocate tblock near %d\n", rip->i_block[0]);
 				return(ENOSPC);
 			}
-			rip->i_block[EXT2_TIND_BLOCK] = b3;
+			if (rip->i_sp->s_is_ext4 && b3 > UINT32_MAX) {
+				free_block(rip->i_sp, b3);
+				return(EFBIG);
+			}
+			rip->i_block[EXT2_TIND_BLOCK] = (u32_t)b3;
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
 			new_triple = TRUE;
 		}
@@ -135,11 +145,17 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
 			ext2_debug("failed to allocate dblock near %d\n", rip->i_block[0]);
 			return(ENOSPC);
 		}
+		if (rip->i_sp->s_is_ext4 && b2 > UINT32_MAX) {
+			free_block(rip->i_sp, b2);
+			if (bp_tindir != NULL)
+				put_block(bp_tindir);
+			return(EFBIG);
+		}
 		if (triple) {
 			wr_indir(bp_tindir, index3, b2);  /* update triple indir */
 			lmfs_markdirty(bp_tindir);
 		} else {
-			rip->i_block[EXT2_DIND_BLOCK] = b2;
+			rip->i_block[EXT2_DIND_BLOCK] = (u32_t)b2;
 		}
 		rip->i_blocks += rip->i_sp->s_sectors_in_block;
 		new_dbl = TRUE; /* set flag for later */
@@ -179,8 +195,16 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
 		ext2_debug("failed to allocate dblock near %d\n", rip->i_block[0]);
 		return(ENOSPC);
 	}
+	if (rip->i_sp->s_is_ext4 && b1 > UINT32_MAX) {
+		free_block(rip->i_sp, b1);
+		if (bp_dindir != NULL)
+			put_block(bp_dindir);
+		if (bp_tindir != NULL)
+			put_block(bp_tindir);
+		return(EFBIG);
+	}
 	if (single) {
-		rip->i_block[EXT2_NDIR_BLOCKS] = b1; /* update inode single indirect */
+		rip->i_block[EXT2_NDIR_BLOCKS] = (u32_t)b1; /* update inode single indirect */
 	} else {
 		wr_indir(bp_dindir, index2, b1);  /* update dbl indir */
 		lmfs_markdirty(bp_dindir);
@@ -222,7 +246,7 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
 			}
 		}
 	} else {
-		wr_indir(bp, index1, new_wblock);
+		wr_indir(bp, index1, (block_t)new_wblock);
 		rip->i_blocks += rip->i_sp->s_sectors_in_block;
 	}
 	/* b1 equals NO_BLOCK only when we are freeing up the indirect block. */
@@ -269,7 +293,7 @@ int write_map(struct inode *rip, off_t position, block_t new_wblock, int op)
  *				wrindex: index into *bp										 *
  *				block: block to write										 *
  *===========================================================================*/
-static void wr_indir(struct buf *bp, int wrindex, block_t block)
+static void wr_indir(struct buf *bp, int wrindex, block64_t block)
 {
 /* Given a pointer to an indirect block, write one entry. */
 
@@ -277,7 +301,9 @@ static void wr_indir(struct buf *bp, int wrindex, block_t block)
 	panic("wr_indir() on NULL");
 
   /* write a block into an indirect block */
-  b_ind(bp)[wrindex] = conv4(le_CPU, block);
+  if (block > UINT32_MAX)
+	panic("ext4: indirect block address exceeds 32 bits");
+  b_ind(bp)[wrindex] = conv4(le_CPU, (u32_t)block);
 }
 
 
@@ -309,14 +335,14 @@ struct buf *new_block(register struct inode *rip, off_t position)
 /* Acquire a new block and return a pointer to it. */
   struct buf *bp;
   int r;
-  block_t b;
+  block64_t b;
 
   /* Is another block available? */
   if ( (b = read_map(rip, position, 0)) == NO_BLOCK) {
 	/* Check if this position follows last allocated
 	 * block.
 	 */
-	block_t goal = NO_BLOCK;
+	block64_t goal = NO_BLOCK;
 	if (rip->i_last_pos_bl_alloc != 0) {
 		off_t position_diff = position - rip->i_last_pos_bl_alloc;
 		if (rip->i_bsearch == 0) {
@@ -346,6 +372,13 @@ struct buf *new_block(register struct inode *rip, off_t position)
 		ext2_debug("write_map failed\n");
 		return(NULL);
 	}
+	/* An unwritten ext4 extent keeps its original physical block. */
+	err_code = OK;
+	b = read_map(rip, position, 0);
+	if (err_code != OK || b == NO_BLOCK) {
+		err_code = EIO;
+		return(NULL);
+	}
 	rip->i_last_pos_bl_alloc = position;
 	if (position == 0) {
 		/* rip->i_last_pos_bl_alloc points to the block position,
@@ -358,7 +391,8 @@ struct buf *new_block(register struct inode *rip, off_t position)
   r = lmfs_get_block_ino(&bp, rip->i_dev, b, NO_READ, rip->i_num,
 	rounddown(position, rip->i_sp->s_block_size));
   if (r != OK)
-	panic("ext2: error getting block (%llu,%u): %d", (unsigned long long)rip->i_dev, b, r);
+	panic("ext2: error getting block (%llu,%llu): %d",
+	    (unsigned long long)rip->i_dev, (unsigned long long)b, r);
   zero_block(bp);
   return(bp);
 }

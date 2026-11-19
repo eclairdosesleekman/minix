@@ -141,7 +141,7 @@
 #define INCOMPAT_ENCRYPT           0x10000
 #define INCOMPAT_CASEFOLD          0x20000
 
-/* Ext4 features understood by this read-only implementation. */
+/* Ext4 features understood by this server. */
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG)
 #define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \

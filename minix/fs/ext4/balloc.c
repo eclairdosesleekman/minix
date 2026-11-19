@@ -20,7 +20,7 @@
 #include "const.h"
 
 
-static block_t alloc_block_bit(struct super_block *sp, block_t origin,
+static block64_t alloc_block_bit(struct super_block *sp, block64_t origin,
 	struct inode *rip);
 
 /*===========================================================================*
@@ -68,14 +68,14 @@ void discard_preallocated_blocks(struct inode *rip)
 /*===========================================================================*
  *                              alloc_block                                  *
  *===========================================================================*/
-block_t alloc_block(struct inode *rip, block_t block)
+block64_t alloc_block(struct inode *rip, block64_t block)
 {
 /* Allocate a block for inode. If block is provided, then use it as a goal:
  * try to allocate this block or his neghbors.
  * If block is not provided then goal is group, where inode lives.
  */
-  block_t goal;
-  block_t b;
+  block64_t goal;
+  block64_t b;
   struct super_block *sp = rip->i_sp;
 
   if (sp->s_rd_only)
@@ -124,7 +124,8 @@ block_t alloc_block(struct inode *rip, block_t block)
 	}
   } else {
 	  int group = (rip->i_num - 1) / sp->s_inodes_per_group;
-	  goal = sp->s_blocks_per_group*group + sp->s_first_data_block;
+	  goal = (block64_t)sp->s_blocks_per_group * group +
+	      sp->s_first_data_block;
   }
 
   if (rip->i_preallocation && rip->i_prealloc_count) {
@@ -141,7 +142,7 @@ block_t alloc_block(struct inode *rip, block_t block)
 }
 
 
-static void check_block_number(block_t block, struct super_block *sp,
+static void check_block_number(block64_t block, struct super_block *sp,
 	struct group_desc *gd);
 
 /*===========================================================================*
@@ -150,10 +151,10 @@ static void check_block_number(block_t block, struct super_block *sp,
  *                              goal: try to allocate near this block
  *                              rip: used for preallocation
  *===========================================================================*/
-static block_t alloc_block_bit(struct super_block *sp, block_t goal,
+static block64_t alloc_block_bit(struct super_block *sp, block64_t goal,
 							   struct inode *rip)
 {
-  block_t block = NO_BLOCK;	/* allocated block */
+  block64_t block = NO_BLOCK;	/* allocated block */
   int word;			/* word in block bitmap */
   bit_t	bit = -1;
   int group;
@@ -213,8 +214,8 @@ static block_t alloc_block_bit(struct super_block *sp, block_t goal,
 
 		bit = setbyte(b_bitmap(bp), sp->s_blocks_per_group);
 		if (bit != -1) {
-			block = bit + sp->s_first_data_block +
-					group * sp->s_blocks_per_group;
+			block = (block64_t)bit + sp->s_first_data_block +
+				    (block64_t)group * sp->s_blocks_per_group;
 			check_block_number(block, sp, gd);
 
 			/* We preallocate a byte starting from block.
@@ -250,7 +251,8 @@ static block_t alloc_block_bit(struct super_block *sp, block_t goal,
 		}
 	}
 
-	block = sp->s_first_data_block + group * sp->s_blocks_per_group + bit;
+	block = (block64_t)sp->s_first_data_block +
+	    (block64_t)group * sp->s_blocks_per_group + bit;
 	check_block_number(block, sp, gd);
 
 	lmfs_markdirty(bp);
@@ -276,7 +278,7 @@ static block_t alloc_block_bit(struct super_block *sp, block_t goal,
 /*===========================================================================*
  *                        free_block	                                     *
  *===========================================================================*/
-void free_block(struct super_block *sp, bit_t bit_returned)
+void free_block(struct super_block *sp, block64_t bit_returned)
 {
 /* Return a block by turning off its bitmap bit. */
   int group;		/* group number of bit_returned */
@@ -289,8 +291,8 @@ void free_block(struct super_block *sp, bit_t bit_returned)
 
   if (bit_returned >= sp->s_blocks_count ||
       bit_returned < sp->s_first_data_block)
-	panic("trying to free block %d beyond blocks scope.",
-		bit_returned);
+	panic("trying to free block %llu beyond blocks scope.",
+		(unsigned long long)bit_returned);
 
   /* At first search group, to which bit_returned belongs to
    * and figure out in what word bit is stored.
@@ -309,7 +311,8 @@ void free_block(struct super_block *sp, bit_t bit_returned)
   if (bit_returned == gd->inode_bitmap || bit_returned == gd->block_bitmap
       || (bit_returned >= gd->inode_table
           && bit_returned < (gd->inode_table + sp->s_itb_per_group))) {
-	ext2_debug("ext2: freeing non-data block %d\n", bit_returned);
+	ext2_debug("ext2: freeing non-data block %llu\n",
+	    (unsigned long long)bit_returned);
 	panic("trying to deallocate \
 		system/control block, hardly poke author.");
   }
@@ -317,7 +320,8 @@ void free_block(struct super_block *sp, bit_t bit_returned)
   bp = get_block(sp->s_dev, gd->block_bitmap, NORMAL);
 
   if (unsetbit(b_bitmap(bp), bit))
-	panic("Tried to free unused block %d", bit_returned);
+	panic("Tried to free unused block %llu",
+	    (unsigned long long)bit_returned);
 
   lmfs_markdirty(bp);
   put_block(bp);
@@ -336,11 +340,11 @@ void free_block(struct super_block *sp, bit_t bit_returned)
    * any previous inode association is to be broken for this block, so that the
    * block will not be mapped in erroneously later on.
    */
-  lmfs_free_block(sp->s_dev, (block_t)bit_returned);
+  lmfs_free_block(sp->s_dev, bit_returned);
 }
 
 
-static void check_block_number(block_t block, struct super_block *sp,
+static void check_block_number(block64_t block, struct super_block *sp,
 				struct group_desc *gd)
 {
 
@@ -351,7 +355,8 @@ static void check_block_number(block_t block, struct super_block *sp,
   if (block == gd->inode_bitmap || block == gd->block_bitmap ||
       (block >= gd->inode_table
        && block < (gd->inode_table + sp->s_itb_per_group))) {
-	ext2_debug("ext2: allocating non-data block %d\n", block);
+	ext2_debug("ext2: allocating non-data block %llu\n",
+	    (unsigned long long)block);
 	panic("ext2: block allocator tryed to return \
 		system/control block, poke author.\n");
   }

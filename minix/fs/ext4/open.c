@@ -156,6 +156,9 @@ int fs_slink(ino_t dir_nr, char *name, uid_t uid, gid_t gid,
 	if (bytes + 1 > sip->i_sp->s_block_size) {
 		r = ENAMETOOLONG;
 	} else if ((bytes + 1) <= MAX_FAST_SYMLINK_LENGTH) {
+		/* Fast symlinks store their target in i_block, not an extent root. */
+		sip->i_flags &= ~EXT4_EXTENTS_FL;
+		memset(sip->i_block, 0, sizeof(sip->i_block));
 		r = fsdriver_copyin(data, 0, (char *) sip->i_block, bytes);
 		sip->i_dirt = IN_DIRTY;
 		link_target_buf = (char*) sip->i_block;
