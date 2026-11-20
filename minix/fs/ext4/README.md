@@ -44,6 +44,11 @@ read-write mode.
 - Inline (depth-zero) extent roots can be inserted into, coalesced, and split
   while allocating, writing, and truncating files. Writes into unwritten
   inline extents convert the affected block to an initialized extent.
+- Depth-one extent trees can be edited in place when the selected external
+  leaf already has capacity. The inode index is kept in sync when a leaf's
+  first extent changes, and an empty leaf is detached and freed. Operations
+  that require leaf splitting or tree rebalancing are rejected; deeper trees
+  remain read-only for mutation.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
 
@@ -63,11 +68,12 @@ implementation.
   `gdt_csum` without `metadata_csum` remains unsupported.
 - **No indexed directories:** writable mounts reject `dir_index`; htree
   directory updates are not implemented.
-- **Inline extent root only for extent mutations:** the inode root has room
-  for four extent records. Allocation, unwritten-extent conversion, and
-  truncation return `EOPNOTSUPP` or `EFBIG` when an external extent node or
-  additional root capacity would be required. Initialized data blocks already
-  mapped by an external extent tree can still be read and overwritten.
+- **Limited external extent-tree mutation:** depth-zero inode roots and
+  depth-one trees with pre-existing leaf nodes are writable. Depth-one updates
+  require enough free slots in the selected leaf; this server does not
+  allocate/split external nodes or rebalance trees. Such operations return
+  `EOPNOTSUPP` or `EFBIG` without modifying the extent tree. Trees deeper
+  than one external level remain read-only for mutation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
@@ -133,7 +139,13 @@ mke2fs -F -t ext4 -b 4096 \
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
 and long symlinks. Include files with unwritten extents and files whose inline
-extent root reaches its four-entry capacity. For the 64 KiB image, exercise
+extent root reaches its four-entry capacity. Also create fragmented files
+whose extent roots grow to depth one; overwrite unwritten extents, allocate
+holes within existing leaves, trim extents at both ends, split an extent by
+punching a middle block, and remove all mappings from one leaf. Confirm
+updates that would require a full leaf or tree split fail without changing
+the inode or leaf metadata. Depth-two and deeper trees must remain readable
+but reject mutations. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
