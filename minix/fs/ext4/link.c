@@ -534,6 +534,8 @@ int truncate_inode(register struct inode *rip, off_t newsize)
    * that on-disk capacity requires rewriting the xattr layout and is refused.
    */
   if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	if (file_type != I_REGULAR)
+		return(EINVAL);
 	if (newsize < 0 || rip->i_size < 0 ||
 	    rip->i_inline_size > EXT4_INLINE_DATA_MAX)
 		return(EIO);
@@ -600,6 +602,8 @@ static int freesp_inode(register struct inode *rip, off_t start, off_t end)
    * fast path used for holes and fast symlinks.
    */
   if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	if ((rip->i_mode & I_TYPE) != I_REGULAR)
+		return(EINVAL);
 	if (end > rip->i_size)
 		end = rip->i_size;
 	if (end <= start)
