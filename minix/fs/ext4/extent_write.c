@@ -88,13 +88,13 @@ extent_put(unsigned char *p, u32_t logical, u64_t physical,
 static int
 extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	size_t *node_sizep, u16_t *entriesp, u16_t *maxp,
-	struct buf **bpp)
+	struct buf **bpp, u16_t *root_depthp, u16_t *root_indexp)
 {
 	unsigned char *node;
 	struct buf *bp;
 	size_t node_size;
 	int expected_depth;
-	u16_t magic, entries, max_entries, depth;
+	u16_t magic, entries, max_entries, depth, root_depth;
 	u64_t previous_end;
 	u32_t expected_key;
 	int have_expected_key;
@@ -102,6 +102,9 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 
 	node = (unsigned char *)rip->i_block;
 	node_size = sizeof(rip->i_block);
+	root_depth = extent_get16(node + 6);
+	*root_depthp = root_depth;
+	*root_indexp = 0;
 	bp = NULL;
 	expected_depth = -1;
 	have_expected_key = FALSE;
@@ -170,10 +173,12 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 		{
 			block64_t child, selected_child;
 			u32_t previous_key, key, selected_key;
+			unsigned int selected_index;
 			int found;
 
 			selected_child = 0;
 			selected_key = 0;
+			selected_index = 0;
 			previous_key = 0;
 			found = FALSE;
 			for (i = 0; i < entries; i++) {
@@ -196,15 +201,34 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				if (key <= logical) {
 					selected_child = child;
 					selected_key = key;
+					selected_index = i;
 					found = TRUE;
 				}
 			}
+			if (!found && node == (unsigned char *)rip->i_block &&
+			    depth == 1) {
+				/*
+				 * The inode root has one level of index entries.  A
+				 * logical block before its first key still belongs in
+				 * the first leaf; the root key can be lowered on insert.
+				 */
+				entry = NULL;
+				selected_index = 0;
+				selected_key = extent_get32(node + 12);
+				child = ((u64_t)extent_get16(node + 20) << 32) |
+				    extent_get32(node + 16);
+				selected_child = child;
+				found = TRUE;
+			}
 			if (!found) {
-				/* Inserting before this key needs tree rebalancing. */
+				/* Earlier keys in deeper trees need ancestor updates. */
 				if (bp != NULL)
 					put_block(bp);
 				return(EOPNOTSUPP);
 			}
+
+			if (node == (unsigned char *)rip->i_block)
+				*root_indexp = (u16_t)selected_index;
 
 			if (bp != NULL) {
 				put_block(bp);
