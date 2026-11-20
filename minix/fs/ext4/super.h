@@ -109,6 +109,8 @@ EXTERN struct super_block {
     u32_t   s_csum_seed;          /* CRC32C seed for metadata_csum */
 	u16_t   s_reserved_gdt_blocks;
 	u32_t   s_backup_bgs[2];     /* sparse_super2 backup groups */
+	u32_t   s_cluster_ratio;     /* filesystem blocks per bigalloc cluster */
+	u32_t   s_clusters_per_group; /* bitmap bits in each block group */
 
 } *superblock, *ondisk_superblock;
 
