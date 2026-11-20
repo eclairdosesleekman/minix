@@ -33,16 +33,16 @@ int fs_utime(ino_t ino_nr, struct timespec *atime, struct timespec *mtime)
   if (rip->i_sp->s_is_ext4 &&
       atime->tv_nsec != UTIME_NOW && atime->tv_nsec != UTIME_OMIT &&
       (atime->tv_sec < (time_t)-2147483648LL ||
-      atime->tv_sec > (time_t)2147483647LL) &&
-      rip->i_ext4_extra_isize < 16) {
+      atime->tv_sec > (rip->i_ext4_extra_isize >= 16 ?
+      (time_t)15032385535LL : (time_t)2147483647LL))) {
 	put_inode(rip);
 	return(EOVERFLOW);
   }
   if (rip->i_sp->s_is_ext4 &&
       mtime->tv_nsec != UTIME_NOW && mtime->tv_nsec != UTIME_OMIT &&
       (mtime->tv_sec < (time_t)-2147483648LL ||
-      mtime->tv_sec > (time_t)2147483647LL) &&
-      rip->i_ext4_extra_isize < 12) {
+      mtime->tv_sec > (rip->i_ext4_extra_isize >= 12 ?
+      (time_t)15032385535LL : (time_t)2147483647LL))) {
 	put_inode(rip);
 	return(EOVERFLOW);
   }
