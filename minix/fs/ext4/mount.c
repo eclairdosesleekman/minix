@@ -55,6 +55,18 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	}
 
 	/*
+	 * EA_INODE uses regular-file data blocks as large xattr values. The
+	 * corresponding inodes are private to xattr entries, and their timestamp
+	 * fields carry xattr checksums/reference-count metadata. This server does
+	 * not expose large xattrs or update their reference counts, so only allow
+	 * ordinary file access through a read-only mount.
+	 */
+	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE)) {
+		printf("ext4: ea_inode currently requires a read-only mount\\n");
+		goto bad_mount;
+	}
+
+	/*
 	 * Large directories are read by scanning every directory data block.
 	 * That path understands 64-bit directory sizes and treats all HTree
 	 * index nodes as unused full-block dirents, including three-level

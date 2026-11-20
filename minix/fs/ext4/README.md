@@ -42,6 +42,12 @@ read-write mode.
   either feature because quota accounting is not implemented.
 - Images carrying `RO_COMPAT_READONLY` are accepted read-only and explicitly
   rejected for writable mounts.
+- `INCOMPAT_EA_INODE` filesystems can be mounted read-only. Their ordinary
+  files and directories remain readable; large xattr-value inodes are private
+  to xattr entries and are rejected if a directory attempts to name one.
+  Extended-attribute values are not exposed by this server, and writable
+  mounts are rejected because EA-inode reference counts and checksums are not
+  maintained.
 - Legacy `gdt_csum` group-descriptor checksums are verified using ext4's
   CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used
   with `64bit` are covered; when `metadata_csum` is also present, its CRC32C
@@ -141,6 +147,13 @@ implementation.
 
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
+- **Large extended attributes are not exposed:** `INCOMPAT_EA_INODE` volumes
+  are accepted only read-only. EA inodes store large xattr values in regular
+  file data blocks, are referenced from xattr entries rather than directories,
+  and use inode timestamp/version fields for xattr checksums and reference
+  counts. The server does not provide xattr get/list operations or maintain
+  those reference counts. Directory lookup rejects an inode marked
+  `EXT4_EA_INODE_FL` rather than treating its xattr payload as a normal file.
 - **Quota metadata is read-only:** `RO_COMPAT_QUOTA` and
   `RO_COMPAT_PROJECT` filesystems can be mounted read-only, but writable
   mounts are rejected because create, link, unlink, truncate, and allocation
