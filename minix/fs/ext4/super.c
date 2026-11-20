@@ -607,7 +607,7 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 			    groups[i].block_bitmap, desc, 24, 56,
 			    desc_size, sp->s_blocks_per_group / 8, bitmap);
 			if (r != OK) {
-				printf("ext4: block bitmap checksum mismatch in group %u\\n",
+				printf("ext4: block bitmap checksum mismatch in group %u\n",
 				    i);
 				free(bitmap);
 				return(r);
@@ -619,7 +619,7 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 			    groups[i].inode_bitmap, desc, 26, 58,
 			    desc_size, sp->s_inodes_per_group / 8, bitmap);
 			if (r != OK) {
-				printf("ext4: inode bitmap checksum mismatch in group %u\\n",
+				printf("ext4: inode bitmap checksum mismatch in group %u\n",
 				    i);
 				free(bitmap);
 				return(r);
@@ -672,7 +672,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		    inode_table <= sp->s_first_data_block ||
 		    inode_table >= sp->s_blocks_count ||
 		    table_blocks > sp->s_blocks_count - inode_table) {
-			printf("ext4: invalid metadata block range in group %u\\n",
+			printf("ext4: invalid metadata block range in group %u\n",
 			    i);
 			return(EIO);
 		}
@@ -682,7 +682,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		    block_bitmap - inode_table < table_blocks) ||
 		    (inode_bitmap >= inode_table &&
 		    inode_bitmap - inode_table < table_blocks)) {
-			printf("ext4: group %u bitmap overlaps its inode table\\n", i);
+			printf("ext4: group %u bitmap overlaps its inode table\n", i);
 			return(EIO);
 		}
 	}
