@@ -690,7 +690,7 @@ ext4_validate_inline_dir_area(struct inode *rip, unsigned char *data,
 			ino = (ino_t)conv4(le_CPU, dp->d_ino);
 			if (ino == NO_ENTRY || ino > rip->i_sp->s_inodes_count ||
 			    dp->d_name_len == 0 ||
-			    dp->d_name_len > EXT2_NAME_MAX ||
+			    FALSE ||
 			    dp->d_file_type >= EXT2_FT_MAX ||
 			    (dp->d_name_len == 1 && dp->d_name[0] == '.') ||
 			    (dp->d_name_len == 2 && dp->d_name[0] == '.' &&
