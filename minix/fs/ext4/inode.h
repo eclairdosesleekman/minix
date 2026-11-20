@@ -28,6 +28,7 @@ EXTERN struct inode {
     long   i_mtime_nsec;   /* ext4 mtime nanoseconds */
     time_t i_crtime;       /* ext4 inode creation time */
     long   i_crtime_nsec;  /* ext4 creation-time nanoseconds */
+    u16_t  i_ext4_extra_isize; /* decoded Linux extended-inode field size */
     u32_t  i_dtime;        /* Deletion Time */
     u32_t  i_gid;          /* Full 32-bit group ID (decoded from ext4) */
     u16_t  i_links_count;  /* Links count */
