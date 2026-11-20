@@ -706,6 +706,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		    table_blocks > sp->s_blocks_count - inode_table) {
 			printf("ext4: invalid metadata block range in group %u\n",
 			    i);
+			free(ranges);
 			return(EIO);
 		}
 
@@ -715,6 +716,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		    (inode_bitmap >= inode_table &&
 		    inode_bitmap - inode_table < table_blocks)) {
 			printf("ext4: group %u bitmap overlaps its inode table\n", i);
+			free(ranges);
 			return(EIO);
 		}
 
