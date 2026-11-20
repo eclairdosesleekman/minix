@@ -612,6 +612,8 @@ static unsigned int get_dtype(struct ext2_disk_dir_desc *dp)
   case EXT2_FT_BLKDEV:		return DT_BLK;
   case EXT2_FT_CHRDEV:		return DT_CHR;
   case EXT2_FT_FIFO:		return DT_FIFO;
+  case EXT2_FT_SOCK:		return DT_SOCK;
+  case EXT2_FT_UNKNOWN:		return DT_UNKNOWN;
   default:			return DT_UNKNOWN;
   }
 }
