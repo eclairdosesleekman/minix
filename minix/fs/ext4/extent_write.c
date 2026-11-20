@@ -322,7 +322,14 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 	u64_t previous_end, next_key;
 	u32_t root_key;
 	u16_t leaf_entries, leaf_max;
+	block64_t xattr_block;
 	unsigned int i, j, k;
+
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
+	    (xattr_block != 0 && extent_block_is_mapped(selected_node + 12,
+	    selected_entries, xattr_block)))
+		return(EIO);
 
 	for (i = 0; i < root_entries; i++) {
 		if (i == selected)
@@ -344,9 +351,11 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		}
 		leaf_entries = extent_get16(node + 2);
 		leaf_max = extent_get16(node + 4);
-		if (leaf_max == 0 ||
+		if (leaf_max < 2 ||
 		    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
-		    leaf_entries == 0 || leaf_entries > leaf_max) {
+		    leaf_entries == 0 || leaf_entries > leaf_max ||
+		    (xattr_block != 0 &&
+		    extent_block_is_mapped(node + 12, leaf_entries, xattr_block))) {
 			put_block(bp);
 			return(EIO);
 		}
@@ -432,9 +441,11 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		}
 		leaf_entries = extent_get16(node + 2);
 		leaf_max = extent_get16(node + 4);
-		if (leaf_max == 0 ||
+		if (leaf_max < 2 ||
 		    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
-		    leaf_entries == 0 || leaf_entries > leaf_max) {
+		    leaf_entries == 0 || leaf_entries > leaf_max ||
+		    (xattr_block != 0 &&
+		    extent_block_is_mapped(node + 12, leaf_entries, xattr_block))) {
 			put_block(bp);
 			return(EIO);
 		}
@@ -1031,7 +1042,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	unsigned char *root, *index_entry, *node, *entry;
 	struct ext4_extent ex, previous, next;
 	struct buf *bp;
-	block64_t leaf_block, child;
+	block64_t leaf_block, child, xattr_block;
 	u64_t logical64, previous_end, leaf_end, next_key;
 	u32_t logical, offset, new_length, root_key, child_lo;
 	u16_t root_entries, root_max, depth, leaf_entries, leaf_max;
@@ -1109,7 +1120,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	}
 	leaf_entries = extent_get16(node + 2);
 	leaf_max = extent_get16(node + 4);
-	if (leaf_max == 0 ||
+	if (leaf_max < 2 ||
 	    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
 	    leaf_entries == 0 || leaf_entries > leaf_max) {
 		put_block(bp);
@@ -1164,12 +1175,20 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	 * replaces an unwritten extent. Never free or insert it if allocator
 	 * metadata points at a block already owned by the selected leaf or its tree.
 	 */
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
+	    (xattr_block != 0 &&
+	    extent_block_is_mapped(node + 12, leaf_entries, xattr_block))) {
+		put_block(bp);
+		return(EIO);
+	}
 	if (!(op & WMAP_FREE) &&
 	    (new_wblock <= rip->i_sp->s_first_data_block ||
 	    new_wblock >= rip->i_sp->s_blocks_count ||
 	    new_wblock > (((u64_t)1 << 48) - 1) ||
 	    extent_is_group_metadata(rip->i_sp, new_wblock) ||
 	    extent_overlaps_tree_node(root, root_entries, new_wblock, 1) ||
+	    new_wblock == xattr_block ||
 	    extent_block_is_mapped(node + 12, leaf_entries, new_wblock))) {
 		put_block(bp);
 		return(EIO);
@@ -1487,6 +1506,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	struct ext4_extent ex, previous, next;
 	u16_t entries, max_entries;
 	u64_t logical64, physical;
+	block64_t xattr_block;
 	u32_t logical, offset, new_length;
 	unsigned int i, insert;
 	int r;
@@ -1513,6 +1533,12 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if ((r = extent_root(rip, &root, &entries, &max_entries)) != OK)
 		return(r);
 
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
+	    (xattr_block != 0 &&
+	    extent_block_is_mapped(root + 12, entries, xattr_block)))
+		return(EIO);
+
 	/*
 	 * The allocator may hand us a block even when a damaged bitmap says it
 	 * is free.  Do not write it, or free it after unwritten conversion, if
@@ -1524,6 +1550,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	    physical >= rip->i_sp->s_blocks_count ||
 	    physical > (((u64_t)1 << 48) - 1) ||
 	    extent_is_group_metadata(rip->i_sp, physical) ||
+	    physical == xattr_block ||
 	    extent_block_is_mapped(root + 12, entries, physical)))
 		return(EIO);
 
