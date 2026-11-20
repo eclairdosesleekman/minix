@@ -40,6 +40,8 @@ static int verify_group_descriptor_checksums(struct super_block *sp,
 static int verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	const unsigned char *raw, struct group_desc *groups,
 	unsigned int ngroups, unsigned int desc_size);
+static int verify_group_descriptor_block_ranges(struct super_block *sp,
+	struct group_desc *groups, unsigned int ngroups);
 
 
 /*===========================================================================*
@@ -186,9 +188,11 @@ int read_super(register struct super_block *sp)
 	sp->s_inodes_per_block = sp->s_block_size / EXT2_INODE_SIZE(sp);
 	if (sp->s_inodes_per_block == 0 || sp->s_inodes_per_group == 0)
 		return(EINVAL);
-	sp->s_itb_per_group =
-	    (sp->s_inodes_per_group + sp->s_inodes_per_block - 1) /
+	/* Avoid overflow in the usual (n + d - 1) / d ceiling formula. */
+	sp->s_itb_per_group = sp->s_inodes_per_group /
 	    sp->s_inodes_per_block;
+	if (sp->s_inodes_per_group % sp->s_inodes_per_block != 0)
+		sp->s_itb_per_group++;
 	sp->s_desc_per_block = sp->s_block_size / sp->s_desc_size;
 	if (sp->s_desc_per_block == 0 ||
 	    sp->s_blocks_count <= (u64_t)sp->s_first_data_block + 1)
@@ -235,6 +239,10 @@ int read_super(register struct super_block *sp)
 		return(EINVAL);
 	copy_group_descriptors(group_descs, ondisk_group_descs,
 	    sp->s_groups_count, sp->s_desc_size, is64);
+	r = verify_group_descriptor_block_ranges(sp, group_descs,
+	    sp->s_groups_count);
+	if (r != OK)
+		return(r);
 	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
 		r = verify_group_bitmap_checksums(dev, sp, ondisk_group_descs,
 		    group_descs, sp->s_groups_count, sp->s_desc_size);
@@ -599,7 +607,7 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 			    groups[i].block_bitmap, desc, 24, 56,
 			    desc_size, sp->s_blocks_per_group / 8, bitmap);
 			if (r != OK) {
-				printf("ext4: block bitmap checksum mismatch in group %u\\n",
+				printf("ext4: block bitmap checksum mismatch in group %u\n",
 				    i);
 				free(bitmap);
 				return(r);
@@ -611,7 +619,7 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 			    groups[i].inode_bitmap, desc, 26, 58,
 			    desc_size, sp->s_inodes_per_group / 8, bitmap);
 			if (r != OK) {
-				printf("ext4: inode bitmap checksum mismatch in group %u\\n",
+				printf("ext4: inode bitmap checksum mismatch in group %u\n",
 				    i);
 				free(bitmap);
 				return(r);
@@ -620,6 +628,65 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	}
 
 	free(bitmap);
+	return(OK);
+}
+
+/*
+ * Validate the metadata block pointers decoded from every group descriptor.
+ * flex_bg permits these blocks to live outside their nominal block group, so
+ * only filesystem-wide bounds are imposed here. The inode table occupies one
+ * contiguous run of s_itb_per_group blocks.
+ */
+static int
+verify_group_descriptor_block_ranges(struct super_block *sp,
+	struct group_desc *groups, unsigned int ngroups)
+{
+	block64_t block_bitmap, inode_bitmap, inode_table;
+	block64_t table_blocks;
+	unsigned int i;
+
+	/* A bitmap has one bit per block/inode (bigalloc is not implemented). */
+	if ((u64_t)sp->s_inodes_per_group > (u64_t)sp->s_block_size * 8 ||
+	    (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC) &&
+	    (u64_t)sp->s_blocks_per_group > (u64_t)sp->s_block_size * 8) ||
+	    sp->s_itb_per_group == 0)
+		return(EINVAL);
+
+	table_blocks = sp->s_itb_per_group;
+	for (i = 0; i < ngroups; i++) {
+		block_bitmap = groups[i].block_bitmap;
+		inode_bitmap = groups[i].inode_bitmap;
+		inode_table = groups[i].inode_table;
+
+		/*
+		 * Do not constrain these pointers to group i: ext4's flex_bg
+		 * feature intentionally packs metadata for several groups into
+		 * one flex group. They must, however, refer to valid filesystem
+		 * data blocks, and the complete inode table must fit on disk.
+		 */
+		if (block_bitmap <= sp->s_first_data_block ||
+		    block_bitmap >= sp->s_blocks_count ||
+		    inode_bitmap <= sp->s_first_data_block ||
+		    inode_bitmap >= sp->s_blocks_count ||
+		    block_bitmap == inode_bitmap ||
+		    inode_table <= sp->s_first_data_block ||
+		    inode_table >= sp->s_blocks_count ||
+		    table_blocks > sp->s_blocks_count - inode_table) {
+			printf("ext4: invalid metadata block range in group %u\n",
+			    i);
+			return(EIO);
+		}
+
+		/* A group's own bitmaps cannot occupy its inode table blocks. */
+		if ((block_bitmap >= inode_table &&
+		    block_bitmap - inode_table < table_blocks) ||
+		    (inode_bitmap >= inode_table &&
+		    inode_bitmap - inode_table < table_blocks)) {
+			printf("ext4: group %u bitmap overlaps its inode table\n", i);
+			return(EIO);
+		}
+	}
+
 	return(OK);
 }
 
