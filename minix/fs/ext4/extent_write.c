@@ -183,6 +183,29 @@ extent_is_group_metadata(struct super_block *sp, block64_t block)
 }
 
 static int
+extent_overlaps_group_metadata(struct super_block *sp, block64_t first,
+	u32_t length)
+{
+	struct group_desc *gd;
+	block64_t end, table_end;
+	unsigned int group;
+
+	end = first + length;
+	for (group = 0; group < sp->s_groups_count; group++) {
+		gd = get_group_desc(group);
+		if (gd == NULL)
+			return(TRUE);
+		if ((gd->block_bitmap >= first && gd->block_bitmap < end) ||
+		    (gd->inode_bitmap >= first && gd->inode_bitmap < end))
+			return(TRUE);
+		table_end = gd->inode_table + sp->s_itb_per_group;
+		if (first < table_end && gd->inode_table < end)
+			return(TRUE);
+	}
+	return(FALSE);
+}
+
+static int
 extent_depth1_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
 {
@@ -285,6 +308,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		    ex.physical <= rip->i_sp->s_first_data_block ||
 		    ex.physical >= rip->i_sp->s_blocks_count ||
 		    ex.length > rip->i_sp->s_blocks_count - ex.physical ||
+		    extent_overlaps_group_metadata(rip->i_sp, ex.physical,
+		    ex.length) ||
 		    (u64_t)ex.logical + ex.length >
 		    ((u64_t)UINT32_MAX + 1) ||
 		    (i != 0 && ex.logical < previous_end)) {
@@ -449,8 +474,10 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	}
 
 	/* Insert a newly allocated block into a hole in this leaf. */
-	if (new_wblock == 0 || new_wblock >= rip->i_sp->s_blocks_count ||
-	    new_wblock > (((u64_t)1 << 48) - 1)) {
+	if (new_wblock <= rip->i_sp->s_first_data_block ||
+	    new_wblock >= rip->i_sp->s_blocks_count ||
+	    new_wblock > (((u64_t)1 << 48) - 1) ||
+	    extent_is_group_metadata(rip->i_sp, new_wblock)) {
 		put_block(bp);
 		return(EIO);
 	}
