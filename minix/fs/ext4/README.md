@@ -470,8 +470,10 @@ including `metadata_csum` and legacy `gdt_csum` variants where supported.
 Check groups whose first group number is a power of 3, 5, or 7, plus ordinary
 groups without backup superblocks. Corrupt a descriptor in a later meta group
 and confirm mount fails checksum validation before its bitmap or inode-table
-pointers are followed. Confirm writable mounts, `sparse_super2` +
-`meta_bg`, and alternate-superblock selection are rejected.
+pointers are followed. Confirm data extents, extent-tree nodes, and group
+bitmap/inode-table pointers cannot alias any primary or backup META_BG
+descriptor block. Confirm writable mounts, `sparse_super2` + `meta_bg`, and
+alternate-superblock selection are rejected.
 
 Use `e2fsck -fn` on the unmounted image after each test.
 
