@@ -58,7 +58,7 @@ read-write mode.
   payload fits in the inode plus the inode-body `system.data` xattr (up to the
   bounded in-core inline buffer). The xattr header, entry table, value bounds,
   and the inode checksum (when enabled) are validated before exposing bytes.
-  Inline directories, external xattr-inode payloads, `FSC_PEEK`/mmap, and all
+  Inline directories, external xattr-inode payloads, `FSC_PEEK` page mapping, and all
   inline-data writes remain unsupported; an inline directory inode returns
   `EOPNOTSUPP`.
 - `INCOMPAT_EA_INODE` filesystems can be mounted read-only. Their ordinary
