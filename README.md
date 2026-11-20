@@ -1,7 +1,8 @@
 # MINIX 3.4.0 — amd64 UEFI branch
 
 This repository is a MINIX 3.4.0 with UEFI boot support and an x86_64 (amd64) port.
-This branch aims to revive MINIX 3 as a modern daily driver OS.
+This forked from the last upstream commit (4db99f4).
+This branch aims to revive MINIX 3 into a modern operating system suitable for use as a daily driver and for server applications.
 
 ## Build an amd64 UEFI installation ISO
 
@@ -189,9 +190,10 @@ MXV is being developed incrementally, with the long-term objective of providing 
 - Improvement of SMP and stable SMP operation (check up to 4 cores).
 - Implement POSIX PAX extended header extraction.
 - Implement amd64 version guided installer.
+- Implement ext4 filesystem support (Work in progress).
 - Installation successful and boot from installed virtual disk.
 - Bootstrap successful of pkgsrc 2026Q3.
-- Under development MXV now in phase 1 (Work in progress).
+- Under development MXV now in phase 2 (Work in progress).
 - POSIX test status recorded by the port author: 94/97 passed.
 
 The amd64 port and installation media are experimental; test the ISO in
