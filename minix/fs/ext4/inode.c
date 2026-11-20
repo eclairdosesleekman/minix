@@ -745,13 +745,13 @@ int rw_inode(
 			put_block(bp);
 			return(r);
 		}
-	}
-    r = ext4_prepare_inode_times(rip,
-	    (const unsigned char *)dip, EXT2_INODE_SIZE(sp),
-	    &encoded_times);
-	if (r != OK) {
-		put_block(bp);
-		return(r);
+		r = ext4_prepare_inode_times(rip,
+		    (const unsigned char *)dip, EXT2_INODE_SIZE(sp),
+		    &encoded_times);
+		if (r != OK) {
+			put_block(bp);
+			return(r);
+		}
 	}
   }
 
