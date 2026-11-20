@@ -96,12 +96,15 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	int expected_depth;
 	u16_t magic, entries, max_entries, depth;
 	u64_t previous_end;
+	u32_t expected_key;
+	int have_expected_key;
 	unsigned int i;
 
 	node = (unsigned char *)rip->i_block;
 	node_size = sizeof(rip->i_block);
 	bp = NULL;
 	expected_depth = -1;
+	have_expected_key = FALSE;
 
 	for (;;) {
 		if (node_size < 12)
@@ -122,6 +125,13 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 		/* The inode-resident root has only 60 bytes for its entries. */
 		if (bp == NULL &&
 		    max_entries > (sizeof(rip->i_block) - 12) / 12)
+			goto corrupt;
+		/*
+		 * Each index entry records the first logical block in its child.
+		 * Check that the selected child really starts at that key.
+		 */
+		if (have_expected_key &&
+		    (entries == 0 || extent_get32(node + 12) != expected_key))
 			goto corrupt;
 
 		if (depth == 0) {
@@ -159,10 +169,11 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 		 */
 		{
 			block64_t child, selected_child;
-			u32_t previous_key, key;
+			u32_t previous_key, key, selected_key;
 			int found;
 
 			selected_child = 0;
+			selected_key = 0;
 			previous_key = 0;
 			found = FALSE;
 			for (i = 0; i < entries; i++) {
@@ -182,10 +193,11 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 					goto corrupt;
 				previous_key = key;
 
-				if (key > logical)
-					break;
-				selected_child = child;
-				found = TRUE;
+				if (key <= logical) {
+					selected_child = child;
+					selected_key = key;
+					found = TRUE;
+				}
 			}
 			if (!found) {
 				/* Inserting before this key needs tree rebalancing. */
@@ -198,6 +210,8 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				put_block(bp);
 				bp = NULL;
 			}
+			expected_key = selected_key;
+			have_expected_key = TRUE;
 			bp = get_block(rip->i_dev, selected_child, NORMAL);
 			if (bp == NULL)
 				goto corrupt;
