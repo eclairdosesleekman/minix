@@ -105,7 +105,7 @@ ext4_validate_data_range(struct inode *rip, block64_t first, u64_t length)
 		return(FALSE);
 	end = first + length;
 
-	/* META_BG descriptor copies are reserved metadata, just like bitmaps. */
+	/* Primary and backup super/GDT blocks are reserved filesystem metadata. */
 	if (ext4_reserved_metadata_overlaps(sp, first, end))
 		return(FALSE);
 
