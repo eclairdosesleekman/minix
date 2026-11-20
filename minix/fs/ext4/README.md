@@ -58,8 +58,9 @@ read-write mode.
   payload fits in the inode plus the inode-body `system.data` xattr (up to the
   bounded in-core inline buffer). The xattr header, entry table, value bounds,
   and the inode checksum (when enabled) are validated before exposing bytes.
-  Inline directories, external xattr-inode payloads, and all inline-data writes
-  remain unsupported; an inline directory inode returns `EOPNOTSUPP`.
+  Inline directories, external xattr-inode payloads, `FSC_PEEK`/mmap, and all
+  inline-data writes remain unsupported; an inline directory inode returns
+  `EOPNOTSUPP`.
 - `INCOMPAT_EA_INODE` filesystems can be mounted read-only. Their ordinary
   files and directories remain readable; large xattr-value inodes are private
   to xattr entries and are rejected if a directory attempts to name one.
@@ -101,11 +102,13 @@ read-write mode.
 - Read-write support for filesystems without a journal. On filesystems
   advertising `dir_index`, unindexed directories remain writable; lookup in
   indexed directories follows the HTree for hash versions 0 through 5,
-  including collision continuation. SipHash indexes use the linear lookup
-  compatibility path. Entry insertion and deletion in directories carrying
-  `EXT2_INDEX_FL` are rejected with `EOPNOTSUPP` because index maintenance
-  and rebalancing are not implemented. The block and inode bitmaps, group free
-  counters, inode table, superblock counters, and data blocks are updated.
+  including collision continuation. Existing indexed leaves can be updated
+  in-place for supported hash versions when room is available; a full target
+  leaf and rename operations in indexed parent directories return
+  `EOPNOTSUPP` rather than changing an index without rebalancing. SipHash
+  indexes retain linear lookup/delete compatibility and reject insertion.
+  The block and inode bitmaps, group free counters, inode table, superblock
+  counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
 - Inline (depth-zero) extent roots can be inserted into, coalesced, and split
   while allocating, writing, and truncating files. Writes into unwritten
