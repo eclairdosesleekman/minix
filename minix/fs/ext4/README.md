@@ -272,8 +272,9 @@ implementation.
   deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, MMP, encryption,
   casefold, inline-data writes, and unsupported feature flags are rejected.
-  BIGALLOC is supported only on read-only mounts. Its cluster geometry and
-  block-bitmap checksum length are validated, and mapped file-data ranges are
+  BIGALLOC is accepted only with `INCOMPAT_EXTENTS` and is supported only on
+  read-only mounts. Its cluster geometry and block-bitmap checksum length are
+  validated, and mapped file-data ranges are
   checked against every metadata cluster (including backup super/GDT, group
   bitmaps, inode tables, and that inode's external xattr block). The allocator and writers
   remain disabled because they account for individual blocks rather than
