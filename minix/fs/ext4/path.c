@@ -720,11 +720,14 @@ ext4_inline_dir_search(struct inode *rip, const char *name, ino_t *numb,
 		return(r);
 
 	extra_size = rip->i_inline_size - EXT4_INLINE_DATA_MIN;
-	if (extra_size != 0)
-		return(ext4_inline_dir_scan_area(rip,
+	if (extra_size != 0) {
+		r = ext4_inline_dir_scan_area(rip,
 		    rip->i_inline_data + EXT4_INLINE_DATA_MIN, extra_size,
-		    name, (unsigned int)strlen(name), numb, flag));
-	return(ENOENT);
+		    name, (unsigned int)strlen(name), numb, flag);
+		if (r != ENOENT)
+			return(r);
+	}
+	return(flag == IS_EMPTY ? OK : ENOENT);
 }
 
 
