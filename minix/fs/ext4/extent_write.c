@@ -134,6 +134,8 @@ extent_block_is_mapped(const unsigned char *entries, u16_t count,
 static int extent_is_group_metadata(struct super_block *sp, block64_t block);
 static int extent_overlaps_group_metadata(struct super_block *sp,
 	block64_t first, u32_t length);
+static block64_t extent_inode_xattr_block(struct inode *rip);
+static int extent_validate_xattr_block(struct inode *rip, block64_t block);
 
 /*
  * Return the inode's inline extent root.  Depth-one trees are handled by the
@@ -512,8 +514,18 @@ ext4_extent_can_truncate(struct inode *rip)
 	xattr_block = extent_inode_xattr_block(rip);
 	if (extent_validate_xattr_block(rip, xattr_block) != OK)
 		return(EIO);
-	if (!(rip->i_flags & EXT4_EXTENTS_FL))
+	if (!(rip->i_flags & EXT4_EXTENTS_FL)) {
+		/*
+		 * A legacy indirect tree needs a separate ownership walk to prove
+		 * that its xattr block does not alias file data or indirect nodes.
+		 * Empty/special inodes have no such mapping to collide with.
+		 */
+		if (xattr_block != 0 && rip->i_blocks != 0 &&
+		    (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL &&
+		    (rip->i_mode & I_TYPE) != I_BLOCK_SPECIAL)
+			return(EOPNOTSUPP);
 		return(OK);
+	}
 
 	root = (unsigned char *)rip->i_block;
 	if (extent_get16(root) != EXT4_EXTENT_MAGIC)
