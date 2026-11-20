@@ -218,8 +218,9 @@ ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 	/*
 	 * Validate the HTree root layout even without metadata_csum.  LARGEDIR
 	 * raises the maximum indirect_levels value from two to three.  The
-	 * lookup/getdents paths do not follow index pointers; they scan all
-	 * directory blocks linearly and skip this root area via the ".." rec_len.
+	 * indexed LOOK_UP follows validated index pointers in path.c;
+	 * getdents and unsupported-hash compatibility lookups still scan blocks
+	 * linearly and skip this root area via the ".." rec_len.
 	 */
 	if ((rip->i_flags & EXT2_INDEX_FL) && logical_block == 0) {
 		unsigned int max_levels;

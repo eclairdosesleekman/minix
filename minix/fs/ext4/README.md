@@ -73,19 +73,23 @@ read-write mode.
   or unsupported values continue to report `DT_UNKNOWN`.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
-- Linear directory traversal of htree leaf blocks; the dx root metadata after
-  `..` is skipped in the first directory block. The `INCOMPAT_LARGEDIR`
-  feature is readable: 64-bit directory sizes are decoded, HTree roots with up
-  to three index levels are validated, and linear lookup/getdents scans the
-  leaf blocks without following the index tree. This feature remains
-  read-only because HTree mutation and index rebalancing are not implemented.
+- Hash-directed lookup for HTree-indexed directories using ext4's legacy,
+  half-MD4, and TEA hashes in both signed-byte and unsigned-byte variants.
+  Lookup follows the selected index path through up to two levels normally or
+  three with `INCOMPAT_LARGEDIR`, and continues into adjacent leaves when a
+  hash collision spans multiple leaves. Root and internal-node checksums and
+  index bounds are validated before following block references. `getdents`
+  continues to scan directory blocks linearly. Indexed-directory mutation and
+  index rebalancing remain unsupported; SipHash indexes use the linear lookup
+  compatibility path.
 - Read-write support for filesystems without a journal. On filesystems
   advertising `dir_index`, unindexed directories remain writable; lookup in
-  indexed directories is supported by linear traversal, but entry insertion
-  and deletion in directories carrying `EXT2_INDEX_FL` are rejected with
-  `EOPNOTSUPP` until HTree maintenance is implemented. The block and inode
-  bitmaps, group free counters, inode table, superblock counters, and data
-  blocks are updated.
+  indexed directories follows the HTree for hash versions 0 through 5,
+  including collision continuation. SipHash indexes use the linear lookup
+  compatibility path. Entry insertion and deletion in directories carrying
+  `EXT2_INDEX_FL` are rejected with `EOPNOTSUPP` because index maintenance
+  and rebalancing are not implemented. The block and inode bitmaps, group free
+  counters, inode table, superblock counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
 - Inline (depth-zero) extent roots can be inserted into, coalesced, and split
   while allocating, writing, and truncating files. Writes into unwritten
@@ -197,14 +201,16 @@ implementation.
   because lazy bitmap initialization is not implemented. The legacy format
   does not use the `metadata_csum` bitmap checksum fields.
 - **No HTree mutation:** a filesystem-wide `dir_index` feature bit does
-  not by itself prevent a writable mount. Lookup still linearly scans indexed
-  directories, but `search_dir()` rejects `ENTER` and `DELETE` for an
-  individual directory carrying `EXT2_INDEX_FL`. Rename preflights both
-  parent directories before changing either one, preventing a half-completed
-  cross-directory rename. Unindexed directories on the same volume can be
-  changed normally. Filesystems with `INCOMPAT_LARGEDIR` are additionally
-  restricted to read-only mounts because this server does not update indexes
-  or rebalance deep HTree directories.
+  not by itself prevent a writable mount. Lookup follows HTree indexes for
+  hash versions 0 through 5 and searches adjacent leaves for hash collisions;
+  SipHash directories retain linear compatibility lookup. `search_dir()`
+  rejects `ENTER` and `DELETE` for an individual directory carrying
+  `EXT2_INDEX_FL`. `getdents` continues to scan the directory blocks
+  linearly. Rename preflights both parent directories before changing either
+  one, preventing a half-completed cross-directory rename. Unindexed
+  directories on the same volume can be changed normally. Filesystems with
+  `INCOMPAT_LARGEDIR` are additionally restricted to read-only mounts because
+  this server does not update indexes or rebalance deep HTree directories.
 - **Limited external extent-tree mutation:** inline roots can grow into
   depth-one trees, and depth-one leaves can be allocated, split, merged, and
   compacted while the inode root has capacity. A depth-two tree with a single
