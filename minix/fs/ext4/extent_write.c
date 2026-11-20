@@ -1166,7 +1166,7 @@ ext4_extent_can_truncate(struct inode *rip)
 		 * siblings, and between every pair of siblings.
 		 */
 		if (i == 0 && extent_depth1_check_siblings(rip, root,
-		    root_entries, 0, node, leaf_entries, FALSE, 0) != OK) {
+		    root_entries, 0, node, leaf_entries, FALSE, 0, NO_BLOCK) != OK) {
 			put_block(bp);
 			return(EIO);
 		}
@@ -1422,6 +1422,8 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 		    ex.length) ||
 		    extent_overlaps_tree_node(root, root_entries, ex.physical,
 		    ex.length) ||
+		    (root_block != NO_BLOCK &&
+		    extent_ranges_overlap(ex.physical, ex.length, root_block, 1)) ||
 		    (u64_t)ex.logical + ex.length >
 		    ((u64_t)UINT32_MAX + 1) ||
 		    (i != 0 && ex.logical < previous_end)) {
@@ -1465,6 +1467,7 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 	    new_wblock >= rip->i_sp->s_blocks_count ||
 	    new_wblock > (((u64_t)1 << 48) - 1) ||
 	    extent_is_group_metadata(rip->i_sp, new_wblock) ||
+	    new_wblock == root_block ||
 	    extent_overlaps_tree_node(root, root_entries, new_wblock, 1) ||
 	    new_wblock == xattr_block ||
 	    extent_block_is_mapped(node + 12, leaf_entries, new_wblock))) {
@@ -1642,7 +1645,7 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 						r = extent_depth1_compact(rip, root,
 						    &root_entries, root_max, &leaf_index,
 						    &bp, &node, &leaf_entries, leaf_max,
-						    &index_entry, &leaf_block);
+						    &index_entry, &leaf_block, !external_root);
 						if (r == OK && bp != NULL)
 							put_block(bp);
 						else if (bp != NULL)
@@ -1672,7 +1675,8 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 		    leaf_entries > leaf_max - 2)) {
 			r = extent_depth1_split_leaf(rip, root, &root_entries,
 			    root_max, &leaf_index, logical, &bp, &node,
-			    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+			    &leaf_entries, leaf_max, &index_entry, &leaf_block,
+			    root_block);
 			if (r != OK) {
 				put_block(bp);
 				return(r);
@@ -1731,7 +1735,7 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 		extent_put16(node + 2, leaf_entries);
 		r = extent_depth1_compact(rip, root, &root_entries,
 		    root_max, &leaf_index, &bp, &node, &leaf_entries,
-		    leaf_max, &index_entry, &leaf_block);
+		    leaf_max, &index_entry, &leaf_block, !external_root);
 		if (r != OK) {
 			if (bp != NULL)
 				put_block(bp);
@@ -1791,7 +1795,7 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 			extent_put16(node + 2, leaf_entries);
 			r = extent_depth1_compact(rip, root, &root_entries,
 			    root_max, &leaf_index, &bp, &node, &leaf_entries,
-			    leaf_max, &index_entry, &leaf_block);
+			    leaf_max, &index_entry, &leaf_block, !external_root);
 			if (r != OK) {
 				if (bp != NULL)
 					put_block(bp);
@@ -1840,7 +1844,8 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 	if (leaf_entries >= leaf_max) {
 		r = extent_depth1_split_leaf(rip, root, &root_entries,
 		    root_max, &leaf_index, logical, &bp, &node,
-		    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+		    &leaf_entries, leaf_max, &index_entry, &leaf_block,
+		    root_block);
 		if (r != OK) {
 			put_block(bp);
 			return(r);
@@ -1865,7 +1870,7 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 		extent_put32(index_entry, logical);
 	r = extent_depth1_compact(rip, root, &root_entries, root_max,
 	    &leaf_index, &bp, &node, &leaf_entries, leaf_max,
-	    &index_entry, &leaf_block);
+	    &index_entry, &leaf_block, !external_root);
 	if (r != OK) {
 		if (bp != NULL)
 			put_block(bp);
