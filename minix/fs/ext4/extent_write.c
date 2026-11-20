@@ -413,8 +413,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 
 	/*
 	 * new_wblock is allocated before this callback, even when it merely
-	 * replaces an unwritten extent.  Never free or insert it if allocator
-	 * metadata points at a block already owned by this file or by its tree.
+	 * replaces an unwritten extent. Never free or insert it if allocator
+	 * metadata points at a block already owned by the selected leaf or its tree.
 	 */
 	if (!(op & WMAP_FREE) &&
 	    (new_wblock <= rip->i_sp->s_first_data_block ||
