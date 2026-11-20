@@ -210,8 +210,10 @@ removing its name. Create an external xattr block with refcount one and with
 multiple references; final unlink must respectively free the block or decrement
 the reference count, clear the inode pointer, and preserve unrelated references.
 Corrupt the xattr magic, h_blocks, refcount, and pointer range and confirm final
-unlink fails before removing its name. Also test an xattr pointer that aliases
-a data extent, an extent leaf, or group metadata. Inject an extent-node read/write
+unlink fails before removing its name. Repeat the shared and unshared xattr
+cases when rename replaces an existing destination; the rename must preflight
+before changing either name. Also test an xattr pointer that aliases a data
+extent, an extent leaf, or group metadata. Inject an extent-node read/write
 failure during final reclamation and confirm the inode bitmap is not released. Confirm updates
 that would require a full leaf or tree split fail without changing the inode
 or leaf metadata. Depth-two and deeper trees must remain readable but reject
