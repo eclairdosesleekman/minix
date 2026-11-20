@@ -81,6 +81,57 @@ ext4_inode_csum_seed(struct inode *rip)
 }
 
 /*
+ * Validate a physical data or extent-tree block range before following it.
+ * Metadata blocks owned by any group (including flex_bg placements) and the
+ * inode's external xattr block must never be exposed as file data.
+ */
+int
+ext4_validate_data_range(struct inode *rip, block64_t first, u64_t length)
+{
+	struct super_block *sp = rip->i_sp;
+	struct group_desc *gd;
+	block64_t end, xattr_block;
+	u64_t max_block;
+	unsigned int group;
+
+	if (length == 0 || first <= sp->s_first_data_block ||
+	    first >= sp->s_blocks_count ||
+	    length > sp->s_blocks_count - first ||
+	    sp->s_block_size == 0)
+		return(FALSE);
+
+	max_block = ((u64_t)~0 >> 1) / sp->s_block_size;
+	if (first > max_block || length - 1 > max_block - first)
+		return(FALSE);
+	end = first + length;
+
+	for (group = 0; group < sp->s_groups_count; group++) {
+		gd = &sp->s_group_desc[group];
+		if ((gd->block_bitmap >= first && gd->block_bitmap < end) ||
+		    (gd->inode_bitmap >= first && gd->inode_bitmap < end))
+			return(FALSE);
+		if (gd->inode_table <= first) {
+			if (first - gd->inode_table < sp->s_itb_per_group)
+				return(FALSE);
+		} else if (gd->inode_table < end) {
+			return(FALSE);
+		}
+	}
+
+	if (sp->s_creator_os == EXT4_OS_LINUX) {
+		xattr_block = (block64_t)rip->i_file_acl;
+		if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT))
+			xattr_block |= (block64_t)(u16_t)conv2(le_CPU,
+			    rip->osd2.linux2.i_pad1) << 32;
+		if (xattr_block != 0 && xattr_block >= first &&
+		    xattr_block < end)
+			return(FALSE);
+	}
+
+	return(TRUE);
+}
+
+/*
  * Verify the Linux ext4 inode checksum. The checksum-low field is at
  * offset 124; checksum-high is at offset 130 when i_extra_isize includes it.
  */

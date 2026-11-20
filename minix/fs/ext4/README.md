@@ -71,6 +71,13 @@ read-write mode.
   use. The ext4 directory-entry type table maps all eight defined on-disk
   values, including UNIX-domain sockets (`EXT2_FT_SOCK` to `DT_SOCK`); unknown
   or unsupported values continue to report `DT_UNKNOWN`.
+- ext4 data and external extent-node mappings are range-checked against every
+  group's block bitmap, inode bitmap, and inode-table range before a block is
+  read. Complete extent ranges are checked, not just the requested block;
+  logical extent order and bounds are validated, and tree-node aliases and
+  cycles are rejected. Legacy direct, single-, double-, and triple-indirect
+  pointers receive the same pre-read checks. The inode's external xattr block
+  is excluded from both data and extent-node mappings.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
 - Hash-directed lookup for HTree-indexed directories using ext4's legacy,
