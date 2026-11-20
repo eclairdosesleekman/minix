@@ -717,6 +717,9 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 		name_len = raw[pos];
 		name_index = raw[pos + 1];
 		if (name_len == 0 && name_index == 0) {
+			/* ext4's four-byte terminator must be entirely zero. */
+			if (ext4_inode_read16(raw, pos + 2) != 0)
+				return(EIO);
 			terminated = TRUE;
 			entries_end = pos + 4;
 			break;
