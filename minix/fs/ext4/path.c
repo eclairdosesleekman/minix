@@ -85,6 +85,13 @@ struct inode *advance(struct inode *dirp, const char *string)
 	return(NULL);
   }
 
+  /* EA inodes are private xattr-value storage and must not be named. */
+  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_EA_INODE_FL)) {
+	put_inode(rip);
+	err_code = EIO;
+	return(NULL);
+  }
+
   return(rip);
 }
 
