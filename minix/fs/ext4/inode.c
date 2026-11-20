@@ -501,6 +501,7 @@ ext4_decode_inode_times(struct inode *rip, const unsigned char *raw,
 	rip->i_mtime_nsec = 0;
 	rip->i_crtime = 0;
 	rip->i_crtime_nsec = 0;
+	rip->i_ext4_extra_isize = 0;
 
 	if (!rip->i_sp->s_is_ext4 ||
 	    rip->i_sp->s_creator_os != EXT4_OS_LINUX)
@@ -516,6 +517,7 @@ ext4_decode_inode_times(struct inode *rip, const unsigned char *raw,
 	    &extra_isize);
 	if (r != OK)
 		return(r);
+	rip->i_ext4_extra_isize = extra_isize;
 
 	r = ext4_decode_one_time(raw, inode_size, extra_isize, 8,
 	    EXT4_INODE_ATIME_EXTRA_OFF, &rip->i_atime, &rip->i_atime_nsec);
@@ -592,6 +594,7 @@ ext4_prepare_inode_times(struct inode *rip, const unsigned char *raw,
 	r = ext4_inode_extra_isize(sp, raw, inode_size, &extra_isize);
 	if (r != OK)
 		return(r);
+	rip->i_ext4_extra_isize = extra_isize;
 
 	encoded->atime.has_extra = ext4_inode_extra_fits(extra_isize,
 	    inode_size, EXT4_INODE_ATIME_EXTRA_OFF + 4);
@@ -623,6 +626,10 @@ ext4_prepare_inode_times(struct inode *rip, const unsigned char *raw,
 		if (r != OK)
 			return(r);
 		encoded->has_crtime = TRUE;
+	} else if (sp->s_creator_os == EXT4_OS_LINUX) {
+		/* This inode format has no creation-time field. */
+		rip->i_crtime = 0;
+		rip->i_crtime_nsec = 0;
 	}
 	encoded->enabled = TRUE;
 	return(OK);
