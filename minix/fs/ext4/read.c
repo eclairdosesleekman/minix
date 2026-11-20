@@ -391,11 +391,45 @@ corrupt:
  * pointer block and resulting data block. The format has twelve direct
  * pointers followed by single, double, and triple-indirect roots.
  */
+static int
+ext4_indirect_add_node(struct inode *rip, block64_t block,
+	block64_t *visited, unsigned int *visited_count)
+{
+	unsigned int i;
+
+	if (!ext4_validate_data_range(rip, block, 1) ||
+	    *visited_count >= EXT2_N_BLOCKS)
+		return(FALSE);
+	for (i = 0; i < *visited_count; i++) {
+		if (visited[i] == block)
+			return(FALSE);
+	}
+	visited[(*visited_count)++] = block;
+	return(TRUE);
+}
+
+static int
+ext4_indirect_data_valid(struct inode *rip, block64_t block,
+	const block64_t *visited, unsigned int visited_count)
+{
+	unsigned int i;
+
+	if (!ext4_validate_data_range(rip, block, 1))
+		return(FALSE);
+	for (i = 0; i < visited_count; i++) {
+		if (visited[i] == block)
+			return(FALSE);
+	}
+	return(TRUE);
+}
+
 static block64_t
 ext4_indirect_map(struct inode *rip, u64_t block_pos)
 {
 	struct buf *bp;
 	block64_t block, data_block;
+	block64_t visited[EXT2_N_BLOCKS];
+	unsigned int visited_count = 0;
 	u64_t excess;
 	unsigned int addresses, addresses2;
 	int index;
@@ -408,7 +442,8 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 	if (block_pos < EXT2_NDIR_BLOCKS) {
 		data_block = rip->i_block[block_pos];
 		if (data_block == NO_BLOCK ||
-		    ext4_validate_data_range(rip, data_block, 1))
+		    ext4_indirect_data_valid(rip, data_block, visited,
+		    visited_count))
 			return(data_block);
 		goto corrupt;
 	}
@@ -418,7 +453,8 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 		excess = block_pos - EXT2_NDIR_BLOCKS;
 		if (block == NO_BLOCK)
 			return(NO_BLOCK);
-		if (!ext4_validate_data_range(rip, block, 1))
+		if (!ext4_indirect_add_node(rip, block, visited,
+		    &visited_count))
 			goto corrupt;
 		bp = get_block(rip->i_dev, block, NORMAL);
 		if (bp == NULL)
@@ -426,7 +462,8 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 		data_block = rd_indir(bp, (int)excess);
 		put_block(bp);
 		if (data_block == NO_BLOCK ||
-		    ext4_validate_data_range(rip, data_block, 1))
+		    ext4_indirect_data_valid(rip, data_block, visited,
+		    visited_count))
 			return(data_block);
 		goto corrupt;
 	}
@@ -441,7 +478,8 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 		block = rip->i_block[EXT2_TIND_BLOCK];
 		if (block == NO_BLOCK)
 			return(NO_BLOCK);
-		if (!ext4_validate_data_range(rip, block, 1))
+		if (!ext4_indirect_add_node(rip, block, visited,
+		    &visited_count))
 			goto corrupt;
 		bp = get_block(rip->i_dev, block, NORMAL);
 		if (bp == NULL)
@@ -451,7 +489,8 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 		put_block(bp);
 		if (block == NO_BLOCK)
 			return(NO_BLOCK);
-		if (!ext4_validate_data_range(rip, block, 1))
+		if (!ext4_indirect_add_node(rip, block, visited,
+		    &visited_count))
 			goto corrupt;
 		excess %= addresses2;
 	} else {
@@ -470,7 +509,8 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 	put_block(bp);
 	if (block == NO_BLOCK)
 		return(NO_BLOCK);
-	if (!ext4_validate_data_range(rip, block, 1))
+	if (!ext4_indirect_add_node(rip, block, visited,
+	    &visited_count))
 		goto corrupt;
 
 	bp = get_block(rip->i_dev, block, NORMAL);
@@ -480,7 +520,8 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 	data_block = rd_indir(bp, index);
 	put_block(bp);
 	if (data_block == NO_BLOCK ||
-	    ext4_validate_data_range(rip, data_block, 1))
+	    ext4_indirect_data_valid(rip, data_block, visited,
+	    visited_count))
 		return(data_block);
 
 corrupt:
