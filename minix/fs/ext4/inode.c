@@ -664,6 +664,107 @@ ext4_apply_inode_times(d_inode *dip, struct ext4_encoded_times *encoded)
 	}
 }
 
+
+/*
+ * Decode the read-only subset of ext4 inline data implemented here.
+ * The first 60 bytes live in i_block; any remainder is the value of the
+ * inode-body xattr "system.data". e_value_offs is relative to the first
+ * xattr entry (immediately after the four-byte ibody header).
+ */
+static int
+ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
+	size_t inode_size)
+{
+	size_t header_offset, entries_offset, pos, entries_end, area_size;
+	size_t entry_size, value_offset;
+	u32_t value_inum = 0, value_size = 0;
+	u16_t value_offs = 0;
+	int found = FALSE, terminated = FALSE;
+	unsigned int name_len, name_index;
+
+	rip->i_inline_size = 0;
+	memset(rip->i_inline_data, 0, sizeof(rip->i_inline_data));
+	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
+		return(OK);
+
+	if (!HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) ||
+	    rip->i_sp->s_creator_os != EXT4_OS_LINUX)
+		return(EIO);
+
+	/* Inline directories have two separate dirent areas and a special
+	 * parent-inode prefix; they are deliberately not treated as file bytes.
+	 */
+	if ((rip->i_mode & I_TYPE) == I_DIRECTORY)
+		return(EOPNOTSUPP);
+	if ((rip->i_mode & I_TYPE) != I_REGULAR &&
+	    (rip->i_mode & I_TYPE) != I_SYMBOLIC_LINK)
+		return(EOPNOTSUPP);
+	if (rip->i_flags & EXT4_EA_INODE_FL)
+		return(EIO);
+
+	if (inode_size < 128 || rip->i_ext4_extra_isize == 0 ||
+	    rip->i_ext4_extra_isize > inode_size - 128)
+		return(EIO);
+	header_offset = 128 + rip->i_ext4_extra_isize;
+	if (header_offset > inode_size - 8 ||
+	    ext4_inode_read32(raw, header_offset) != EXT4_XATTR_MAGIC)
+		return(EIO);
+
+	entries_offset = header_offset + 4;
+	pos = entries_offset;
+	entries_end = 0;
+	while (pos <= inode_size - 4) {
+		name_len = raw[pos];
+		name_index = raw[pos + 1];
+		if (name_len == 0 && name_index == 0) {
+			terminated = TRUE;
+			entries_end = pos + 4;
+			break;
+		}
+		if (inode_size - pos < EXT4_XATTR_ENTRY_SIZE)
+			return(EIO);
+		entry_size = (EXT4_XATTR_ENTRY_SIZE + name_len + 3U) & ~3U;
+		if (entry_size > inode_size - pos)
+			return(EIO);
+
+		if (name_index == EXT4_XATTR_INDEX_SYSTEM && name_len == 4 &&
+		    memcmp(raw + pos + EXT4_XATTR_ENTRY_SIZE, "data", 4) == 0) {
+			if (found)
+				return(EIO);
+			found = TRUE;
+			value_offs = ext4_inode_read16(raw, pos + 2);
+			value_inum = ext4_inode_read32(raw, pos + 4);
+			value_size = ext4_inode_read32(raw, pos + 8);
+		}
+		pos += entry_size;
+	}
+	if (!terminated || !found)
+		return(EIO);
+	if (value_inum != 0)
+		return(EOPNOTSUPP);
+	if (value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
+		return(EOPNOTSUPP);
+
+	area_size = inode_size - entries_offset;
+	value_offset = value_offs;
+	if (value_size != 0 &&
+	    (value_offset < entries_end - entries_offset ||
+	    value_offset > area_size || value_size > area_size - value_offset))
+		return(EIO);
+	if (rip->i_size < 0 ||
+	    (u64_t)rip->i_size > EXT4_INLINE_DATA_MIN + value_size)
+		return(EIO);
+
+	/* i_block is byte-oriented inline content, not extent pointers. */
+	memcpy(rip->i_inline_data, raw + 40, EXT4_INLINE_DATA_MIN);
+	if (value_size != 0)
+		memcpy(rip->i_inline_data + EXT4_INLINE_DATA_MIN,
+		    raw + entries_offset + value_offset, value_size);
+	rip->i_inline_size = EXT4_INLINE_DATA_MIN + value_size;
+	return(OK);
+}
+
+
 int rw_inode(
   register struct inode *rip,         /* pointer to inode to be read/written */
   int rw_flag                         /* READING or WRITING */
@@ -759,6 +860,12 @@ int rw_inode(
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
   if (rw_flag == READING && sp->s_is_ext4) {
 	r = ext4_decode_inode_times(rip, (const unsigned char *)dip,
+	    EXT2_INODE_SIZE(sp));
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
+	r = ext4_decode_inline_data(rip, (const unsigned char *)dip,
 	    EXT2_INODE_SIZE(sp));
 	if (r != OK) {
 		put_block(bp);
