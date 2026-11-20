@@ -469,18 +469,6 @@ int rw_inode(
 	}
   }
 
-  /*
-   * The upper UID/GID fields in osd2 are Linux-specific. Do not silently
-   * truncate a wider ID when writing a filesystem created by another OS,
-   * whose osd2 layout must be preserved verbatim.
-   */
-  if (rw_flag == WRITING && sp->s_is_ext4 &&
-      sp->s_creator_os != EXT4_OS_LINUX &&
-      (rip->i_uid > 0xffffU || rip->i_gid > 0xffffU)) {
-	put_block(bp);
-	return(EOVERFLOW);
-  }
-
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
   if (rw_flag == WRITING && sp->s_rd_only == FALSE)
 	lmfs_markdirty(bp);
