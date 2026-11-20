@@ -136,10 +136,11 @@ read-write mode.
   validates data and pointer blocks against filesystem metadata and the
   external xattr block, rejects duplicate physical ownership and mappings
   beyond EOF, and requires exact `i_blocks` accounting (external xattr blocks
-  are counted separately). The preflight and the logical truncate range are each bounded to
-  1,048,576 blocks (sparse files with larger logical sizes remain unsupported); Fast symlinks and special inodes
-  without data mappings retain their inline/device payloads while a separately
-  validated xattr block can still be released. Multi-entry depth-two roots, deeper trees, and
+  are counted separately). The preflight and logical truncate range are each
+  bounded to 1,048,576 blocks; sparse files with larger logical sizes remain
+  unsupported. Fast symlinks and special inodes without data mappings retain
+  their inline/device payloads while a separately validated xattr block can
+  still be released. Multi-entry depth-two roots, deeper trees, and
   mappings beyond EOF remain unsupported for final unlink.
 - Read-only mounts accept `COMPAT_ORPHAN_FILE` when
   `RO_COMPAT_ORPHAN_PRESENT` is clear. A clean unmount clears this flag to
