@@ -9,6 +9,7 @@
 
 #include "fs.h"
 #include <string.h>
+#include <stdlib.h>
 #include "buf.h"
 #include "inode.h"
 #include "super.h"
@@ -372,50 +373,203 @@ extent_promote_root(struct inode *rip, u32_t logical, block64_t goal)
 }
 
 /*
- * Collapse a depth-one tree containing a single external leaf when its last
- * one-block extent is removed.  Multi-leaf and deeper trees need parent
- * rebalancing and are deliberately left untouched.
+ * Update one index key in the inode-resident depth-one root.
  */
-static int
-extent_collapse_single_leaf(struct inode *rip, block64_t data_block)
+static void
+extent_update_root_key(struct inode *rip, u16_t root_index, u32_t key)
 {
 	unsigned char *root;
+
+	root = (unsigned char *)rip->i_block;
+	extent_put32(root + 12 + (size_t)root_index * 12, key);
+	rip->i_dirt = IN_DIRTY;
+}
+
+/*
+ * Remove an empty leaf from a depth-one tree.  Since all children are leaves,
+ * the inode-resident root can remove the index entry without recursing into
+ * another index node.  Removing the last child collapses the tree to an empty
+ * inline root.
+ */
+static int
+extent_remove_root_leaf(struct inode *rip, u16_t root_index,
+	block64_t data_block)
+{
+	unsigned char *root, *index;
 	block64_t leaf_block;
-	u16_t root_max;
+	u16_t root_entries, root_max;
 	u64_t sectors;
 	u32_t generation;
 
 	root = (unsigned char *)rip->i_block;
 	root_max = (u16_t)((sizeof(rip->i_block) - 12) / 12);
+	root_entries = extent_get16(root + 2);
 	if (extent_get16(root) != EXT4_EXTENT_MAGIC ||
 	    extent_get16(root + 6) != 1 ||
-	    extent_get16(root + 2) != 1 ||
-	    extent_get16(root + 4) != root_max)
+	    extent_get16(root + 4) != root_max ||
+	    root_entries == 0 || root_entries > root_max ||
+	    root_index >= root_entries)
 		return(EOPNOTSUPP);
 
-	leaf_block = ((u64_t)extent_get16(root + 20) << 32) |
-	    extent_get32(root + 16);
-	if (leaf_block == 0 || leaf_block >= rip->i_sp->s_blocks_count ||
-	    rip->i_sp->s_sectors_in_block == 0)
+	index = root + 12 + (size_t)root_index * 12;
+	leaf_block = ((u64_t)extent_get16(index + 8) << 32) |
+	    extent_get32(index + 4);
+	if (leaf_block == 0 || leaf_block >= rip->i_sp->s_blocks_count)
 		return(EIO);
 
 	sectors = rip->i_sp->s_sectors_in_block;
-	if (sectors > ~(u64_t)0 / 2 ||
+	if (sectors == 0 || sectors > ~(u64_t)0 / 2 ||
 	    rip->i_blocks < sectors * 2)
 		return(EIO);
 
 	generation = extent_get32(root + 8);
+	memmove(index, index + 12,
+	    (size_t)(root_entries - root_index - 1) * 12);
+	root_entries--;
 	free_block(rip->i_sp, data_block);
 	free_block(rip->i_sp, leaf_block);
 	rip->i_blocks -= sectors * 2;
 
-	memset(root, 0, sizeof(rip->i_block));
-	extent_put16(root, EXT4_EXTENT_MAGIC);
-	extent_put16(root + 2, 0);
-	extent_put16(root + 4, root_max);
-	extent_put16(root + 6, 0);
-	extent_put32(root + 8, generation);
+	if (root_entries == 0) {
+		memset(root, 0, sizeof(rip->i_block));
+		extent_put16(root, EXT4_EXTENT_MAGIC);
+		extent_put16(root + 2, 0);
+		extent_put16(root + 4, root_max);
+		extent_put16(root + 6, 0);
+		extent_put32(root + 8, generation);
+	} else {
+		extent_put16(root + 2, root_entries);
+		memset(root + 12 + (size_t)root_entries * 12, 0, 12);
+	}
 	rip->i_dirt = IN_DIRTY;
+	return(OK);
+}
+
+/*
+ * Split a full external leaf directly below the inode's depth-one root.
+ * The root has a fixed four-entry index area; this operation consumes one
+ * slot there and one external block for the new sibling leaf.  Deeper trees
+ * still require general index-node splitting and are not handled here.
+ */
+static int
+extent_split_root_leaf(struct inode *rip, unsigned char *leaf,
+	struct buf *leaf_bp, u16_t entries, u16_t max_entries,
+	u16_t root_index, unsigned int insert, u32_t logical,
+	u64_t physical, int update_root_key)
+{
+	unsigned char *root, *index, *temp, *node;
+	struct buf *new_bp;
+	block64_t new_block;
+	u16_t root_entries, root_max, total, left_entries, right_entries;
+	u16_t node_max;
+	u32_t new_key, generation, next_key;
+	u64_t sectors;
+	size_t temp_size;
+
+	if (leaf_bp == NULL)
+		return(EINVAL);
+	root = (unsigned char *)rip->i_block;
+	root_max = (u16_t)((sizeof(rip->i_block) - 12) / 12);
+	root_entries = extent_get16(root + 2);
+	if (extent_get16(root) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(root + 6) != 1 ||
+	    extent_get16(root + 4) != root_max ||
+	    root_entries == 0 || root_entries >= root_max ||
+	    root_index >= root_entries)
+		return(EFBIG);
+
+	node_max = (u16_t)((rip->i_sp->s_block_size - 12) / 12);
+	if (entries != max_entries || max_entries != node_max ||
+	    insert > entries || entries == 0)
+		return(EOPNOTSUPP);
+
+	sectors = rip->i_sp->s_sectors_in_block;
+	if (sectors == 0 || sectors > ~(u64_t)0 / 2 ||
+	    !extent_i_blocks_can_add(rip, sectors * 2))
+		return(EFBIG);
+
+	total = entries + 1;
+	left_entries = total / 2;
+	right_entries = total - left_entries;
+	temp_size = (size_t)total * 12;
+	temp = malloc(temp_size);
+	if (temp == NULL)
+		return(ENOMEM);
+
+	memcpy(temp, leaf + 12, (size_t)insert * 12);
+	extent_put(temp + (size_t)insert * 12, logical, physical, 1, FALSE);
+	memcpy(temp + (size_t)(insert + 1) * 12,
+	    leaf + 12 + (size_t)insert * 12,
+	    (size_t)(entries - insert) * 12);
+
+	new_key = extent_get32(temp + (size_t)left_entries * 12);
+	index = root + 12 + (size_t)root_index * 12;
+	if ((!update_root_key && extent_get32(index) !=
+	    extent_get32(temp)) ||
+	    (update_root_key && new_key >= extent_get32(index)) ||
+	    (left_entries == 0 || right_entries == 0)) {
+		free(temp);
+		return(EIO);
+	}
+	if (root_index + 1 < root_entries) {
+		next_key = extent_get32(index + 12);
+		if (new_key >= next_key) {
+			free(temp);
+			return(EIO);
+		}
+	}
+
+	new_block = alloc_block(rip, physical);
+	if (new_block == NO_BLOCK) {
+		free(temp);
+		return(ENOSPC);
+	}
+	if (new_block == 0 || new_block >= rip->i_sp->s_blocks_count ||
+	    new_block > 0xffffffffffffULL) {
+		free_block(rip->i_sp, new_block);
+		free(temp);
+		return(EIO);
+	}
+	new_bp = get_block(rip->i_dev, new_block, NO_READ);
+	if (new_bp == NULL) {
+		free_block(rip->i_sp, new_block);
+		free(temp);
+		return(EIO);
+	}
+
+	generation = extent_get32(leaf + 8);
+	node = (unsigned char *)b_data(new_bp);
+	memset(node, 0, rip->i_sp->s_block_size);
+	memcpy(node + 12, temp + (size_t)left_entries * 12,
+	    (size_t)right_entries * 12);
+	extent_put16(node, EXT4_EXTENT_MAGIC);
+	extent_put16(node + 2, right_entries);
+	extent_put16(node + 4, node_max);
+	extent_put16(node + 6, 0);
+	extent_put32(node + 8, generation);
+	lmfs_markdirty(new_bp);
+	put_block(new_bp);
+
+	memset(leaf + 12 + (size_t)left_entries * 12, 0,
+	    (size_t)(entries - left_entries) * 12);
+	memcpy(leaf + 12, temp, (size_t)left_entries * 12);
+	extent_put16(leaf + 2, left_entries);
+
+	if (update_root_key)
+		extent_put32(index, extent_get32(temp));
+	index = root + 12 + (size_t)(root_index + 1) * 12;
+	memmove(index + 12, index,
+	    (size_t)(root_entries - root_index - 1) * 12);
+	extent_put32(index, new_key);
+	extent_put32(index + 4, (u32_t)new_block);
+	extent_put16(index + 8, (u16_t)(new_block >> 32));
+	extent_put16(index + 10, 0);
+	extent_put16(root + 2, root_entries + 1);
+
+	rip->i_blocks += sectors * 2; /* new data block and new extent node */
+	rip->i_dirt = IN_DIRTY;
+	free(temp);
+	(void)leaf_bp; /* The caller marks the modified original leaf dirty. */
 	return(OK);
 }
 
