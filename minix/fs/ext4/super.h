@@ -129,4 +129,7 @@ struct group_desc
 #define BMAP	1           /* operating on the block bit map */
 #define IMAPD	2           /* operating on the inode bit map, inode is dir */
 
-int ext4_meta_bg_overlaps_descriptor_blocks(struct super_block *sp,\n\tblock64_t first, block64_t end);\n\n#endif /* EXT4_SUPER_H */
+int ext4_meta_bg_overlaps_descriptor_blocks(struct super_block *sp,
+	block64_t first, block64_t end);
+
+#endif /* EXT4_SUPER_H */
