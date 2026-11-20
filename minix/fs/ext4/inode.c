@@ -397,8 +397,9 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 {
 	size_t header_offset, entries_offset, pos, entries_end, area_size;
 	size_t entry_size, value_offset, value_size_offset = 0;
-	size_t value_capacity = 0;
+	size_t value_capacity = 0, value_limit;
 	u32_t value_inum = 0, value_size = 0;
+	u32_t other_value_inum, other_value_size;
 	u16_t extra_isize, value_offs = 0;
 	unsigned int name_len, name_index;
 	int found = FALSE, terminated = FALSE;
@@ -480,10 +481,41 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	value_offset = value_offs;
 	if (value_size != 0 || value_offset != 0) {
 		if (value_offset < entries_end - entries_offset ||
-		    value_offset > area_size ||
-		    value_size > area_size - value_offset)
+		    value_offset > area_size)
 			return(EIO);
-		value_capacity = area_size - value_offset;
+
+		/*
+		 * Values are packed into the area after the xattr entries.  Do not
+		 * treat space occupied by another xattr as spare inline-data
+		 * capacity: stop at the next value that follows system.data.
+		 */
+		value_limit = area_size;
+		pos = entries_offset;
+		while (pos < entries_end - 4) {
+			entry_size = (EXT4_XATTR_ENTRY_SIZE + raw[pos] + 3U) & ~3U;
+			other_value_inum = ext4_inode_read32(raw, pos + 4);
+			other_value_size = ext4_inode_read32(raw, pos + 8);
+			if (pos + 8 != value_size_offset &&
+			    other_value_size != 0 && other_value_inum == 0) {
+				size_t other_offset;
+
+				other_offset = ext4_inode_read16(raw, pos + 2);
+				if (other_offset < entries_end - entries_offset ||
+				    other_offset > area_size ||
+				    other_value_size > area_size - other_offset)
+					return(EIO);
+				if (other_offset < value_offset &&
+				    other_value_size > value_offset - other_offset)
+					return(EIO);
+				if (other_offset >= value_offset &&
+				    other_offset < value_limit)
+					value_limit = other_offset;
+			}
+			pos += entry_size;
+		}
+		if (value_size > value_limit - value_offset)
+			return(EIO);
+		value_capacity = value_limit - value_offset;
 	}
 	if (rip->i_size < 0 ||
 	    (u64_t)rip->i_size > EXT4_INLINE_DATA_MIN + value_size)
