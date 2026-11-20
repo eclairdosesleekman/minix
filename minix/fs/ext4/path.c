@@ -491,7 +491,8 @@ ext4_dx_scan_leaf(struct inode *rip, u32_t logical, const char *name,
 				r = EIO;
 				break;
 			}
-			*numb = ino;
+			if (numb != NULL)
+				*numb = ino;
 			r = OK;
 			break;
 		}
@@ -501,7 +502,8 @@ ext4_dx_scan_leaf(struct inode *rip, u32_t logical, const char *name,
 }
 
 static int
-ext4_dx_lookup(struct inode *rip, const char *name, int name_len, ino_t *numb)
+ext4_dx_lookup(struct inode *rip, const char *name, int name_len, ino_t *numb,
+	u32_t *leaf_out)
 {
 	struct ext4_dx_frame frames[EXT4_DX_MAX_LEVELS + 1];
 	const unsigned char *root_data;
@@ -564,10 +566,16 @@ ext4_dx_lookup(struct inode *rip, const char *name, int name_len, ino_t *numb)
 		}
 	}
 
+	/* Keep the hash-selected leaf for insertion even when the name is absent. */
+	if (leaf_out != NULL)
+		*leaf_out = leaf;
 	for (;;) {
 		r = ext4_dx_scan_leaf(rip, leaf, name, name_len, numb);
-		if (r != ENOENT)
+		if (r != ENOENT) {
+			if (r == OK && leaf_out != NULL)
+				*leaf_out = leaf;
 			break;
+		}
 
 		/* Advance through the index stack to the next collision leaf. */
 		for (p = depth + 1; p > 0; p--) {
@@ -649,6 +657,9 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   int extended = 0;
   int required_space = 0;
   int string_len = 0;
+  int indexed_leaf = FALSE;
+  u32_t dx_leaf = 0;
+  off_t pos_limit;
   unsigned int block_size, block_off, rec_len, entry_rec_len;
 
   /* If 'ldir_ptr' is not a pointer to a dir inode, error. */
@@ -657,17 +668,12 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   }
 
   /*
-   * dir_index is a filesystem-wide compatible feature, but only directories
-   * carrying EXT2_INDEX_FL actually contain htree metadata.  LOOK_UP follows
-   * the index for supported hash versions (or uses the linear compatibility
-   * scan for SipHash); ENTER and DELETE remain disabled until index
-   * maintenance and rebalancing have been implemented.
+   * HTree indexes are immutable in this implementation: updates are limited
+   * to existing leaves and never split, merge, or append directory blocks.
+   * The selected leaf is found through the same validated hash path as lookup.
    */
-  if ((flag == ENTER || flag == DELETE) &&
-      (ldir_ptr->i_flags & EXT2_INDEX_FL))
-	return(EOPNOTSUPP);
-
   block_size = ldir_ptr->i_sp->s_block_size;
+  pos_limit = ldir_ptr->i_size;
   new_slots = 0;
   e_hit = FALSE;
   match = 0;    	/* set when a string match occurs */
@@ -678,9 +684,36 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 
   if (flag == LOOK_UP && (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
       strcmp(string, ".") != 0 && strcmp(string, "..") != 0) {
-	r = ext4_dx_lookup(ldir_ptr, string, string_len, numb);
+	r = ext4_dx_lookup(ldir_ptr, string, string_len, numb, NULL);
 	if (r != EOPNOTSUPP)
 		return(r);
+  }
+
+  if ((ldir_ptr->i_flags & EXT2_INDEX_FL) && flag == ENTER) {
+	/* Dot entries share the HTree root block and are not ordinary leaves. */
+	if (strcmp(string, ".") == 0 || strcmp(string, "..") == 0)
+		return(EOPNOTSUPP);
+	r = ext4_dx_lookup(ldir_ptr, string, string_len, NULL, &dx_leaf);
+	if (r == OK)
+		return(EEXIST);
+	if (r != ENOENT)
+		return(r);
+	pos = (off_t)dx_leaf * block_size;
+	pos_limit = pos + block_size;
+	indexed_leaf = TRUE;
+  } else if ((ldir_ptr->i_flags & EXT2_INDEX_FL) && flag == DELETE &&
+      strcmp(string, ".") != 0 && strcmp(string, "..") != 0) {
+	/* Deletion must locate the exact collision leaf containing the name. */
+	r = ext4_dx_lookup(ldir_ptr, string, string_len, NULL, &dx_leaf);
+	if (r == EOPNOTSUPP) {
+		/* SipHash has no key path here; a validated linear scan is safe. */
+	} else if (r != OK) {
+		return(r);
+	} else {
+		pos = (off_t)dx_leaf * block_size;
+		pos_limit = pos + block_size;
+		indexed_leaf = TRUE;
+	}
   }
 
   if (flag == ENTER) {
@@ -688,12 +721,12 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	required_space += (required_space & 0x03) == 0 ? 0 :
 			     (DIR_ENTRY_ALIGN - (required_space & 0x03) );
 
-	if (ldir_ptr->i_last_dpos < ldir_ptr->i_size &&
+	if (!indexed_leaf && ldir_ptr->i_last_dpos < ldir_ptr->i_size &&
 	    ldir_ptr->i_last_dentry_size <= required_space)
 		pos = ldir_ptr->i_last_dpos;
   }
 
-  for (; pos < ldir_ptr->i_size; pos += block_size) {
+  for (; pos < pos_limit; pos += block_size) {
 	/* Since directories don't have holes, 'b' cannot be NO_BLOCK. */
 	if(!(bp = get_block_map(ldir_ptr, rounddown(pos, block_size))))
 		return(err_code != OK ? err_code : EIO);
@@ -841,6 +874,10 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   if (flag != ENTER) {
 	return(flag == IS_EMPTY ? OK : ENOENT);
   }
+
+  /* A full indexed leaf cannot be extended without updating its HTree. */
+  if (indexed_leaf)
+	return(EOPNOTSUPP);
 
   /* When ENTER next time, start searching for free slot from
    * i_last_dpos. It gives solid performance improvement.
