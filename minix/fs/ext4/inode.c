@@ -396,14 +396,20 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	size_t inode_size)
 {
 	size_t header_offset, entries_offset, pos, entries_end, area_size;
-	size_t entry_size, value_offset;
+	size_t entry_size, value_offset, value_size_offset = 0;
+	size_t value_capacity = 0, value_limit;
 	u32_t value_inum = 0, value_size = 0;
+	u32_t other_value_inum, other_value_size;
 	u16_t extra_isize, value_offs = 0;
 	unsigned int name_len, name_index;
 	int found = FALSE, terminated = FALSE;
 	mode_t type;
 
 	rip->i_inline_size = 0;
+	rip->i_inline_value_offset = 0;
+	rip->i_inline_value_size_offset = 0;
+	rip->i_inline_value_size = 0;
+	rip->i_inline_value_capacity = 0;
 	memset(rip->i_inline_data, 0, sizeof(rip->i_inline_data));
 	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
 		return(OK);
@@ -461,6 +467,7 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 			found = TRUE;
 			value_offs = ext4_inode_read16(raw, pos + 2);
 			value_inum = ext4_inode_read32(raw, pos + 4);
+			value_size_offset = pos + 8;
 			value_size = ext4_inode_read32(raw, pos + 8);
 		}
 		pos += entry_size;
@@ -474,20 +481,113 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 
 	area_size = inode_size - entries_offset;
 	value_offset = value_offs;
-	if (value_size != 0 &&
-	    (value_offset < entries_end - entries_offset ||
-	    value_offset > area_size || value_size > area_size - value_offset))
-		return(EIO);
+	if (value_size != 0 || value_offset != 0) {
+		if (value_offset < entries_end - entries_offset ||
+		    value_offset > area_size)
+			return(EIO);
+
+		/*
+		 * Values are packed into the area after the xattr entries.  Do not
+		 * treat space occupied by another xattr as spare inline-data
+		 * capacity: stop at the next value that follows system.data.
+		 */
+		value_limit = area_size;
+		pos = entries_offset;
+		while (pos < entries_end - 4) {
+			entry_size = (EXT4_XATTR_ENTRY_SIZE + raw[pos] + 3U) & ~3U;
+			other_value_inum = ext4_inode_read32(raw, pos + 4);
+			other_value_size = ext4_inode_read32(raw, pos + 8);
+			if (pos + 8 != value_size_offset &&
+			    other_value_size != 0 && other_value_inum == 0) {
+				size_t other_offset;
+
+				other_offset = ext4_inode_read16(raw, pos + 2);
+				if (other_offset < entries_end - entries_offset ||
+				    other_offset > area_size ||
+				    other_value_size > area_size - other_offset)
+					return(EIO);
+				if (other_offset < value_offset &&
+				    other_value_size > value_offset - other_offset)
+					return(EIO);
+				if (other_offset >= value_offset &&
+				    other_offset < value_limit)
+					value_limit = other_offset;
+			}
+			pos += entry_size;
+		}
+		if (value_size > value_limit - value_offset)
+			return(EIO);
+		value_capacity = value_limit - value_offset;
+	}
 	if (rip->i_size < 0 ||
 	    (u64_t)rip->i_size > EXT4_INLINE_DATA_MIN + value_size)
 		return(EIO);
+	if (value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
+		return(EOPNOTSUPP);
+	if (value_capacity > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
+		value_capacity = EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN;
 
 	/* i_block is byte-oriented inline content, not an extent root. */
 	memcpy(rip->i_inline_data, raw + 40, EXT4_INLINE_DATA_MIN);
 	if (value_size != 0)
 		memcpy(rip->i_inline_data + EXT4_INLINE_DATA_MIN,
 		    raw + entries_offset + value_offset, value_size);
-	rip->i_inline_size = EXT4_INLINE_DATA_MIN + value_size;
+	rip->i_inline_value_offset = value_capacity != 0 ?
+	    (u32_t)(entries_offset + value_offset) : 0;
+	rip->i_inline_value_size_offset = (u32_t)value_size_offset;
+	rip->i_inline_value_size = value_size;
+	rip->i_inline_value_capacity = (u32_t)value_capacity;
+	rip->i_inline_size = EXT4_INLINE_DATA_MIN + (u16_t)value_capacity;
+	return(OK);
+}
+
+static void
+ext4_inode_write32(unsigned char *raw, size_t offset, u32_t value)
+{
+	value = (u32_t)conv4(le_CPU, value);
+	memcpy(raw + offset, &value, sizeof(value));
+}
+
+/*
+ * Store inline payload bytes without relocating the existing xattr value.
+ * The value_size field follows i_size, while the value offset and the amount
+ * of reserved inode-body space remain unchanged.  This permits growth after
+ * truncation, but never beyond the space already reserved in the inode.
+ */
+static int
+ext4_encode_inline_data(struct inode *rip, unsigned char *raw,
+	size_t inode_size)
+{
+	u32_t value_size;
+
+	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
+		return(OK);
+
+	if (rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_MAX ||
+	    rip->i_inline_value_capacity !=
+	    rip->i_inline_size - EXT4_INLINE_DATA_MIN ||
+	    rip->i_inline_value_size_offset > inode_size - sizeof(u32_t) ||
+	    (rip->i_inline_value_capacity != 0 &&
+	    (rip->i_inline_value_offset > inode_size ||
+	    rip->i_inline_value_capacity >
+	    inode_size - rip->i_inline_value_offset)) ||
+	    rip->i_size < 0 ||
+	    (u64_t)rip->i_size > rip->i_inline_size)
+		return(EIO);
+
+	value_size = rip->i_size > EXT4_INLINE_DATA_MIN ?
+	    (u32_t)(rip->i_size - EXT4_INLINE_DATA_MIN) : 0;
+	if (value_size > rip->i_inline_value_capacity)
+		return(EFBIG);
+
+	memcpy(raw + 40, rip->i_inline_data, EXT4_INLINE_DATA_MIN);
+	ext4_inode_write32(raw, rip->i_inline_value_size_offset, value_size);
+	if (value_size != 0)
+		memcpy(raw + rip->i_inline_value_offset,
+		    rip->i_inline_data + EXT4_INLINE_DATA_MIN, value_size);
+	rip->i_inline_value_size = value_size;
+
 	return(OK);
 }
 
@@ -575,6 +675,15 @@ int rw_inode(
   }
 
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
+  if (rw_flag == WRITING && sp->s_is_ext4 &&
+      (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	r = ext4_encode_inline_data(rip, (unsigned char *)dip,
+	    EXT2_INODE_SIZE(sp));
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
+  }
   if (rw_flag == READING && sp->s_is_ext4) {
 	r = ext4_decode_inline_data(rip, (const unsigned char *)dip,
 	    EXT2_INODE_SIZE(sp));
