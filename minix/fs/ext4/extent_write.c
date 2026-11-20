@@ -1704,8 +1704,18 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 			extent_put(entry, previous.logical, previous.physical,
 			    new_length, FALSE);
 			extent_put16(node + 2, leaf_entries);
-			lmfs_markdirty(bp);
-			put_block(bp);
+			r = extent_depth1_compact(rip, root, &root_entries,
+			    root_max, &leaf_index, &bp, &node, &leaf_entries,
+			    leaf_max, &index_entry, &leaf_block);
+			if (r != OK) {
+				if (bp != NULL)
+					put_block(bp);
+				return(r);
+			}
+			if (bp != NULL) {
+				lmfs_markdirty(bp);
+				put_block(bp);
+			}
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
 			rip->i_dirt = IN_DIRTY;
 			return(OK);
@@ -1724,8 +1734,18 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 			    next.length + 1, FALSE);
 			if (insert == 0)
 				extent_put32(index_entry, logical);
-			lmfs_markdirty(bp);
-			put_block(bp);
+			r = extent_depth1_compact(rip, root, &root_entries,
+			    root_max, &leaf_index, &bp, &node, &leaf_entries,
+			    leaf_max, &index_entry, &leaf_block);
+			if (r != OK) {
+				if (bp != NULL)
+					put_block(bp);
+				return(r);
+			}
+			if (bp != NULL) {
+				lmfs_markdirty(bp);
+				put_block(bp);
+			}
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
 			rip->i_dirt = IN_DIRTY;
 			return(OK);
