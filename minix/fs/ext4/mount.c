@@ -90,10 +90,11 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: read-write mounts require ^has_journal\\n");
 		goto bad_mount;
 	}
-	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_DIR_INDEX)) {
-		printf("ext4: read-write mounts require ^dir_index\\n");
-		goto bad_mount;
-	}
+	/*
+	 * COMPAT_DIR_INDEX is filesystem-wide.  Unindexed directories can be
+	 * updated safely; search_dir() rejects ENTER/DELETE on individual
+	 * directories carrying EXT2_INDEX_FL until HTree updates are supported.
+	 */
 
 	/* Metadata checksums are verified on reads but not rewritten by this
 	 * server's metadata mutation paths, so such volumes must stay read-only.
