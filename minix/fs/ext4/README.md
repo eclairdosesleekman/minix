@@ -15,7 +15,10 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
-- Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
+- Read-write support for the `huge_file` feature. The in-core `i_blocks`
+  counter is 64-bit; writes serialize the 48-bit on-disk counter in 512-byte
+  units when possible, then switch to filesystem-block units and set
+  `HUGE_FILE` when the 48-bit sector representation is exceeded.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
   leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
@@ -70,9 +73,9 @@ implementation.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
   encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
   are rejected. The filesystem must be clean, with an empty legacy orphan list.
-- The `huge_file` feature is supported only for read-only mounts. Read-write
-  mounts reject it because the current inode writer does not persist the high
-  16 bits of `i_blocks`.
+- When `huge_file` is absent, inode writes fail with `EFBIG` rather than
+  silently truncating an `i_blocks` value that exceeds 32 bits. With
+  `huge_file`, the 48-bit block counter is the maximum representable size.
 - The `metadata_csum` and `metadata_csum_seed` features are supported only
   for read-only mounts.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
@@ -116,12 +119,26 @@ mke2fs -F -t ext4 -b 65536 \
 e2fsck -fn ext4-64k-test.img
 ```
 
+Also create a `huge_file` image without journaling, indexed directories, or
+metadata checksums, but with the `huge_file` feature enabled:
+
+```sh
+truncate -s 512M ext4-huge-file-test.img
+mke2fs -F -t ext4 -b 4096 \\
+  -O extent,64bit,huge_file,^has_journal,^dir_index,\\
+^metadata_csum,^gdt_csum,^orphan_file ext4-huge-file-test.img
+```
+
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
 and long symlinks. Include files with unwritten extents and files whose inline
 extent root reaches its four-entry capacity. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
+For the `huge_file` image, verify ordinary writes keep the on-disk high
+`i_blocks` field and inode flag consistent. Exercise encoder boundary values
+at 2^32 and 2^48 sectors, and the switch to filesystem-block units above
+2^48 sectors; reject values exceeding the 48-bit filesystem-block limit.
 
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
