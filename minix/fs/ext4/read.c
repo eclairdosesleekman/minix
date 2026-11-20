@@ -704,7 +704,12 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 		rec_len = ext4_dir_rec_len(d_desc, block_size);
 
 		if (d_desc->d_ino == 0)
-			continue; /* Entry is not in use */
+			/*
+			 * Unused slots and HTree internal nodes have inode zero.
+			 * Skipping the latter lets the linear read-only directory
+			 * walk handle HTree indexes of any supported depth.
+			 */
+			continue;
 
 		len = d_desc->d_name_len;
 		if (len > NAME_MAX || len > EXT2_NAME_MAX) {
