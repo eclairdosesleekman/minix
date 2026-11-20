@@ -1825,7 +1825,7 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
 				extent_put32(index_entry, logical);
 			r = extent_depth1_compact(rip, root, &root_entries,
 			    root_max, &leaf_index, &bp, &node, &leaf_entries,
-			    leaf_max, &index_entry, &leaf_block);
+			    leaf_max, &index_entry, &leaf_block, !external_root);
 			if (r != OK) {
 				if (bp != NULL)
 					put_block(bp);
@@ -2209,13 +2209,21 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	logical = (u32_t)logical64;
 
 	/*
-	 * The inode root may point to depth-one external leaves.  Support
-	 * in-place edits in those leaves; deeper trees still need rebalancing.
+	 * The inode root may point to depth-one leaves or to a single
+	 * depth-one index node containing depth-zero leaves.
 	 */
 	if (extent_get16((unsigned char *)rip->i_block) ==
-	    EXT4_EXTENT_MAGIC &&
-	    extent_get16((unsigned char *)rip->i_block + 6) == 1)
-		return(extent_depth1_write_map(rip, position, new_wblock, op));
+	    EXT4_EXTENT_MAGIC) {
+		u16_t depth = extent_get16((unsigned char *)rip->i_block + 6);
+		if (depth == 1)
+			return(extent_depth1_write_map(rip, position,
+			    new_wblock, op));
+		if (depth == 2)
+			return(extent_depth2_write_map_single(rip, position,
+			    new_wblock, op));
+		if (depth > 2)
+			return(EOPNOTSUPP);
+	}
 
 	if ((r = extent_root(rip, &root, &entries, &max_entries)) != OK)
 		return(r);
