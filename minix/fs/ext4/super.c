@@ -311,6 +311,10 @@ int read_super(register struct super_block *sp)
 	sp->s_is_ext4 = TRUE;
 	if (sp->s_magic != SUPER_MAGIC || sp->s_log_block_size > 6)
 		return(EINVAL);
+	/* BIGALLOC uses extent records; legacy indirect maps cannot describe it. */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC) &&
+	    !HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EXTENTS))
+		return(EINVAL);
 
 	sp->s_block_size = 1024U << sp->s_log_block_size;
 	if (sp->s_block_size < PAGE_SIZE ||
