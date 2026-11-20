@@ -64,12 +64,14 @@ read-write mode.
   remain read-only for mutation.
 - Final unlink of ext4 extent-backed files is supported for inline roots
   and validated depth-one trees. Before removing the last directory entry,
-  all mappings are checked for valid physical ranges, non-aliasing, and
-  containment within the file's logical size. The preflight also verifies
-  that `i_blocks` exactly matches data and external extent-node blocks.
-  Truncation frees the data blocks and detaches/frees each external leaf.
-  Depth-two and deeper trees, mappings beyond EOF, and inodes with external
-  xattr blocks are rejected before the name is removed.
+  mappings are checked for valid physical ranges, non-aliasing, and
+  containment within the file's logical size. The preflight verifies that
+  `i_blocks` exactly matches data and external extent-node blocks and that an
+  external xattr block has a valid header and reference count without aliasing
+  file data or extent nodes. Truncation frees data blocks and external leaves;
+  final inode reclamation decrements a shared xattr block reference or frees
+  the block when its last reference is released. Depth-two and deeper trees
+  and mappings beyond EOF remain unsupported for final unlink.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
   is not released. The zero-link inode is kept allocated for later fsck/recovery
   rather than allowing its still-referenced blocks to be reallocated.
@@ -104,10 +106,10 @@ implementation.
   allocate/split external nodes or rebalance trees. Such operations return
   `EOPNOTSUPP` or `EFBIG` without modifying the extent tree. Trees deeper
   than one external level remain read-only for mutation.
-- Final unlink is supported for inline and validated depth-one extent trees.
-  External trees deeper than one level, depth-one trees with mappings beyond
-  EOF, and inodes referencing external xattr blocks are rejected before the
-  final directory entry is removed.
+- Final unlink is supported for inline and validated depth-one extent trees,
+  including inodes with a valid external xattr block. External trees deeper
+  than one level and depth-one trees with mappings beyond EOF are rejected
+  before the final directory entry is removed.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
   encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
   are rejected. The filesystem must be clean, with an empty legacy orphan list.
@@ -201,8 +203,13 @@ punching a middle block, and remove all mappings from one leaf. Unlink files
 with one and multiple external leaves and confirm all data and leaf blocks are
 freed; then check free-block/free-inode counts with `e2fsck -fn`. Construct a
 depth-one file with a mapping beyond EOF and confirm final unlink fails before
-removing its name. Inject an extent-node read/write failure during final
-reclamation and confirm the inode bitmap is not released. Confirm updates
+removing its name. Create an external xattr block with refcount one and with
+multiple references; final unlink must respectively free the block or decrement
+the reference count, clear the inode pointer, and preserve unrelated references.
+Corrupt the xattr magic, h_blocks, refcount, and pointer range and confirm final
+unlink fails before removing its name. Also test an xattr pointer that aliases
+a data extent, an extent leaf, or group metadata. Inject an extent-node read/write
+failure during final reclamation and confirm the inode bitmap is not released. Confirm updates
 that would require a full leaf or tree split fail without changing the inode
 or leaf metadata. Depth-two and deeper trees must remain readable but reject
 mutation and final unlink. For the 64 KiB image, exercise
