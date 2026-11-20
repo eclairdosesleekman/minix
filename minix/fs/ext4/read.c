@@ -223,6 +223,8 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 	const unsigned char *node = (const unsigned char *)rip->i_block;
 	size_t node_size = sizeof(rip->i_block);
 	struct buf *bp = NULL;
+	block64_t visited[EXT4_EXTENT_MAX_DEPTH];
+	unsigned int visited_count = 0;
 	int expected_depth = -1;
 
 	for (;;) {
@@ -244,6 +246,7 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 		if (magic != EXT4_EXTENT_MAGIC ||
 		    depth > EXT4_EXTENT_MAX_DEPTH ||
 		    (expected_depth >= 0 && depth != expected_depth) ||
+		    max_entries == 0 ||
 		    max_entries > (node_size - 12) / 12 ||
 		    entries > max_entries)
 			goto corrupt;
@@ -265,11 +268,14 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 		}
 
 		if (depth == 0) {
+			u64_t previous_end = 0;
+
 			for (i = 0; i < entries; i++) {
 				u32_t first, physical_lo;
 				u16_t encoded_len, physical_hi;
-				u64_t physical, length;
+				u64_t physical, length, logical_end;
 				int unwritten;
+				unsigned int j;
 
 				entry = node + 12 + i * 12;
 				memcpy(&first, entry, 4);
@@ -284,22 +290,28 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 				unwritten = encoded_len > 0x8000;
 				length = unwritten ? encoded_len - 0x8000 :
 				    encoded_len;
-				if (length == 0)
+				logical_end = (u64_t)first + length;
+				physical = ((u64_t)physical_hi << 32) | physical_lo;
+				if (length == 0 ||
+				    logical_end > ((u64_t)UINT32_MAX + 1) ||
+				    (i != 0 && first < previous_end) ||
+				    !ext4_validate_data_range(rip, physical, length))
 					goto corrupt;
+				for (j = 0; j < visited_count; j++) {
+					if (visited[j] >= physical &&
+					    visited[j] - physical < length)
+						goto corrupt;
+				}
+				previous_end = logical_end;
 
 				if ((u64_t)logical >= first &&
-				    (u64_t)logical < (u64_t)first + length) {
+				    (u64_t)logical < logical_end) {
 					if (unwritten) {
 						if (bp != NULL)
 							put_block(bp);
 						return(NO_BLOCK);
 					}
-					physical = ((u64_t)physical_hi << 32) |
-					    physical_lo;
 					physical += (u64_t)logical - first;
-					if (physical == 0 ||
-					    physical >= rip->i_sp->s_blocks_count)
-						goto corrupt;
 					if (bp != NULL)
 						put_block(bp);
 					return((block64_t)physical);
@@ -313,6 +325,7 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 		/* Select the last index whose logical start does not exceed target. */
 		{
 			block64_t child = 0;
+			u32_t previous_key = 0;
 			int found = FALSE;
 
 			if (entries == 0) {
@@ -331,6 +344,9 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 				logical_first = (u32_t)conv4(le_CPU, logical_first);
 				child_lo = (u32_t)conv4(le_CPU, child_lo);
 				child_hi = (u16_t)conv2(le_CPU, child_hi);
+				if (i != 0 && logical_first <= previous_key)
+					goto corrupt;
+				previous_key = logical_first;
 				if (i == 0 && logical < logical_first) {
 					if (bp != NULL)
 						put_block(bp);
@@ -341,9 +357,15 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 				child = ((u64_t)child_hi << 32) | child_lo;
 				found = TRUE;
 			}
-			if (!found || child == 0 ||
-			    child >= rip->i_sp->s_blocks_count)
+			if (!found ||
+			    !ext4_validate_data_range(rip, child, 1) ||
+			    visited_count >= EXT4_EXTENT_MAX_DEPTH)
 				goto corrupt;
+			for (i = 0; i < visited_count; i++) {
+				if (visited[i] == child)
+					goto corrupt;
+			}
+			visited[visited_count++] = child;
 			if (bp != NULL) {
 				put_block(bp);
 				bp = NULL;
@@ -360,6 +382,106 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 corrupt:
 	if (bp != NULL)
 		put_block(bp);
+	err_code = EIO;
+	return(NO_BLOCK);
+}
+
+/*
+ * Read an ext4 legacy direct/indirect mapping only after validating every
+ * pointer block and resulting data block. The format has twelve direct
+ * pointers followed by single, double, and triple-indirect roots.
+ */
+static block64_t
+ext4_indirect_map(struct inode *rip, u64_t block_pos)
+{
+	struct buf *bp;
+	block64_t block, data_block;
+	u64_t excess;
+	unsigned int addresses, addresses2;
+	int index;
+
+	addresses = rip->i_sp->s_block_size / BLOCK_ADDRESS_BYTES;
+	if (addresses == 0)
+		goto corrupt;
+	addresses2 = addresses * addresses;
+
+	if (block_pos < EXT2_NDIR_BLOCKS) {
+		data_block = rip->i_block[block_pos];
+		if (data_block == NO_BLOCK ||
+		    ext4_validate_data_range(rip, data_block, 1))
+			return(data_block);
+		goto corrupt;
+	}
+
+	if (block_pos < EXT2_NDIR_BLOCKS + addresses) {
+		block = rip->i_block[EXT2_IND_BLOCK];
+		excess = block_pos - EXT2_NDIR_BLOCKS;
+		if (block == NO_BLOCK)
+			return(NO_BLOCK);
+		if (!ext4_validate_data_range(rip, block, 1))
+			goto corrupt;
+		bp = get_block(rip->i_dev, block, NORMAL);
+		if (bp == NULL)
+			goto corrupt;
+		data_block = rd_indir(bp, (int)excess);
+		put_block(bp);
+		if (data_block == NO_BLOCK ||
+		    ext4_validate_data_range(rip, data_block, 1))
+			return(data_block);
+		goto corrupt;
+	}
+
+	if (block_pos >= EXT2_NDIR_BLOCKS + addresses + addresses2 +
+	    (u64_t)addresses2 * addresses)
+		return(NO_BLOCK);
+
+	excess = block_pos - EXT2_NDIR_BLOCKS - addresses;
+	block = rip->i_block[EXT2_DIND_BLOCK];
+	if (block_pos >= EXT2_NDIR_BLOCKS + addresses + addresses2) {
+		block = rip->i_block[EXT2_TIND_BLOCK];
+		if (block == NO_BLOCK)
+			return(NO_BLOCK);
+		if (!ext4_validate_data_range(rip, block, 1))
+			goto corrupt;
+		bp = get_block(rip->i_dev, block, NORMAL);
+		if (bp == NULL)
+			goto corrupt;
+		index = (int)(excess / addresses2);
+		block = rd_indir(bp, index);
+		put_block(bp);
+		if (block == NO_BLOCK)
+			return(NO_BLOCK);
+		if (!ext4_validate_data_range(rip, block, 1))
+			goto corrupt;
+		excess %= addresses2;
+	} else if (block == NO_BLOCK) {
+		return(NO_BLOCK);
+	}
+
+	if (!ext4_validate_data_range(rip, block, 1))
+		goto corrupt;
+	bp = get_block(rip->i_dev, block, NORMAL);
+	if (bp == NULL)
+		goto corrupt;
+	index = (int)(excess / addresses);
+	block = rd_indir(bp, index);
+	put_block(bp);
+	if (block == NO_BLOCK)
+		return(NO_BLOCK);
+	if (!ext4_validate_data_range(rip, block, 1))
+		goto corrupt;
+
+	bp = get_block(rip->i_dev, block, NORMAL);
+	if (bp == NULL)
+		goto corrupt;
+	index = (int)(excess % addresses);
+	data_block = rd_indir(bp, index);
+	put_block(bp);
+	if (data_block == NO_BLOCK ||
+	    ext4_validate_data_range(rip, data_block, 1))
+		return(data_block);
+
+corrupt:
 	err_code = EIO;
 	return(NO_BLOCK);
 }
@@ -400,6 +522,9 @@ block64_t read_map(register struct inode *rip, off_t position,
 		out_range_s = triple_ind_s + addr_in_block2 * addr_in_block;
 		first_time = FALSE;
 	}
+
+	if (rip->i_sp->s_is_ext4)
+		return(ext4_indirect_map(rip, block_pos));
 
 	if (block_pos < EXT2_NDIR_BLOCKS)
 		return(rip->i_block[block_pos]);
