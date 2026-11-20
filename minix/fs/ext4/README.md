@@ -73,9 +73,11 @@ implementation.
 - **No HTree mutation:** a filesystem-wide `dir_index` feature bit does
   not by itself prevent a writable mount. Lookup still linearly scans indexed
   directories, but `search_dir()` rejects `ENTER` and `DELETE` for an
-  individual directory carrying `EXT2_INDEX_FL`. Unindexed directories on
-  the same volume can be changed normally. HTree index maintenance and
-  conversion of indexed directories to linear form are not implemented.
+  individual directory carrying `EXT2_INDEX_FL`. Rename preflights both
+  parent directories before changing either one, preventing a half-completed
+  cross-directory rename. Unindexed directories on the same volume can be
+  changed normally. HTree index maintenance and conversion of indexed
+  directories to linear form are not implemented.
 - **Limited external extent-tree mutation:** depth-zero inode roots and
   depth-one trees with pre-existing leaf nodes are writable. Depth-one updates
   require enough free slots in the selected leaf; this server does not
