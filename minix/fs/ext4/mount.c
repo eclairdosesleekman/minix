@@ -53,6 +53,19 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		    unsupported);
 		goto bad_mount;
 	}
+	/*
+	 * ORPHAN_PRESENT means the orphan file can contain inodes that must be
+	 * recovered before the filesystem is used. This server has no orphan
+	 * file scanner/recovery path, so reject the volume even read-only.
+	 * With the flag clear, a clean orphan-file filesystem has no entries
+	 * to recover and its orphan file can safely remain unused on read-only
+	 * mounts.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_ORPHAN_PRESENT)) {
+		printf("ext4: orphan file contains pending recovery entries\\n");
+		goto bad_mount;
+	}
+
 	unsupported = sp->s_feature_ro_compat & ~SUPPORTED_RO_COMPAT_FEATURES;
 	if (unsupported != 0) {
 		printf("ext4: unsupported read-only-compatible features 0x%x\\n",
@@ -86,8 +99,8 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 			}
 		}
 	}
-	if (sp->s_feature_compat & COMPAT_ORPHAN_FILE) {
-		printf("ext4: orphan-file feature is not supported\\n");
+	if (HAS_COMPAT_FEATURE(sp, COMPAT_ORPHAN_FILE) && !readonly) {
+		printf("ext4: read-write orphan-file support is not implemented\\n");
 		goto bad_mount;
 	}
 	if (sp->s_last_orphan != 0) {
