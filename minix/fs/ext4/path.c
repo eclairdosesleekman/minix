@@ -668,9 +668,9 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   }
 
   /*
-   * HTree indexes are immutable in this implementation: updates are limited
-   * to existing leaves and never split, merge, or append directory blocks.
-   * The selected leaf is found through the same validated hash path as lookup.
+   * The HTree index arrays are left unchanged: updates are limited to an
+   * existing hash-selected leaf and never split, merge, or append blocks.
+   * The leaf is found through the same validated hash path as lookup.
    */
   block_size = ldir_ptr->i_sp->s_block_size;
   pos_limit = ldir_ptr->i_size;
@@ -781,15 +781,8 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 				dp->d_ino = NO_ENTRY;	/* erase entry */
 				lmfs_markdirty(bp);
 
-				/* If we don't support HTree (directory index),
-				 * which is fully compatible ext2 feature,
-				 * we should reset EXT2_INDEX_FL, when modify
-				 * linked directory structure.
-				 *
-				 * @TODO: actually we could just reset it for
-				 * each directory, but I added if() to not
-				 * forget about it later, when add HTree
-				 * support.
+				/* Do not retain a per-inode index flag if the filesystem
+				 * does not advertise the directory-index feature.
 				 */
 				if (!HAS_COMPAT_FEATURE(ldir_ptr->i_sp,
 							COMPAT_DIR_INDEX))
@@ -854,7 +847,7 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 
 		/* In an indexed ext4 directory, the dx root info follows ".."
 		 * in logical block zero. It is index metadata, not a dirent.
-		 * Leaf blocks are still scanned linearly by this read-only server.
+		 * Unsupported-hash compatibility lookups and deletes scan linearly.
 		 */
 		if (flag == LOOK_UP && pos == 0 &&
 		    (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
