@@ -469,6 +469,18 @@ int rw_inode(
 	}
   }
 
+  /*
+   * The upper UID/GID fields in osd2 are Linux-specific. Do not silently
+   * truncate a wider ID when writing a filesystem created by another OS,
+   * whose osd2 layout must be preserved verbatim.
+   */
+  if (rw_flag == WRITING && sp->s_is_ext4 &&
+      sp->s_creator_os != EXT4_OS_LINUX &&
+      (rip->i_uid > 0xffffU || rip->i_gid > 0xffffU)) {
+	put_block(bp);
+	return(EOVERFLOW);
+  }
+
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
   if (rw_flag == WRITING && sp->s_rd_only == FALSE)
 	lmfs_markdirty(bp);
@@ -579,6 +591,17 @@ static void icopy(
 	dip->i_dir_acl	= conv4(norm,rip->i_dir_acl);
 	dip->i_faddr	= conv4(norm,rip->i_faddr);
 	memcpy(&dip->osd2, &rip->osd2, sizeof(dip->osd2));
+	if (rip->i_sp->s_is_ext4 &&
+	    rip->i_sp->s_creator_os == EXT4_OS_LINUX) {
+		/*
+		 * Linux stores the upper 16 bits of UID/GID in osd2. Keep
+		 * the adjacent high block-count and xattr-block fields intact.
+		 */
+		dip->osd2.linux2.l_i_uid_high = conv2(norm,
+		    (u16_t)(rip->i_uid >> 16));
+		dip->osd2.linux2.l_i_gid_high = conv2(norm,
+		    (u16_t)(rip->i_gid >> 16));
+	}
 	if (rip->i_sp->s_is_ext4 &&
 	    HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_HUGE_FILE)) {
 		u16_t blocks_high;
