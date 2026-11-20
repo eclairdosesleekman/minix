@@ -204,16 +204,16 @@ ext4_reserved_metadata_overlaps(struct super_block *sp,
 		if (group_end > sp->s_blocks_count)
 			group_end = sp->s_blocks_count;
 		if (ext4_group_has_backup_super(sp, (u32_t)group)) {
+			if (meta_bg)
+				group_end = group_start + 1 +
+				    sp->s_first_meta_bg;
+			else
+				group_end = group_start + 1 + sp->s_gdb_count +
+				    sp->s_reserved_gdt_blocks;
+			if (group_end > sp->s_blocks_count)
+				group_end = sp->s_blocks_count;
 			if (first < group_end && group_start < end)
 				return(TRUE);
-			if (!meta_bg) {
-				group_end = group_start + 1 +
-				    sp->s_gdb_count + sp->s_reserved_gdt_blocks;
-				if (group_end > sp->s_blocks_count)
-					group_end = sp->s_blocks_count;
-				if (first < group_end && group_start < end)
-					return(TRUE);
-			}
 		}
 	}
 
@@ -1066,8 +1066,8 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		}
 
 		/*
-		 * The bitmap and inode-table blocks must not alias any primary or
-		 * backup META_BG descriptor block; those blocks are reserved too.
+		 * Group metadata must not alias any primary or backup superblock
+		 * or GDT range, including the META_BG descriptor copies.
 		 */
 		if (ext4_reserved_metadata_overlaps(sp, block_bitmap,
 		    block_bitmap + 1) ||
@@ -1075,7 +1075,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		    inode_bitmap + 1) ||
 		    ext4_reserved_metadata_overlaps(sp, inode_table,
 		    inode_table + table_blocks)) {
-			printf("ext4: group %u metadata overlaps META_BG descriptor blocks\\n",
+			printf("ext4: group %u metadata overlaps reserved super/GDT blocks\\n",
 			    i);
 			free(ranges);
 			return(EIO);
