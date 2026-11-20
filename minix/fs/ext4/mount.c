@@ -78,10 +78,11 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 	/*
-	 * Inline-data files store up to 60 bytes in i_block and the remainder
-	 * in the inode-body system.data xattr. Only bounded regular-file and
-	 * symlink reads are implemented; inline directories and all writes
-	 * remain unsupported, so this incompat feature is read-only.
+	 * Inline-data payloads store up to 60 bytes in i_block and any
+	 * remainder in the inode-body system.data xattr. Bounded regular-file
+	 * and symlink reads, plus inline-directory lookup/getdents, are supported.
+	 * Inline-data writes and page mapping remain unsupported, so this
+	 * incompat feature still requires a read-only mount.
 	 */
 	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_INLINE_DATA)) {
 		printf("ext4: inline_data currently requires a read-only mount\\n");
