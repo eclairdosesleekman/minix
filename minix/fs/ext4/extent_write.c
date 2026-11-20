@@ -436,6 +436,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 
 	if (op & WMAP_FREE) {
 		u64_t block_to_free;
+		int update_root_key = FALSE;
 
 		if (i == entries) {
 			extent_release_leaf(leaf_bp, FALSE);
@@ -458,12 +459,23 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			return(extent_collapse_single_leaf(rip, block_to_free));
 		}
 		/*
-		 * Changing the first entry of a general external leaf changes
-		 * its parent index key; do not leave a stale key.
+		 * A one-leaf depth-one tree has its parent index in the inode,
+		 * so its sole key can be updated when the first extent moves.
+		 * Multi-leaf and deeper trees need general parent traversal.
 		 */
 		if (leaf_bp != NULL && i == 0 && offset == 0) {
-			extent_release_leaf(leaf_bp, FALSE);
-			return(EOPNOTSUPP);
+			unsigned char *extent_root;
+
+			extent_root = (unsigned char *)rip->i_block;
+			if (extent_get16(extent_root) != EXT4_EXTENT_MAGIC ||
+			    extent_get16(extent_root + 6) != 1 ||
+			    extent_get16(extent_root + 2) != 1 ||
+			    extent_get16(extent_root + 4) !=
+			    (sizeof(rip->i_block) - 12) / 12) {
+				extent_release_leaf(leaf_bp, FALSE);
+				return(EOPNOTSUPP);
+			}
+			update_root_key = TRUE;
 		}
 		/* Splitting a middle extent consumes one additional leaf slot. */
 		if (offset != 0 && offset != ex.length - 1 &&
@@ -503,6 +515,11 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		}
 
 		extent_put16(root + 2, entries);
+		if (update_root_key) {
+			/* The root has exactly one child, which is this leaf. */
+			extent_put32((unsigned char *)rip->i_block + 12,
+			    extent_get32(root + 12));
+		}
 		free_block(rip->i_sp, block_to_free);
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
 		extent_release_leaf(leaf_bp, TRUE);
