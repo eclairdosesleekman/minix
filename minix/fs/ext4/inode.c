@@ -328,12 +328,18 @@ void update_times(
 	return;             /* no updates for read-only file systems */
 
   cur_time = clock_time(NULL);
-  if (rip->i_update & ATIME)
+  if (rip->i_update & ATIME) {
 	rip->i_atime = cur_time;
-  if (rip->i_update & CTIME)
+	rip->i_atime_nsec = 0;
+  }
+  if (rip->i_update & CTIME) {
 	rip->i_ctime = cur_time;
-  if (rip->i_update & MTIME)
+	rip->i_ctime_nsec = 0;
+  }
+  if (rip->i_update & MTIME) {
 	rip->i_mtime = cur_time;
+	rip->i_mtime_nsec = 0;
+  }
   rip->i_update = 0;          /* they are all up-to-date now */
 }
 
@@ -386,6 +392,270 @@ ext4_encode_inode_blocks(struct inode *rip, u64_t *disk_blocks)
 	return(OK);
 }
 
+
+/*
+ * Linux ext4 stores extended timestamps after the original 128-byte inode.
+ * Each *_extra word contains the two high seconds bits in bits 0..1 and
+ * nanoseconds in bits 2..31. i_extra_isize bounds each optional field.
+ */
+#define EXT4_INODE_EXTRA_ISIZE_OFF 128
+#define EXT4_INODE_CTIME_EXTRA_OFF 132
+#define EXT4_INODE_MTIME_EXTRA_OFF 136
+#define EXT4_INODE_ATIME_EXTRA_OFF 140
+#define EXT4_INODE_CRTIME_OFF      144
+#define EXT4_INODE_CRTIME_EXTRA_OFF 148
+
+struct ext4_encoded_time {
+	u32_t seconds;
+	u32_t extra;
+	int has_extra;
+};
+
+struct ext4_encoded_times {
+	struct ext4_encoded_time atime, ctime, mtime, crtime;
+	int enabled;
+	int has_crtime;
+};
+
+static u16_t
+ext4_inode_read16(const unsigned char *raw, size_t offset)
+{
+	u16_t value;
+
+	memcpy(&value, raw + offset, sizeof(value));
+	return((u16_t)conv2(le_CPU, value));
+}
+
+static u32_t
+ext4_inode_read32(const unsigned char *raw, size_t offset)
+{
+	u32_t value;
+
+	memcpy(&value, raw + offset, sizeof(value));
+	return((u32_t)conv4(le_CPU, value));
+}
+
+static void
+ext4_inode_store32(unsigned char *raw, size_t offset, u32_t value)
+{
+	value = (u32_t)conv4(le_CPU, value);
+	memcpy(raw + offset, &value, sizeof(value));
+}
+
+static int
+ext4_inode_extra_isize(struct super_block *sp, const unsigned char *raw,
+	size_t inode_size, u16_t *extra_isize)
+{
+	*extra_isize = 0;
+	if (!sp->s_is_ext4 || sp->s_creator_os != EXT4_OS_LINUX ||
+	    inode_size == EXT2_GOOD_OLD_INODE_SIZE)
+		return(OK);
+	if (inode_size < EXT4_INODE_EXTRA_ISIZE_OFF + sizeof(u16_t))
+		return(EIO);
+
+	*extra_isize = ext4_inode_read16(raw, EXT4_INODE_EXTRA_ISIZE_OFF);
+	if (*extra_isize > inode_size - EXT2_GOOD_OLD_INODE_SIZE ||
+	    (*extra_isize & 3) != 0)
+		return(EIO);
+	return(OK);
+}
+
+static int
+ext4_inode_extra_fits(u16_t extra_isize, size_t inode_size, size_t end_offset)
+{
+	return(end_offset <= inode_size &&
+	    end_offset >= EXT2_GOOD_OLD_INODE_SIZE &&
+	    extra_isize >= end_offset - EXT2_GOOD_OLD_INODE_SIZE);
+}
+
+static int
+ext4_decode_one_time(const unsigned char *raw, size_t inode_size,
+	u16_t extra_isize, size_t seconds_offset, size_t extra_offset,
+	time_t *seconds, long *nanoseconds)
+{
+	u32_t extra;
+
+	*seconds = (time_t)(s32_t)ext4_inode_read32(raw, seconds_offset);
+	*nanoseconds = 0;
+	if (extra_offset == 0 ||
+	    !ext4_inode_extra_fits(extra_isize, inode_size, extra_offset + 4))
+		return(OK);
+
+	extra = ext4_inode_read32(raw, extra_offset);
+	*seconds += (time_t)((u64_t)(extra & 3U) << 32);
+	*nanoseconds = (long)(extra >> 2);
+	if (*nanoseconds >= 1000000000L)
+		return(EIO);
+	return(OK);
+}
+
+static int
+ext4_decode_inode_times(struct inode *rip, const unsigned char *raw,
+	size_t inode_size)
+{
+	u16_t extra_isize;
+	int r;
+
+	rip->i_atime_nsec = 0;
+	rip->i_ctime_nsec = 0;
+	rip->i_mtime_nsec = 0;
+	rip->i_crtime = 0;
+	rip->i_crtime_nsec = 0;
+
+	if (!rip->i_sp->s_is_ext4 ||
+	    rip->i_sp->s_creator_os != EXT4_OS_LINUX)
+		return(OK);
+
+	/* EA inodes repurpose the legacy timestamp words for xattr metadata. */
+	if (rip->i_flags & EXT4_EA_INODE_FL) {
+		rip->i_atime = rip->i_ctime = rip->i_mtime = 0;
+		return(OK);
+	}
+
+	r = ext4_inode_extra_isize(rip->i_sp, raw, inode_size,
+	    &extra_isize);
+	if (r != OK)
+		return(r);
+
+	r = ext4_decode_one_time(raw, inode_size, extra_isize, 8,
+	    EXT4_INODE_ATIME_EXTRA_OFF, &rip->i_atime, &rip->i_atime_nsec);
+	if (r != OK)
+		return(r);
+	r = ext4_decode_one_time(raw, inode_size, extra_isize, 12,
+	    EXT4_INODE_CTIME_EXTRA_OFF, &rip->i_ctime, &rip->i_ctime_nsec);
+	if (r != OK)
+		return(r);
+	r = ext4_decode_one_time(raw, inode_size, extra_isize, 16,
+	    EXT4_INODE_MTIME_EXTRA_OFF, &rip->i_mtime, &rip->i_mtime_nsec);
+	if (r != OK)
+		return(r);
+
+	if (ext4_inode_extra_fits(extra_isize, inode_size,
+	    EXT4_INODE_CRTIME_OFF + 4)) {
+		r = ext4_decode_one_time(raw, inode_size, extra_isize,
+		    EXT4_INODE_CRTIME_OFF, EXT4_INODE_CRTIME_EXTRA_OFF,
+		    &rip->i_crtime, &rip->i_crtime_nsec);
+		if (r != OK)
+			return(r);
+	}
+	return(OK);
+}
+
+static int
+ext4_encode_one_time(time_t seconds, long nanoseconds, int has_extra,
+	struct ext4_encoded_time *encoded)
+{
+	time_t low_seconds;
+	u32_t epoch;
+
+	if (nanoseconds < 0 || nanoseconds >= 1000000000L)
+		return(EINVAL);
+
+	if (!has_extra) {
+		if (seconds < (time_t)-2147483648LL ||
+		    seconds > (time_t)2147483647LL || nanoseconds != 0)
+			return(EOVERFLOW);
+		encoded->seconds = (u32_t)(s32_t)seconds;
+		encoded->extra = 0;
+		encoded->has_extra = FALSE;
+		return(OK);
+	}
+
+	/* ext4's signed 34-bit seconds range is -2^31 through 0x37fffffff. */
+	if (seconds < (time_t)-2147483648LL ||
+	    seconds > (time_t)15032385535LL)
+		return(EOVERFLOW);
+	epoch = seconds < 0 ? 0 : (u32_t)(((u64_t)seconds >> 32) & 3U);
+	low_seconds = seconds - (time_t)((u64_t)epoch << 32);
+	if (low_seconds < (time_t)-2147483648LL ||
+	    low_seconds > (time_t)2147483647LL)
+		return(EOVERFLOW);
+
+	encoded->seconds = (u32_t)(s32_t)low_seconds;
+	encoded->extra = (epoch & 3U) | ((u32_t)nanoseconds << 2);
+	encoded->has_extra = TRUE;
+	return(OK);
+}
+
+static int
+ext4_prepare_inode_times(struct inode *rip, const unsigned char *raw,
+	size_t inode_size, struct ext4_encoded_times *encoded)
+{
+	struct super_block *sp = rip->i_sp;
+	u16_t extra_isize = 0;
+	int r;
+
+	memset(encoded, 0, sizeof(*encoded));
+	if (!sp->s_is_ext4 || (rip->i_flags & EXT4_EA_INODE_FL))
+		return(OK);
+
+	r = ext4_inode_extra_isize(sp, raw, inode_size, &extra_isize);
+	if (r != OK)
+		return(r);
+
+	encoded->atime.has_extra = ext4_inode_extra_fits(extra_isize,
+	    inode_size, EXT4_INODE_ATIME_EXTRA_OFF + 4);
+	encoded->ctime.has_extra = ext4_inode_extra_fits(extra_isize,
+	    inode_size, EXT4_INODE_CTIME_EXTRA_OFF + 4);
+	encoded->mtime.has_extra = ext4_inode_extra_fits(extra_isize,
+	    inode_size, EXT4_INODE_MTIME_EXTRA_OFF + 4);
+
+	r = ext4_encode_one_time(rip->i_atime, rip->i_atime_nsec,
+	    encoded->atime.has_extra, &encoded->atime);
+	if (r != OK)
+		return(r);
+	r = ext4_encode_one_time(rip->i_ctime, rip->i_ctime_nsec,
+	    encoded->ctime.has_extra, &encoded->ctime);
+	if (r != OK)
+		return(r);
+	r = ext4_encode_one_time(rip->i_mtime, rip->i_mtime_nsec,
+	    encoded->mtime.has_extra, &encoded->mtime);
+	if (r != OK)
+		return(r);
+
+	if (sp->s_creator_os == EXT4_OS_LINUX &&
+	    ext4_inode_extra_fits(extra_isize, inode_size,
+	    EXT4_INODE_CRTIME_OFF + 4)) {
+		encoded->crtime.has_extra = ext4_inode_extra_fits(extra_isize,
+		    inode_size, EXT4_INODE_CRTIME_EXTRA_OFF + 4);
+		r = ext4_encode_one_time(rip->i_crtime, rip->i_crtime_nsec,
+		    encoded->crtime.has_extra, &encoded->crtime);
+		if (r != OK)
+			return(r);
+		encoded->has_crtime = TRUE;
+	}
+	encoded->enabled = TRUE;
+	return(OK);
+}
+
+static void
+ext4_apply_inode_times(d_inode *dip, struct ext4_encoded_times *encoded)
+{
+	unsigned char *raw = (unsigned char *)dip;
+
+	if (!encoded->enabled)
+		return;
+	ext4_inode_store32(raw, 8, encoded->atime.seconds);
+	ext4_inode_store32(raw, 12, encoded->ctime.seconds);
+	ext4_inode_store32(raw, 16, encoded->mtime.seconds);
+	if (encoded->atime.has_extra)
+		ext4_inode_store32(raw, EXT4_INODE_ATIME_EXTRA_OFF,
+		    encoded->atime.extra);
+	if (encoded->ctime.has_extra)
+		ext4_inode_store32(raw, EXT4_INODE_CTIME_EXTRA_OFF,
+		    encoded->ctime.extra);
+	if (encoded->mtime.has_extra)
+		ext4_inode_store32(raw, EXT4_INODE_MTIME_EXTRA_OFF,
+		    encoded->mtime.extra);
+	if (encoded->has_crtime) {
+		ext4_inode_store32(raw, EXT4_INODE_CRTIME_OFF,
+		    encoded->crtime.seconds);
+		if (encoded->crtime.has_extra)
+			ext4_inode_store32(raw, EXT4_INODE_CRTIME_EXTRA_OFF,
+			    encoded->crtime.extra);
+	}
+}
+
 int rw_inode(
   register struct inode *rip,         /* pointer to inode to be read/written */
   int rw_flag                         /* READING or WRITING */
@@ -401,6 +671,7 @@ int rw_inode(
   block64_t b, xattr_block;
   u16_t xattr_block_hi;
   u64_t disk_blocks = 0;
+  struct ext4_encoded_times encoded_times;
   int r;
   size_t offset;
 
@@ -467,9 +738,26 @@ int rw_inode(
 			return(r);
 		}
 	}
+    r = ext4_prepare_inode_times(rip,
+	    (const unsigned char *)dip, EXT2_INODE_SIZE(sp),
+	    &encoded_times);
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
   }
 
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
+  if (rw_flag == READING && sp->s_is_ext4) {
+	r = ext4_decode_inode_times(rip, (const unsigned char *)dip,
+	    EXT2_INODE_SIZE(sp));
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
+  } else if (rw_flag == WRITING && sp->s_is_ext4) {
+	ext4_apply_inode_times(dip, &encoded_times);
+  }
   if (rw_flag == WRITING && sp->s_rd_only == FALSE)
 	lmfs_markdirty(bp);
 
@@ -514,9 +802,9 @@ static void icopy(
 	} else {
 		rip->i_size = (off_t)(u32_t)conv4(norm, dip->i_size);
 	}
-	rip->i_atime   = conv4(norm,dip->i_atime);
-	rip->i_ctime   = conv4(norm,dip->i_ctime);
-	rip->i_mtime   = conv4(norm,dip->i_mtime);
+	rip->i_atime   = (time_t)(s32_t)(u32_t)conv4(norm,dip->i_atime);
+	rip->i_ctime   = (time_t)(s32_t)(u32_t)conv4(norm,dip->i_ctime);
+	rip->i_mtime   = (time_t)(s32_t)(u32_t)conv4(norm,dip->i_mtime);
 	rip->i_dtime   = conv4(norm,dip->i_dtime);
 	rip->i_gid     = (u32_t)conv2(norm, dip->i_gid);
 	if (rip->i_sp->s_is_ext4 &&
@@ -561,9 +849,9 @@ static void icopy(
 	} else {
 		dip->i_size = conv4(norm, rip->i_size);
 	}
-	dip->i_atime   = conv4(norm,rip->i_atime);
-	dip->i_ctime   = conv4(norm,rip->i_ctime);
-	dip->i_mtime   = conv4(norm,rip->i_mtime);
+	dip->i_atime   = conv4(norm,(u32_t)rip->i_atime);
+	dip->i_ctime   = conv4(norm,(u32_t)rip->i_ctime);
+	dip->i_mtime   = conv4(norm,(u32_t)rip->i_mtime);
 	dip->i_dtime   = conv4(norm,rip->i_dtime);
 	dip->i_gid     = conv2(norm, (u16_t)rip->i_gid);
 	dip->i_links_count  = conv2(norm,rip->i_links_count);
