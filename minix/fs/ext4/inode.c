@@ -671,6 +671,42 @@ ext4_apply_inode_times(d_inode *dip, struct ext4_encoded_times *encoded)
  * inode-body xattr "system.data". e_value_offs is relative to the first
  * xattr entry (immediately after the four-byte ibody header).
  */
+
+/* Validate one of the independent dirent blocks in an inline directory. */
+static int
+ext4_validate_inline_dir_area(struct inode *rip, unsigned char *data,
+	unsigned int area_size)
+{
+	struct ext2_disk_dir_desc *dp;
+	unsigned int offset = 0, rec_len, i;
+	ino_t ino;
+
+	while (offset < area_size) {
+		dp = (struct ext2_disk_dir_desc *)(data + offset);
+		if (!ext4_valid_dirent(dp, offset, area_size))
+			return(EIO);
+		rec_len = ext4_dir_rec_len(dp, area_size);
+		if (dp->d_ino != 0) {
+			ino = (ino_t)conv4(le_CPU, dp->d_ino);
+			if (ino == NO_ENTRY || ino > rip->i_sp->s_inodes_count ||
+			    dp->d_name_len == 0 ||
+			    dp->d_name_len > EXT2_NAME_MAX ||
+			    dp->d_file_type >= EXT2_FT_MAX ||
+			    (dp->d_name_len == 1 && dp->d_name[0] == '.') ||
+			    (dp->d_name_len == 2 && dp->d_name[0] == '.' &&
+			     dp->d_name[1] == '.'))
+				return(EIO);
+			for (i = 0; i < dp->d_name_len; i++) {
+				if (dp->d_name[i] == '\0' || dp->d_name[i] == '/')
+					return(EIO);
+			}
+		}
+		offset += rec_len;
+	}
+	return(offset == area_size ? OK : EIO);
+}
+
+
 static int
 ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	size_t inode_size)
@@ -683,6 +719,7 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	unsigned int name_len, name_index;
 
 	rip->i_inline_size = 0;
+	rip->i_inline_dir_parent = 0;
 	memset(rip->i_inline_data, 0, sizeof(rip->i_inline_data));
 	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
 		return(OK);
@@ -691,14 +728,17 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	    rip->i_sp->s_creator_os != EXT4_OS_LINUX)
 		return(EIO);
 
-	/* Inline directories have two separate dirent areas and a special
-	 * parent-inode prefix; they are deliberately not treated as file bytes.
+	/* Inline directories have two separate dirent areas and a parent
+	 * inode prefix. Only regular files, symlinks, and directories are
+	 * supported by the read-only inline-data path.
 	 */
-	if ((rip->i_mode & I_TYPE) == I_DIRECTORY)
-		return(EOPNOTSUPP);
 	if ((rip->i_mode & I_TYPE) != I_REGULAR &&
-	    (rip->i_mode & I_TYPE) != I_SYMBOLIC_LINK)
+	    (rip->i_mode & I_TYPE) != I_SYMBOLIC_LINK &&
+	    (rip->i_mode & I_TYPE) != I_DIRECTORY)
 		return(EOPNOTSUPP);
+	if ((rip->i_mode & I_TYPE) == I_DIRECTORY &&
+	    (rip->i_flags & EXT2_INDEX_FL))
+		return(EIO);
 	if (rip->i_flags & EXT4_EA_INODE_FL)
 		return(EIO);
 
@@ -758,12 +798,33 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	    (u64_t)rip->i_size > EXT4_INLINE_DATA_MIN + value_size)
 		return(EIO);
 
+	if ((rip->i_mode & I_TYPE) == I_DIRECTORY) {
+		rip->i_inline_dir_parent = ext4_inode_read32(raw, 40);
+		if (rip->i_inline_dir_parent == NO_ENTRY ||
+		    rip->i_inline_dir_parent > rip->i_sp->s_inodes_count ||
+		    (u64_t)rip->i_size != EXT4_INLINE_DATA_MIN + value_size)
+			return(EIO);
+	}
+
 	/* i_block is byte-oriented inline content, not extent pointers. */
 	memcpy(rip->i_inline_data, raw + 40, EXT4_INLINE_DATA_MIN);
 	if (value_size != 0)
 		memcpy(rip->i_inline_data + EXT4_INLINE_DATA_MIN,
 		    raw + entries_offset + value_offset, value_size);
 	rip->i_inline_size = EXT4_INLINE_DATA_MIN + value_size;
+	if ((rip->i_mode & I_TYPE) == I_DIRECTORY) {
+		/* Bytes 0..3 hold the parent inode, followed by a 56-byte
+		 * dirent area. The system.data value is a second independent
+		 * dirent area; records may not cross this boundary.
+		 */
+		if (ext4_validate_inline_dir_area(rip,
+		    rip->i_inline_data + 4, EXT4_INLINE_DATA_MIN - 4) != OK ||
+		    (value_size != 0 &&
+		    ext4_validate_inline_dir_area(rip,
+		    rip->i_inline_data + EXT4_INLINE_DATA_MIN,
+		    value_size) != OK))
+			return(EIO);
+	}
 	return(OK);
 }
 
