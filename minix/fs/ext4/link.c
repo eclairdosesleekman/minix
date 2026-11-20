@@ -594,6 +594,26 @@ static int freesp_inode(register struct inode *rip, off_t start, off_t end)
 
   discard_preallocated_blocks(rip);
 
+  /*
+   * Inline files have no data extents to free, but F_FREESP still has to
+   * zero the requested byte range.  Handle them before the i_blocks == 0
+   * fast path used for holes and fast symlinks.
+   */
+  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	if (end > rip->i_size)
+		end = rip->i_size;
+	if (end <= start)
+		return(EINVAL);
+	if (start < 0 || end < 0 ||
+	    (u64_t)end > rip->i_inline_size ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_MAX)
+		return(EIO);
+	memset(rip->i_inline_data + start, 0, (size_t)(end - start));
+	rip->i_update |= CTIME | MTIME;
+	rip->i_dirt = IN_DIRTY;
+	return(OK);
+  }
+
   if (rip->i_blocks == 0) {
   /* Either hole or symlink. Freeing fast symlink using
    * write_map() causes segfaults since it doesn't use any
@@ -606,17 +626,6 @@ static int freesp_inode(register struct inode *rip, off_t start, off_t end)
 	end = rip->i_size;
   if(end <= start)		/* end is uninclusive, so start<end */
 	return(EINVAL);
-
-  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
-	if (start < 0 || end < 0 ||
-	    (u64_t)end > rip->i_inline_size ||
-	    rip->i_inline_size > EXT4_INLINE_DATA_MAX)
-		return(EIO);
-	memset(rip->i_inline_data + start, 0, (size_t)(end - start));
-	rip->i_update |= CTIME | MTIME;
-	rip->i_dirt = IN_DIRTY;
-	return(OK);
-  }
 
   /* If freeing doesn't cross a block boundary, then we may only zero
    * a range of the block.
