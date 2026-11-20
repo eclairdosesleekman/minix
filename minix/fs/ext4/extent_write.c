@@ -89,6 +89,31 @@ extent_ranges_overlap(block64_t first, u32_t first_len,
 	return(first - second < second_len);
 }
 
+/*
+ * Return TRUE if two validated leaf nodes claim any common physical block.
+ * The caller validates every range against the filesystem before comparing.
+ */
+static int
+extent_leaf_ranges_overlap(const unsigned char *first_entries,
+	u16_t first_count, const unsigned char *second_entries,
+	u16_t second_count)
+{
+	struct ext4_extent first, second;
+	unsigned int i, j;
+
+	for (i = 0; i < first_count; i++) {
+		extent_get(first_entries + i * 12, &first);
+		for (j = 0; j < second_count; j++) {
+			extent_get(second_entries + j * 12, &second);
+			if (extent_ranges_overlap(first.physical, first.length,
+			    second.physical, second.length))
+				return(TRUE);
+		}
+	}
+
+	return(FALSE);
+}
+
 /* Return TRUE if a candidate physical block is already mapped in this node. */
 static int
 extent_block_is_mapped(const unsigned char *entries, u16_t count,
@@ -378,6 +403,80 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		if (previous_end > next_key) {
 			put_block(bp);
 			return(EIO);
+		}
+		put_block(bp);
+	}
+
+	/*
+	 * The selected leaf was checked against every sibling above.  Also
+	 * compare the remaining sibling pairs so a write never proceeds on a
+	 * depth-one tree whose untouched leaves alias one another.
+	 */
+	for (i = 0; i < root_entries; i++) {
+		if (i == selected)
+			continue;
+
+		index_entry = root + 12 + i * 12;
+		leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
+		    extent_get32(index_entry + 4);
+		bp = get_block(rip->i_dev, leaf_block, NORMAL);
+		if (bp == NULL)
+			return(EIO);
+		node = (const unsigned char *)b_data(bp);
+		if (extent_get16(node) != EXT4_EXTENT_MAGIC ||
+		    extent_get16(node + 6) != 0) {
+			put_block(bp);
+			return(EIO);
+		}
+		leaf_entries = extent_get16(node + 2);
+		leaf_max = extent_get16(node + 4);
+		if (leaf_max == 0 ||
+		    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
+		    leaf_entries == 0 || leaf_entries > leaf_max) {
+			put_block(bp);
+			return(EIO);
+		}
+
+		for (j = i + 1; j < root_entries; j++) {
+			struct buf *other_bp;
+			const unsigned char *other_index, *other_node;
+			block64_t other_block;
+			u16_t other_entries, other_max;
+
+			if (j == selected)
+				continue;
+			other_index = root + 12 + j * 12;
+			other_block =
+			    ((u64_t)extent_get16(other_index + 8) << 32) |
+			    extent_get32(other_index + 4);
+			other_bp = get_block(rip->i_dev, other_block, NORMAL);
+			if (other_bp == NULL) {
+				put_block(bp);
+				return(EIO);
+			}
+			other_node = (const unsigned char *)b_data(other_bp);
+			if (extent_get16(other_node) != EXT4_EXTENT_MAGIC ||
+			    extent_get16(other_node + 6) != 0) {
+				put_block(other_bp);
+				put_block(bp);
+				return(EIO);
+			}
+			other_entries = extent_get16(other_node + 2);
+			other_max = extent_get16(other_node + 4);
+			if (other_max == 0 ||
+			    other_max > (rip->i_sp->s_block_size - 12) / 12 ||
+			    other_entries == 0 || other_entries > other_max) {
+				put_block(other_bp);
+				put_block(bp);
+				return(EIO);
+			}
+			if (extent_leaf_ranges_overlap(node + 12, leaf_entries,
+			    other_node + 12, other_entries)) {
+				put_block(other_bp);
+				put_block(bp);
+				return(EIO);
+			}
+			put_block(other_bp);
 		}
 		put_block(bp);
 	}
