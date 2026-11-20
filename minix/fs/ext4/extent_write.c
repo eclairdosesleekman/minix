@@ -9,6 +9,7 @@
 
 #include "fs.h"
 #include <string.h>
+#include "buf.h"
 #include "inode.h"
 #include "super.h"
 
@@ -77,57 +78,157 @@ extent_put(unsigned char *p, u32_t logical, u64_t physical,
 	extent_put32(p + 8, (u32_t)physical);
 }
 
+
 /*
- * Return the inode's inline extent root.  A non-zero depth is a valid ext4
- * tree, but this writer cannot rebalance its external nodes.
+ * Locate the extent leaf which owns logical.  Existing external nodes may be
+ * edited in place, but this routine does not allocate, split, or rebalance
+ * nodes.  A key before the first index entry would require changing the tree
+ * root, so callers get EOPNOTSUPP in that case.
  */
 static int
-extent_root(struct inode *rip, unsigned char **rootp, u16_t *entriesp,
-	u16_t *maxp)
+extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
+	size_t *node_sizep, u16_t *entriesp, u16_t *maxp,
+	struct buf **bpp)
 {
-	unsigned char *root;
+	unsigned char *node;
+	struct buf *bp;
+	size_t node_size;
+	int expected_depth;
 	u16_t magic, entries, max_entries, depth;
-	u64_t previous_end = 0;
+	u64_t previous_end;
 	unsigned int i;
 
-	root = (unsigned char *)rip->i_block;
-	magic = extent_get16(root);
-	entries = extent_get16(root + 2);
-	max_entries = extent_get16(root + 4);
-	depth = extent_get16(root + 6);
+	node = (unsigned char *)rip->i_block;
+	node_size = sizeof(rip->i_block);
+	bp = NULL;
+	expected_depth = -1;
 
-	if (magic != EXT4_EXTENT_MAGIC ||
-	    depth > EXT4_EXTENT_MAX_DEPTH ||
-	    max_entries == 0 ||
-	    max_entries > (sizeof(rip->i_block) - 12) / 12 ||
-	    entries > max_entries)
-		return(EIO);
-	if (depth != 0)
-		return(EOPNOTSUPP);
+	for (;;) {
+		if (node_size < 12)
+			goto corrupt;
+		magic = extent_get16(node);
+		entries = extent_get16(node + 2);
+		max_entries = extent_get16(node + 4);
+		depth = extent_get16(node + 6);
 
-	for (i = 0; i < entries; i++) {
-		struct ext4_extent ex;
+		if (magic != EXT4_EXTENT_MAGIC ||
+		    depth > EXT4_EXTENT_MAX_DEPTH ||
+		    (expected_depth >= 0 && depth != expected_depth) ||
+		    max_entries == 0 ||
+		    max_entries > (node_size - 12) / 12 ||
+		    entries > max_entries)
+			goto corrupt;
 
-		extent_get(root + 12 + i * 12, &ex);
-		if (ex.length == 0 || ex.physical == 0 ||
-		    ex.physical + ex.length > rip->i_sp->s_blocks_count ||
-		    (u64_t)ex.logical + ex.length > ((u64_t)UINT32_MAX + 1) ||
-		    (i != 0 && ex.logical < previous_end))
-			return(EIO);
-		previous_end = (u64_t)ex.logical + ex.length;
+		/* The inode-resident root has only 60 bytes for its entries. */
+		if (bp == NULL &&
+		    max_entries > (sizeof(rip->i_block) - 12) / 12)
+			goto corrupt;
+
+		if (depth == 0) {
+			if (bp != NULL && entries == 0)
+				goto corrupt;
+			previous_end = 0;
+			for (i = 0; i < entries; i++) {
+				struct ext4_extent ex;
+
+				extent_get(node + 12 + i * 12, &ex);
+				if (ex.length == 0 || ex.physical == 0 ||
+				    ex.physical >= rip->i_sp->s_blocks_count ||
+				    ex.length >
+				    rip->i_sp->s_blocks_count - ex.physical ||
+				    (u64_t)ex.logical + ex.length >
+				    ((u64_t)UINT32_MAX + 1) ||
+				    (i != 0 && ex.logical < previous_end))
+					goto corrupt;
+				previous_end = (u64_t)ex.logical + ex.length;
+			}
+			*nodep = node;
+			*node_sizep = node_size;
+			*entriesp = entries;
+			*maxp = max_entries;
+			*bpp = bp;
+			return(OK);
+		}
+
+		if (entries == 0)
+			goto corrupt;
+
+		/*
+		 * Extent index keys must be strictly increasing.  Validate every
+		 * child address before following the selected one.
+		 */
+		{
+			block64_t child, selected_child;
+			u32_t previous_key, key;
+			int found;
+
+			selected_child = 0;
+			previous_key = 0;
+			found = FALSE;
+			for (i = 0; i < entries; i++) {
+				const unsigned char *entry;
+				u32_t child_lo;
+				u16_t child_hi;
+
+				entry = node + 12 + i * 12;
+				key = extent_get32(entry);
+				child_lo = extent_get32(entry + 4);
+				child_hi = extent_get16(entry + 8);
+				child = ((u64_t)child_hi << 32) | child_lo;
+
+				if (child == 0 ||
+				    child >= rip->i_sp->s_blocks_count ||
+				    (i != 0 && key <= previous_key))
+					goto corrupt;
+				previous_key = key;
+
+				if (key > logical)
+					break;
+				selected_child = child;
+				found = TRUE;
+			}
+			if (!found) {
+				/* Inserting before this key needs tree rebalancing. */
+				if (bp != NULL)
+					put_block(bp);
+				return(EOPNOTSUPP);
+			}
+
+			if (bp != NULL) {
+				put_block(bp);
+				bp = NULL;
+			}
+			bp = get_block(rip->i_dev, selected_child, NORMAL);
+			if (bp == NULL)
+				goto corrupt;
+			node = (unsigned char *)b_data(bp);
+			node_size = rip->i_sp->s_block_size;
+			expected_depth = depth - 1;
+		}
 	}
 
-	*rootp = root;
-	*entriesp = entries;
-	*maxp = max_entries;
-	return(OK);
+corrupt:
+	if (bp != NULL)
+		put_block(bp);
+	return(EIO);
+}
+
+static void
+extent_release_leaf(struct buf *bp, int dirty)
+{
+	if (bp != NULL) {
+		if (dirty)
+			lmfs_markdirty(bp);
+		put_block(bp);
+	}
 }
 
 /*
- * Keep the write-side allocation check in sync with ext4_encode_inode_blocks()
- * in inode.c.  i_blocks is maintained in 512-byte sectors in memory.  Without
- * HUGE_FILE the on-disk field is 32 bits; with HUGE_FILE it is 48 bits, and
- * values above that can be represented as filesystem blocks when aligned.
+ * Keep the write-side allocation check in sync with
+ * ext4_encode_inode_blocks() in inode.c.  i_blocks is maintained in 512-byte
+ * sectors in memory.  Without HUGE_FILE the on-disk field is 32 bits; with
+ * HUGE_FILE it is 48 bits, and values above that can be represented as
+ * filesystem blocks when aligned.
  */
 static int
 extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
@@ -157,7 +258,9 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
 {
 	unsigned char *root, *entry;
+	struct buf *leaf_bp;
 	struct ext4_extent ex, previous, next;
+	size_t node_size;
 	u16_t entries, max_entries;
 	u64_t logical64, physical;
 	u32_t logical, offset, new_length;
@@ -174,8 +277,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		return(EFBIG);
 	logical = (u32_t)logical64;
 
-	if ((r = extent_root(rip, &root, &entries, &max_entries)) != OK)
+	if ((r = extent_leaf(rip, logical, &root, &node_size, &entries,
+	    &max_entries, &leaf_bp)) != OK)
 		return(r);
+	(void)node_size;	/* The selected node has already been bounded. */
 
 	/* Find the extent containing the requested logical block. */
 	for (i = 0; i < entries; i++) {
@@ -189,17 +294,31 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if (op & WMAP_FREE) {
 		u64_t block_to_free;
 
-		if (i == entries)
+		if (i == entries) {
+			extent_release_leaf(leaf_bp, FALSE);
 			return(OK);	/* A hole needs no work. */
+		}
 
 		offset = logical - ex.logical;
 		block_to_free = ex.physical + offset;
-		if (rip->i_blocks < rip->i_sp->s_sectors_in_block)
+		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
+			extent_release_leaf(leaf_bp, FALSE);
 			return(EIO);
-		/* Splitting a middle extent consumes one additional root slot. */
+		}
+		/*
+		 * Changing or removing the first extent in an external leaf
+		 * also changes its parent's index key.  Do not leave a stale key.
+		 */
+		if (leaf_bp != NULL && i == 0 && offset == 0) {
+			extent_release_leaf(leaf_bp, FALSE);
+			return(EOPNOTSUPP);
+		}
+		/* Splitting a middle extent consumes one additional leaf slot. */
 		if (offset != 0 && offset != ex.length - 1 &&
-		    entries >= max_entries)
+		    entries >= max_entries) {
+			extent_release_leaf(leaf_bp, FALSE);
 			return(EFBIG);
+		}
 
 		if (ex.length == 1) {
 			memmove(entry, entry + 12,
@@ -226,6 +345,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		extent_put16(root + 2, entries);
 		free_block(rip->i_sp, block_to_free);
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
+		extent_release_leaf(leaf_bp, TRUE);
 		rip->i_dirt = IN_DIRTY;
 		return(OK);
 	}
@@ -238,15 +358,19 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if (i != entries) {
 		u64_t old_physical;
 
-		if (!ex.unwritten)
+		if (!ex.unwritten) {
+			extent_release_leaf(leaf_bp, FALSE);
 			return(EEXIST);
+		}
 		offset = logical - ex.logical;
 		old_physical = ex.physical + offset;
 		if (offset == 0 && ex.length == 1) {
 			extent_put(entry, logical, old_physical, 1, FALSE);
 		} else if (offset == 0) {
-			if (entries >= max_entries)
+			if (entries >= max_entries) {
+				extent_release_leaf(leaf_bp, FALSE);
 				return(EFBIG);
+			}
 			memmove(entry + 12, entry,
 			    (entries - i) * 12);
 			extent_put(entry, logical, old_physical, 1, FALSE);
@@ -254,8 +378,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    ex.length - 1, TRUE);
 			entries++;
 		} else if (offset == ex.length - 1) {
-			if (entries >= max_entries)
+			if (entries >= max_entries) {
+				extent_release_leaf(leaf_bp, FALSE);
 				return(EFBIG);
+			}
 			extent_put(entry, ex.logical, ex.physical, ex.length - 1,
 			    TRUE);
 			memmove(entry + 24, entry + 12,
@@ -263,8 +389,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			extent_put(entry + 12, logical, old_physical, 1, FALSE);
 			entries++;
 		} else {
-			if (entries > max_entries - 2)
+			if (entries > max_entries - 2) {
+				extent_release_leaf(leaf_bp, FALSE);
 				return(EFBIG);
+			}
 			memmove(entry + 36, entry + 12,
 			    (entries - i - 1) * 12);
 			extent_put(entry, ex.logical, ex.physical, offset, TRUE);
@@ -275,28 +403,46 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		}
 		extent_put16(root + 2, entries);
 		free_block(rip->i_sp, new_wblock);
+		extent_release_leaf(leaf_bp, TRUE);
 		rip->i_dirt = IN_DIRTY;
 		return(OK);
 	}
 
 	physical = (u64_t)new_wblock;
 	if (physical == 0 || physical >= rip->i_sp->s_blocks_count ||
-	    physical > (((u64_t)1 << 48) - 1))
+	    physical > (((u64_t)1 << 48) - 1)) {
+		extent_release_leaf(leaf_bp, FALSE);
 		return(EIO);
+	}
 	/*
 	 * The in-core counter is 64 bits.  Do not retain the old ext2
 	 * 32-bit limit here: HUGE_FILE filesystems can store a 48-bit
 	 * sector count (or a 48-bit filesystem-block count).
 	 */
 	if (!extent_i_blocks_can_add(rip,
-	    rip->i_sp->s_sectors_in_block))
+	    rip->i_sp->s_sectors_in_block)) {
+		extent_release_leaf(leaf_bp, FALSE);
 		return(EFBIG);
+	}
 
 	/* Locate the sorted insertion point. */
 	for (insert = 0; insert < entries; insert++) {
 		extent_get(root + 12 + insert * 12, &next);
 		if (next.logical > logical)
 			break;
+	}
+
+	/*
+	 * An external leaf's first logical block is also its parent's index
+	 * key.  Inserting before it would require updating every ancestor.
+	 */
+	if (leaf_bp != NULL && insert == 0 &&
+	    entries != 0) {
+		extent_get(root + 12, &next);
+		if (logical < next.logical) {
+			extent_release_leaf(leaf_bp, FALSE);
+			return(EOPNOTSUPP);
+		}
 	}
 
 	/* Extend the preceding initialized extent when both sides are adjacent. */
@@ -325,6 +471,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    new_length, FALSE);
 			extent_put16(root + 2, entries);
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
+			extent_release_leaf(leaf_bp, TRUE);
 			rip->i_dirt = IN_DIRTY;
 			return(OK);
 		}
@@ -341,13 +488,16 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			extent_put(entry, logical, physical, next.length + 1,
 			    FALSE);
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
+			extent_release_leaf(leaf_bp, TRUE);
 			rip->i_dirt = IN_DIRTY;
 			return(OK);
 		}
 	}
 
-	if (entries >= max_entries)
+	if (entries >= max_entries) {
+		extent_release_leaf(leaf_bp, FALSE);
 		return(EFBIG);
+	}
 
 	/* Insert a one-block initialized extent in logical-block order. */
 	entry = root + 12 + insert * 12;
@@ -355,6 +505,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	extent_put(entry, logical, physical, 1, FALSE);
 	extent_put16(root + 2, entries + 1);
 	rip->i_blocks += rip->i_sp->s_sectors_in_block;
+	extent_release_leaf(leaf_bp, TRUE);
 	rip->i_dirt = IN_DIRTY;
 	return(OK);
 }
