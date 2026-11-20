@@ -404,6 +404,8 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	mode_t type;
 
 	rip->i_inline_size = 0;
+	rip->i_inline_value_offset = 0;
+	rip->i_inline_value_size = 0;
 	memset(rip->i_inline_data, 0, sizeof(rip->i_inline_data));
 	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
 		return(OK);
@@ -487,7 +489,42 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	if (value_size != 0)
 		memcpy(rip->i_inline_data + EXT4_INLINE_DATA_MIN,
 		    raw + entries_offset + value_offset, value_size);
+	rip->i_inline_value_offset = value_size != 0 ?
+	    (u32_t)(entries_offset + value_offset) : 0;
+	rip->i_inline_value_size = value_size;
 	rip->i_inline_size = EXT4_INLINE_DATA_MIN + value_size;
+	return(OK);
+}
+
+/*
+ * Store the already-decoded inline payload back into its inode.  This keeps
+ * the existing xattr layout and value length unchanged: writes may overwrite
+ * or extend the logical file only within the value bytes that are already
+ * allocated on disk.
+ */
+static int
+ext4_encode_inline_data(struct inode *rip, unsigned char *raw,
+	size_t inode_size)
+{
+	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
+		return(OK);
+
+	if (rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_MAX ||
+	    rip->i_inline_value_size !=
+	    rip->i_inline_size - EXT4_INLINE_DATA_MIN ||
+	    (rip->i_inline_value_size != 0 &&
+	    (rip->i_inline_value_offset > inode_size ||
+	    rip->i_inline_value_size >
+	    inode_size - rip->i_inline_value_offset)))
+		return(EIO);
+
+	memcpy(raw + 40, rip->i_inline_data, EXT4_INLINE_DATA_MIN);
+	if (rip->i_inline_value_size != 0)
+		memcpy(raw + rip->i_inline_value_offset,
+		    rip->i_inline_data + EXT4_INLINE_DATA_MIN,
+		    rip->i_inline_value_size);
+
 	return(OK);
 }
 
@@ -575,6 +612,15 @@ int rw_inode(
   }
 
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
+  if (rw_flag == WRITING && sp->s_is_ext4 &&
+      (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	r = ext4_encode_inline_data(rip, (unsigned char *)dip,
+	    EXT2_INODE_SIZE(sp));
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
+  }
   if (rw_flag == READING && sp->s_is_ext4) {
 	r = ext4_decode_inline_data(rip, (const unsigned char *)dip,
 	    EXT2_INODE_SIZE(sp));
