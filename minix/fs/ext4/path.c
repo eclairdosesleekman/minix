@@ -359,7 +359,7 @@ ext4_dx_load_frame(struct inode *rip, u32_t logical, int root,
 	struct ext4_dx_frame *frame)
 {
 	struct super_block *sp = rip->i_sp;
-	const struct ext2_disk_dir_desc *fake;
+	const struct ext2_disk_dir_desc *dot, *dotdot, *fake;
 	const unsigned char *data;
 	u64_t directory_blocks, offset;
 	unsigned int limit_offset, max_limit, i;
@@ -384,8 +384,15 @@ ext4_dx_load_frame(struct inode *rip, u32_t logical, int root,
 	frame->logical = logical;
 	frame->offset = root ? 32 : 8;
 	if (root) {
+		dot = (const struct ext2_disk_dir_desc *)data;
+		dotdot = (const struct ext2_disk_dir_desc *)(data + 12);
 		if (ext4_dx_read32(data + 24) != 0 || data[29] != 8 ||
-		    data[31] != 0) {
+		    data[31] != 0 || dot->d_name_len != 1 ||
+		    dot->d_name[0] != '.' || dotdot->d_name_len != 2 ||
+		    memcmp(dotdot->d_name, "..", 2) != 0 ||
+		    ext4_dx_read32(data) != (u32_t)rip->i_num ||
+		    ext4_dx_read32(data + 12) == 0 ||
+		    ext4_dx_read32(data + 12) > sp->s_inodes_count) {
 			put_block(frame->bp);
 			frame->bp = NULL;
 			return(EIO);
