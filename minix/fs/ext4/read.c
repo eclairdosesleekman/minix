@@ -457,7 +457,7 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 	} else {
 		excess = block_pos - EXT2_NDIR_BLOCKS - addresses;
 		if (block == NO_BLOCK)
-		return(NO_BLOCK);
+			return(NO_BLOCK);
 	}
 
 	if (!ext4_validate_data_range(rip, block, 1))
