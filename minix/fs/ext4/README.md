@@ -20,7 +20,7 @@ read-write mode.
   units when possible, then switch to filesystem-block units and set
   `HUGE_FILE` when the 48-bit sector representation is exceeded.
 - Verification and write-time regeneration of legacy `gdt_csum` group-descriptor checksums using ext4's CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used with `64bit` are covered. Read-write mounts can use `gdt_csum` when `metadata_csum` is absent; descriptor checksums are recomputed after updated group counters are serialized. `metadata_csum` takes precedence when both features are present.
-- Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
+- Verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
   leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
   The 48-bit `i_file_acl` pointer is range-checked and shared xattr blocks use
