@@ -740,6 +740,8 @@ extent_validate_xattr_block(struct inode *rip, block64_t block)
 
 	if (block == 0)
 		return(OK);
+	if (!HAS_COMPAT_FEATURE(sp, COMPAT_EXT_ATTR))
+		return(EIO);
 	if (sp->s_block_size == 0 ||
 	    block <= sp->s_first_data_block ||
 	    block >= sp->s_blocks_count ||
@@ -787,6 +789,8 @@ ext4_release_xattr_block(struct inode *rip)
 	block = extent_inode_xattr_block(rip);
 	if (block == 0)
 		return(OK);
+	if (!HAS_COMPAT_FEATURE(sp, COMPAT_EXT_ATTR))
+		return(EIO);
 	if (sp->s_rd_only)
 		return(EROFS);
 	/* Writable metadata_csum is not supported by the mount path. */
