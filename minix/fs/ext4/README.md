@@ -138,14 +138,16 @@ mke2fs -F -t ext4 -b 4096 \
 
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
-and long symlinks. Include files with unwritten extents, files whose inline
-extent root reaches its four-entry capacity, and fragmented files that create
-external extent leaves. On external-leaf files, exercise writes into holes
-within a leaf, unwritten-extent conversion, and tail truncation while keeping
-the first extent of each leaf intact. Operations that require changing a
-leaf's first logical-block key or splitting a full leaf must fail without
-damaging the filesystem. Unmount cleanly and run `e2fsck -fn`. For the 64 KiB
-image, exercise
+and long symlinks. Include files with unwritten extents and files whose
+inline extent root reaches its four-entry capacity. To exercise external-leaf
+updates, first populate a disposable image on Linux with a fragmented file
+containing more than four extents, then attach that image to MINIX; this server
+does not yet create or split external extent nodes. On that file, exercise
+writes into holes within a leaf, unwritten-extent conversion, and tail
+truncation while keeping the first extent of each leaf intact. Operations that
+require changing a leaf's first logical-block key or splitting a full leaf
+must fail without damaging the filesystem. Unmount cleanly and run
+`e2fsck -fn`. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
