@@ -105,6 +105,7 @@ int ext4_verify_xattr_block_csum(struct super_block *sp, dev_t dev,
 	block64_t block);
 int ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 	unsigned int logical_block);
+int ext4_update_dir_block_csum(struct inode *rip, unsigned char *data);
 unsigned conv2(int norm, int w);
 long conv4(int norm, long x);
 unsigned int ext4_dir_rec_len(const struct ext2_disk_dir_desc *dp,
