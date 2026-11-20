@@ -534,7 +534,7 @@ int truncate_inode(register struct inode *rip, off_t newsize)
    * that on-disk capacity requires rewriting the xattr layout and is refused.
    */
   if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
-	if (rip->i_blocks != 0 || newsize < 0 || rip->i_size < 0 ||
+	if (newsize < 0 || rip->i_size < 0 ||
 	    rip->i_inline_size > EXT4_INLINE_DATA_MAX)
 		return(EIO);
 	if ((u64_t)newsize > rip->i_inline_size)
@@ -608,7 +608,7 @@ static int freesp_inode(register struct inode *rip, off_t start, off_t end)
 	return(EINVAL);
 
   if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
-	if (rip->i_blocks != 0 || start < 0 || end < 0 ||
+	if (start < 0 || end < 0 ||
 	    (u64_t)end > rip->i_inline_size ||
 	    rip->i_inline_size > EXT4_INLINE_DATA_MAX)
 		return(EIO);
