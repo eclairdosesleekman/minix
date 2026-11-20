@@ -57,11 +57,17 @@ read-write mode.
   Before mutation, the depth-one writer checks the selected leaf against
   every sibling and checks every pair of sibling leaves for physical aliases;
   speculative allocations already mapped elsewhere in the tree are rejected.
-- Depth-one extent trees can be edited in place when the selected external
-  leaf already has capacity. The inode index is kept in sync when a leaf's
-  first extent changes, and an empty leaf is detached and freed. Operations
-  that require leaf splitting or tree rebalancing are rejected; deeper trees
-  remain read-only for mutation.
+- Inline extent roots automatically promote to depth-one trees when a write,
+  unwritten-extent conversion, or middle-block removal needs more than the
+  four inode-root extent slots. The old records are moved into a new external
+  leaf and the added metadata block is included in `i_blocks`.
+- Depth-one extent leaves are split when an edit needs more records than the
+  selected leaf can hold, provided the inode root has a free index slot. The
+  upper half is moved to a new leaf and a sorted root index entry is inserted.
+  Updates keep the index key synchronized when a leaf's first extent changes,
+  and empty leaves are detached and freed. A full depth-one root is not
+  promoted to depth two; trees deeper than one external level remain
+  read-only for mutation.
 - Final unlink of ext4 extent-backed files is supported for inline roots
   and validated depth-one trees. Before removing the last directory entry,
   mappings are checked for valid physical ranges, non-aliasing, and
@@ -103,12 +109,12 @@ implementation.
   cross-directory rename. Unindexed directories on the same volume can be
   changed normally. HTree index maintenance and conversion of indexed
   directories to linear form are not implemented.
-- **Limited external extent-tree mutation:** depth-zero inode roots and
-  depth-one trees with pre-existing leaf nodes are writable. Depth-one updates
-  require enough free slots in the selected leaf; this server does not
-  allocate/split external nodes or rebalance trees. Such operations return
-  `EOPNOTSUPP` or `EFBIG` without modifying the extent tree. Trees deeper
-  than one external level remain read-only for mutation.
+- **Limited external extent-tree mutation:** inline roots can grow into
+  depth-one trees, and depth-one leaves can be allocated and split while the
+  inode root has a free index slot. When all root index slots are occupied,
+  edits that need another leaf are rejected; depth-two and deeper trees remain
+  read-only for mutation. No external index-node splitting or tree
+  rebalancing is implemented.
 - Final unlink is supported for inline and validated depth-one extent trees,
   including inodes with a valid external xattr block. External trees deeper
   than one level and depth-one trees with mappings beyond EOF are rejected
@@ -199,10 +205,15 @@ and each sibling, and between two non-selected siblings; all such writes must
 fail with EIO before mutation. Also simulate an allocator returning a block
 already mapped in the inline root,
 selected leaf, or sibling leaf and confirm it is rejected.
-Also create fragmented files
-whose extent roots grow to depth one; overwrite unwritten extents, allocate
-holes within existing leaves, trim extents at both ends, split an extent by
-punching a middle block, and remove all mappings from one leaf. Unlink files
+Also create a fragmented file with more than four non-coalescing extents;
+confirm the inline root is promoted to depth one and that the new leaf is
+counted in `i_blocks`. Grow the file with enough isolated extents to
+fill a leaf, then trigger additional insertions, unwritten-extent conversions,
+and middle-block removals that require leaf splitting. Confirm both resulting
+leaves remain readable and writable, their root keys are ordered, and
+`i_blocks` includes every external leaf. Fill all inode-root index slots
+and verify a further split request fails without changing either leaf or the
+index. Unlink files
 with one and multiple external leaves and confirm all data and leaf blocks are
 freed; then check free-block/free-inode counts with `e2fsck -fn`. Construct a
 depth-one file with a mapping beyond EOF and confirm final unlink fails before
@@ -214,10 +225,10 @@ unlink fails before removing its name. Repeat the shared and unshared xattr
 cases when rename replaces an existing destination; the rename must preflight
 before changing either name. Also test an xattr pointer that aliases a data
 extent, an extent leaf, or group metadata. Inject an extent-node read/write
-failure during final reclamation and confirm the inode bitmap is not released. Confirm updates
-that would require a full leaf or tree split fail without changing the inode
-or leaf metadata. Depth-two and deeper trees must remain readable but reject
-mutation and final unlink. For the 64 KiB image, exercise
+failure during final reclamation and confirm the inode bitmap is not released. Confirm depth-one leaf splits succeed when a root index slot is available;
+requests that would require depth-two index-node creation fail without
+changing the extent tree. Depth-two and deeper trees must remain readable but
+reject mutation and final unlink. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
