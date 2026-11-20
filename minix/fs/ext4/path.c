@@ -122,6 +122,16 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	return(ENOTDIR);
   }
 
+  /*
+   * dir_index is a filesystem-wide compatible feature, but only directories
+   * carrying EXT2_INDEX_FL actually contain htree metadata.  Lookup remains
+   * supported by the linear scan below; do not mutate an indexed directory
+   * until htree index maintenance has been implemented.
+   */
+  if ((flag == ENTER || flag == DELETE) &&
+      (ldir_ptr->i_flags & EXT2_INDEX_FL))
+	return(EOPNOTSUPP);
+
   block_size = ldir_ptr->i_sp->s_block_size;
   new_slots = 0;
   e_hit = FALSE;
