@@ -825,7 +825,8 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 	pos = *posp;
 	if (pos < 0 || ((unsigned int)pos & (DIR_ENTRY_ALIGN - 1)) != 0)
 		return(ENOENT);
-	if (rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
+	if (!HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) ||
+	    rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
 	    rip->i_inline_size > EXT4_INLINE_DATA_MAX ||
 	    rip->i_inline_dir_parent == NO_ENTRY ||
 	    rip->i_inline_dir_parent > rip->i_sp->s_inodes_count)
