@@ -67,8 +67,8 @@ read-write mode.
   physical ranges, non-aliasing, and containment within the file's logical
   size; the preflight also verifies that `i_blocks` accounts for data and
   external leaf blocks. Truncation then frees data blocks and detaches/frees
-  each external leaf. Depth-two and deeper trees, and mappings beyond EOF,
-  are rejected before the name is removed.
+  each external leaf. Depth-two and deeper trees, mappings beyond EOF, and
+  inodes with external xattr blocks are rejected before the name is removed.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
   is not released. The zero-link inode is kept allocated for later fsck/recovery
   rather than allowing its still-referenced blocks to be reallocated.
@@ -104,8 +104,9 @@ implementation.
   `EOPNOTSUPP` or `EFBIG` without modifying the extent tree. Trees deeper
   than one external level remain read-only for mutation.
 - Final unlink is supported for inline and validated depth-one extent trees.
-  External trees deeper than one level and depth-one trees with mappings beyond
-  EOF are rejected before the final directory entry is removed.
+  External trees deeper than one level, depth-one trees with mappings beyond
+  EOF, and inodes referencing external xattr blocks are rejected before the
+  final directory entry is removed.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
   encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
   are rejected. The filesystem must be clean, with an empty legacy orphan list.
