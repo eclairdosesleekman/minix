@@ -30,6 +30,7 @@ EXTERN struct inode {
     long   i_crtime_nsec;  /* ext4 creation-time nanoseconds */
     u16_t  i_ext4_extra_isize; /* decoded Linux extended-inode field size */
     u16_t  i_inline_size; /* decoded ext4 inline-data capacity */
+    ino_t  i_inline_dir_parent; /* parent stored in an inline directory */
     unsigned char i_inline_data[EXT4_INLINE_DATA_MAX]; /* read-only payload */
     u32_t  i_dtime;        /* Deletion Time */
     u32_t  i_gid;          /* Full 32-bit group ID (decoded from ext4) */
