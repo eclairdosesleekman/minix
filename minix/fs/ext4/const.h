@@ -150,7 +150,11 @@
 /* Ext4 features understood by this server. */
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
-                                     INCOMPAT_CSUM_SEED | INCOMPAT_LARGEDIR)
+                                     INCOMPAT_EA_INODE | INCOMPAT_CSUM_SEED | \
+                                     INCOMPAT_LARGEDIR)
+
+/* Linux ext4 inode flag for an inode storing a large xattr value. */
+#define EXT4_EA_INODE_FL           0x00200000
 #define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \
                                       RO_COMPAT_LARGE_FILE | \
                                       RO_COMPAT_BTREE_DIR | \
