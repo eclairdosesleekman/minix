@@ -651,9 +651,10 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 
   /*
    * dir_index is a filesystem-wide compatible feature, but only directories
-   * carrying EXT2_INDEX_FL actually contain htree metadata.  Lookup remains
-   * supported by the linear scan below; do not mutate an indexed directory
-   * until htree index maintenance has been implemented.
+   * carrying EXT2_INDEX_FL actually contain htree metadata.  LOOK_UP follows
+   * the index for supported hash versions (or uses the linear compatibility
+   * scan for SipHash); ENTER and DELETE remain disabled until index
+   * maintenance and rebalancing have been implemented.
    */
   if ((flag == ENTER || flag == DELETE) &&
       (ldir_ptr->i_flags & EXT2_INDEX_FL))
