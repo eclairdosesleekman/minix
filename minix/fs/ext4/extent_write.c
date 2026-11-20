@@ -9,6 +9,8 @@
 
 #include "fs.h"
 #include <string.h>
+#include <stdlib.h>
+#include <limits.h>
 #include "inode.h"
 #include "super.h"
 
@@ -971,6 +973,238 @@ extent_depth1_compact(struct inode *rip, unsigned char *root,
  * extent is freed; the depth-two wrapper also reclaims its index block when
  * the final child leaf disappears.
  */
+/*
+ * Legacy ext4 inodes can still use the ext2 direct/single/double/triple
+ * indirect block map. Before final unlink, walk the complete ownership tree:
+ * truncate_inode() only visits logical blocks below i_size, so anything
+ * beyond EOF would otherwise be leaked. Validate data and pointer blocks,
+ * reject aliases (including an external xattr block), and account for every
+ * owned block before allowing write_map(..., WMAP_FREE) to reclaim it.
+ *
+ * Xattr blocks are deliberately excluded from i_blocks by ext4; their header
+ * and reference count are checked separately by extent_validate_xattr_block.
+ */
+#define EXT4_INDIRECT_PREFLIGHT_MAX_BLOCKS 1048576U
+
+struct ext4_indirect_walk {
+	struct inode *rip;
+	block64_t *owned;
+	size_t count;
+	size_t capacity;
+	block64_t xattr_block;
+	u64_t file_blocks;
+	u64_t pointers_per_block;
+};
+
+static int
+ext4_indirect_add_owned(struct ext4_indirect_walk *walk, block64_t block)
+{
+	struct super_block *sp = walk->rip->i_sp;
+
+	if (block <= sp->s_first_data_block ||
+	    block >= sp->s_blocks_count ||
+	    block == walk->xattr_block ||
+	    extent_is_group_metadata(sp, block))
+		return(EIO);
+	if (walk->count >= walk->capacity)
+		return(EIO);
+	walk->owned[walk->count++] = block;
+	return(OK);
+}
+
+/*
+ * Walk one indirect block. level 1 contains data pointers, level 2 contains
+ * single-indirect pointers, and level 3 contains double-indirect pointers.
+ * logical_start is the first logical data block covered by this node.
+ */
+static int
+ext4_indirect_walk_node(struct ext4_indirect_walk *walk, block64_t block,
+	unsigned int level, u64_t logical_start)
+{
+	struct buf *bp;
+	block64_t child;
+	u64_t child_span, child_start;
+	unsigned int i, j;
+	int r;
+
+	if (level < 1 || level > 3)
+		return(EIO);
+	if ((r = ext4_indirect_add_owned(walk, block)) != OK)
+		return(r);
+	bp = get_block(walk->rip->i_dev, block, NORMAL);
+	if (bp == NULL)
+		return(EIO);
+
+	child_span = 1;
+	for (j = 1; j < level; j++)
+		child_span *= walk->pointers_per_block;
+
+	r = OK;
+	for (i = 0; i < walk->pointers_per_block; i++) {
+		child = rd_indir(bp, i);
+		if (child == NO_BLOCK)
+			continue;
+
+		child_start = logical_start + (u64_t)i * child_span;
+		if (child_start >= walk->file_blocks) {
+			r = EOPNOTSUPP;
+			break;
+		}
+		if (level == 1)
+			r = ext4_indirect_add_owned(walk, child);
+		else
+			r = ext4_indirect_walk_node(walk, child, level - 1,
+			    child_start);
+		if (r != OK)
+			break;
+	}
+
+	put_block(bp);
+	return(r);
+}
+
+static int
+ext4_indirect_block_compare(const void *left, const void *right)
+{
+	block64_t a = *(const block64_t *)left;
+	block64_t b = *(const block64_t *)right;
+
+	return(a < b ? -1 : a > b ? 1 : 0);
+}
+
+static int
+ext4_indirect_can_truncate(struct inode *rip, block64_t xattr_block)
+{
+	struct ext4_indirect_walk walk;
+	struct super_block *sp = rip->i_sp;
+	block64_t block;
+	u64_t expected, file_blocks, ppb, single_end, double_end, triple_end;
+	size_t i;
+	int r;
+
+	if (rip->i_size < 0 || sp->s_block_size == 0 ||
+	    sp->s_sectors_in_block == 0)
+		return(EIO);
+
+	/*
+	 * Special inodes have no block map; short symlinks store their target in
+	 * i_block. Their external xattr block, if any, is released separately.
+	 */
+	if ((rip->i_mode & I_TYPE) != I_REGULAR &&
+	    (rip->i_mode & I_TYPE) != I_DIRECTORY &&
+	    (rip->i_mode & I_TYPE) != I_SYMBOLIC_LINK) {
+		return(rip->i_blocks == 0 ? OK : EIO);
+	}
+	if ((rip->i_mode & I_TYPE) == I_SYMBOLIC_LINK &&
+	    rip->i_size < MAX_FAST_SYMLINK_LENGTH && rip->i_blocks == 0)
+		return(OK);
+
+	if (rip->i_blocks % sp->s_sectors_in_block != 0)
+		return(EIO);
+	expected = rip->i_blocks / sp->s_sectors_in_block;
+	if (expected > EXT4_INDIRECT_PREFLIGHT_MAX_BLOCKS ||
+	    expected > (u64_t)((size_t)-1 / sizeof(*walk.owned)))
+		return(EOPNOTSUPP);
+
+	file_blocks = (u64_t)rip->i_size / sp->s_block_size;
+	if ((u64_t)rip->i_size % sp->s_block_size != 0)
+		file_blocks++;
+	ppb = sp->s_block_size / sizeof(u32_t);
+	if (ppb == 0)
+		return(EIO);
+	single_end = EXT2_NDIR_BLOCKS + ppb;
+	double_end = single_end + ppb * ppb;
+	triple_end = double_end + ppb * ppb * ppb;
+	/* truncate_inode() visits each logical block, including sparse holes. */
+	if (file_blocks > EXT4_INDIRECT_PREFLIGHT_MAX_BLOCKS ||
+	    file_blocks > triple_end || file_blocks > (u64_t)LONG_MAX)
+		return(EOPNOTSUPP);
+
+	memset(&walk, 0, sizeof(walk));
+	walk.rip = rip;
+	walk.capacity = (size_t)expected;
+	walk.xattr_block = xattr_block;
+	walk.file_blocks = file_blocks;
+	walk.pointers_per_block = ppb;
+	if (walk.capacity != 0) {
+		walk.owned = malloc(walk.capacity * sizeof(*walk.owned));
+		if (walk.owned == NULL)
+			return(ENOMEM);
+	}
+
+	/* The twelve direct pointers name data blocks. */
+	for (i = 0; i < EXT2_NDIR_BLOCKS; i++) {
+		block = rip->i_block[i];
+		if (block == NO_BLOCK)
+			continue;
+		if ((u64_t)i >= file_blocks) {
+			r = EOPNOTSUPP;
+			goto out;
+		}
+		r = ext4_indirect_add_owned(&walk, block);
+		if (r != OK)
+			goto out;
+	}
+
+	/* The remaining inode slots point to the three indirect levels. */
+	block = rip->i_block[EXT2_IND_BLOCK];
+	if (block != NO_BLOCK) {
+		if (EXT2_NDIR_BLOCKS >= file_blocks) {
+			r = EOPNOTSUPP;
+			goto out;
+		}
+		r = ext4_indirect_walk_node(&walk, block, 1, EXT2_NDIR_BLOCKS);
+		if (r != OK)
+			goto out;
+	}
+
+	block = rip->i_block[EXT2_DIND_BLOCK];
+	if (block != NO_BLOCK) {
+		if (single_end >= file_blocks) {
+			r = EOPNOTSUPP;
+			goto out;
+		}
+		r = ext4_indirect_walk_node(&walk, block, 2, single_end);
+		if (r != OK)
+			goto out;
+	}
+
+	block = rip->i_block[EXT2_TIND_BLOCK];
+	if (block != NO_BLOCK) {
+		if (double_end >= file_blocks) {
+			r = EOPNOTSUPP;
+			goto out;
+		}
+		r = ext4_indirect_walk_node(&walk, block, 3, double_end);
+		if (r != OK)
+			goto out;
+	}
+
+	/*
+	 * i_blocks counts data and indirect blocks, but not the external xattr
+	 * block. Equal counts prove no owned mapping will be missed at truncate.
+	 */
+	if ((u64_t)walk.count != expected) {
+		r = EIO;
+		goto out;
+	}
+	if (walk.count > 1) {
+		qsort(walk.owned, walk.count, sizeof(*walk.owned),
+		    ext4_indirect_block_compare);
+		for (i = 1; i < walk.count; i++) {
+			if (walk.owned[i] == walk.owned[i - 1]) {
+				r = EIO;
+				goto out;
+			}
+		}
+	}
+
+	r = OK;
+out:
+	free(walk.owned);
+	return(r);
+}
+
 static int extent_depth2_preflight_single_root(struct inode *,
 	block64_t *, int);
 
@@ -995,18 +1229,8 @@ ext4_extent_can_truncate(struct inode *rip)
 	xattr_block = extent_inode_xattr_block(rip);
 	if (extent_validate_xattr_block(rip, xattr_block) != OK)
 		return(EIO);
-	if (!(rip->i_flags & EXT4_EXTENTS_FL)) {
-		/*
-		 * A legacy indirect tree needs a separate ownership walk to prove
-		 * that its xattr block does not alias file data or indirect nodes.
-		 * Special files have no data mapping to collide with.
-		 */
-		if (xattr_block != 0 &&
-		    (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL &&
-		    (rip->i_mode & I_TYPE) != I_BLOCK_SPECIAL)
-			return(EOPNOTSUPP);
-		return(OK);
-	}
+	if (!(rip->i_flags & EXT4_EXTENTS_FL))
+		return(ext4_indirect_can_truncate(rip, xattr_block));
 
 	root = (unsigned char *)rip->i_block;
 	if (extent_get16(root) != EXT4_EXTENT_MAGIC)
