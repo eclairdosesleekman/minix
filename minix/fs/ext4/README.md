@@ -62,12 +62,14 @@ read-write mode.
   first extent changes, and an empty leaf is detached and freed. Operations
   that require leaf splitting or tree rebalancing are rejected; deeper trees
   remain read-only for mutation.
-- Final unlink of files with depth-one extent trees is supported. Before
-  removing the last directory entry, all mappings are checked for valid physical ranges, non-aliasing, and
-  containment within the file's logical size; the preflight also verifies
-  that `i_blocks` exactly matches the data and external-node blocks. Truncation then frees data blocks and detaches/frees
-  each external leaf. Depth-two and deeper trees, mappings beyond EOF, and
-  inodes with external xattr blocks are rejected before the name is removed.
+- Final unlink of ext4 extent-backed files is supported for inline roots
+  and validated depth-one trees. Before removing the last directory entry,
+  all mappings are checked for valid physical ranges, non-aliasing, and
+  containment within the file's logical size. The preflight also verifies
+  that `i_blocks` exactly matches data and external extent-node blocks.
+  Truncation frees the data blocks and detaches/frees each external leaf.
+  Depth-two and deeper trees, mappings beyond EOF, and inodes with external
+  xattr blocks are rejected before the name is removed.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
   is not released. The zero-link inode is kept allocated for later fsck/recovery
   rather than allowing its still-referenced blocks to be reallocated.
