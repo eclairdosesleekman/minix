@@ -177,8 +177,8 @@ Also test extents ending exactly at the last filesystem block and extents
 whose lengths would run past it. Construct inline and depth-one leaf records
 whose logical ranges are distinct but whose physical block ranges overlap;
 confirm write, truncate, and hole-punch attempts fail with `EIO` before
-changing either extent node or releasing a block. Also simulate an allocator
-returning a block already mapped in the same inode and confirm it is rejected.
+changing either extent node or releasing a block. Also simulate an allocator returning a block already mapped in the inline root
+or selected depth-one leaf and confirm it is rejected.
 Also create fragmented files
 whose extent roots grow to depth one; overwrite unwritten extents, allocate
 holes within existing leaves, trim extents at both ends, split an extent by
