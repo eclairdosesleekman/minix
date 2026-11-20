@@ -40,7 +40,9 @@ read-write mode.
   `..` is skipped in the first directory block. The `large_dir` incompat
   feature is accepted for read-only mounts: internal HTree nodes are skipped
   as inode-zero dummy directory entries, so lookup and readdir do not depend
-  on the HTree depth.
+  on the HTree depth. The root's depth field is checked against the ext4
+  limit (two levels normally, three with `large_dir`), even without
+  `metadata_csum`.
 - Read-write support for filesystems without a journal and without indexed
   directories. The block and inode bitmaps, group free counters, inode table,
   superblock counters, and data blocks are updated.
