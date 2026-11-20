@@ -49,7 +49,11 @@ read-write mode.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
-  `..` is skipped in the first directory block.
+  `..` is skipped in the first directory block. The `INCOMPAT_LARGEDIR`
+  feature is readable: 64-bit directory sizes are decoded, HTree roots with up
+  to three index levels are validated, and linear lookup/getdents scans the
+  leaf blocks without following the index tree. This feature remains
+  read-only because HTree mutation and index rebalancing are not implemented.
 - Read-write support for filesystems without a journal. On filesystems
   advertising `dir_index`, unindexed directories remain writable; lookup in
   indexed directories is supported by linear traversal, but entry insertion
@@ -153,8 +157,9 @@ implementation.
   individual directory carrying `EXT2_INDEX_FL`. Rename preflights both
   parent directories before changing either one, preventing a half-completed
   cross-directory rename. Unindexed directories on the same volume can be
-  changed normally. HTree index maintenance and conversion of indexed
-  directories to linear form are not implemented.
+  changed normally. Filesystems with `INCOMPAT_LARGEDIR` are additionally
+  restricted to read-only mounts because this server does not update indexes
+  or rebalance deep HTree directories.
 - **Limited external extent-tree mutation:** inline roots can grow into
   depth-one trees, and depth-one leaves can be allocated, split, merged, and
   compacted while the inode root has capacity. A depth-two tree with a single
@@ -328,6 +333,15 @@ checksums. Confirm they mount read-only and file lookup/stat/read work, while
 a writable mount is rejected before the filesystem is marked unclean. Also
 set `read-only` on a disposable image and confirm read-only mounting works
 but a writable mount is refused.
+
+For `INCOMPAT_LARGEDIR` coverage, create disposable ext4 images with the
+feature enabled, including an indexed directory whose HTree reaches three
+index levels and a directory whose size exceeds 4 GiB. Confirm the root
+`indirect_levels` value is accepted up to three, values above three are
+rejected, and a depth-three HTree is readable through lookup and getdents.
+Verify that the directory inode's high size word is used when reporting and
+scanning the directory. Confirm a writable mount is rejected before the
+filesystem is marked unclean.
 
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
