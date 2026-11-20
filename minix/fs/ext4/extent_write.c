@@ -810,7 +810,7 @@ extent_depth1_try_merge_pair(struct inode *rip, unsigned char *root,
 		}
 	}
 	new_count = left_count + right_count - (coalesce ? 1 : 0);
-	if (new_count > leaf_max) {
+	if (new_count > leaf_max || new_count > left_max) {
 		put_block(other_bp);
 		return(0);
 	}
@@ -845,10 +845,9 @@ extent_depth1_try_merge_pair(struct inode *rip, unsigned char *root,
 	rip->i_blocks -= sp->s_sectors_in_block;
 	rip->i_dirt = IN_DIRTY;
 
-	put_block(right_bp);
-	free_block(sp, right_block);
 	if (selected_is_right) {
 		/* The current buffer was the removed right-hand leaf. */
+		put_block(right_bp);
 		*bpp = left_bp;
 		*nodep = left_node;
 		*selectedp = left_index_num;
@@ -859,6 +858,7 @@ extent_depth1_try_merge_pair(struct inode *rip, unsigned char *root,
 		*selectedp = left_index_num;
 		*entriesp = new_count;
 	}
+	free_block(sp, right_block);
 	*root_entriesp = root_entries;
 	*index_entryp = root + 12 + left_index_num * 12;
 	return(1);
@@ -878,22 +878,18 @@ extent_depth1_compact(struct inode *rip, unsigned char *root,
 	int r;
 
 	while (*root_entriesp > 1) {
-		r = extent_depth1_check_siblings(rip, root, *root_entriesp,
-		    *selectedp, *nodep, *entriesp, FALSE, 0);
-		if (r != OK)
-			return(EIO);
 		r = extent_depth1_try_merge_pair(rip, root, root_entriesp,
 		    root_max, selectedp, FALSE, bpp, nodep, entriesp,
 		    leaf_max, index_entryp, leaf_blockp);
-		if (r < 0)
-			return(r);
+		if (r != 0 && r != 1)
+			break;
 		if (r == 0 && *selectedp > 0) {
 			r = extent_depth1_try_merge_pair(rip, root,
 			    root_entriesp, root_max, selectedp, TRUE, bpp,
 			    nodep, entriesp, leaf_max, index_entryp,
 			    leaf_blockp);
-			if (r < 0)
-				return(r);
+			if (r != 0 && r != 1)
+				break;
 		}
 		if (r == 0)
 			break;
