@@ -1,9 +1,9 @@
 /*
  * Limited ext4 extent-tree updates.
  *
- * This writer supports inline roots and in-place updates to depth-one external
- * leaf nodes.  It does not allocate/split external nodes or rebalance deeper
- * trees; operations requiring those changes are rejected.
+ * This writer supports inline-root promotion, depth-one leaf allocation and
+ * splitting, and in-place depth-one updates.  It does not split depth-one root
+ * indexes or rebalance depth-two and deeper trees.
  */
 
 #include "fs.h"
@@ -483,6 +483,196 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		put_block(bp);
 	}
 
+	return(OK);
+}
+
+
+/*
+ * Promote a full inline root into a depth-one tree.  The existing inline
+ * records become the first external leaf; the inode root becomes a one-entry
+ * index.  This is the first growth step for files that outgrow the four
+ * extents stored in i_block.
+ */
+static int
+extent_promote_root(struct inode *rip, unsigned char *root, u16_t entries,
+	u16_t root_max)
+{
+	struct super_block *sp = rip->i_sp;
+	struct buf *bp;
+	unsigned char *node;
+	block64_t block, xattr_block;
+	u16_t leaf_max;
+	u32_t first_logical;
+
+	if (entries == 0 || entries > root_max || sp->s_block_size <= 12)
+		return(EIO);
+	leaf_max = (u16_t)((sp->s_block_size - 12) / 12);
+	if (leaf_max < entries || sp->s_sectors_in_block == 0 ||
+	    !extent_i_blocks_can_add(rip, sp->s_sectors_in_block))
+		return(EFBIG);
+
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
+	    (xattr_block != 0 &&
+	    extent_block_is_mapped(root + 12, entries, xattr_block)))
+		return(EIO);
+
+	first_logical = extent_get32(root + 12);
+	block = alloc_block(rip, rip->i_bsearch);
+	if (block == NO_BLOCK)
+		return(ENOSPC);
+	if (block <= sp->s_first_data_block ||
+	    block >= sp->s_blocks_count ||
+	    block > (((u64_t)1 << 48) - 1) ||
+	    extent_is_group_metadata(sp, block) || block == xattr_block ||
+	    extent_block_is_mapped(root + 12, entries, block)) {
+		free_block(sp, block);
+		return(EIO);
+	}
+
+	bp = get_block(rip->i_dev, block, NO_READ);
+	if (bp == NULL) {
+		free_block(sp, block);
+		return(EIO);
+	}
+	node = (unsigned char *)b_data(bp);
+	memset(node, 0, sp->s_block_size);
+	extent_put16(node, EXT4_EXTENT_MAGIC);
+	extent_put16(node + 2, entries);
+	extent_put16(node + 4, leaf_max);
+	extent_put16(node + 6, 0);
+	memcpy(node + 12, root + 12, entries * 12);
+	lmfs_markdirty(bp);
+	put_block(bp);
+
+	/* Replace the inline extent array with a one-entry external index. */
+	memset(root, 0, sizeof(rip->i_block));
+	extent_put16(root, EXT4_EXTENT_MAGIC);
+	extent_put16(root + 2, 1);
+	extent_put16(root + 4, root_max);
+	extent_put16(root + 6, 1);
+	extent_put32(root + 12, first_logical);
+	extent_put32(root + 16, (u32_t)block);
+	extent_put16(root + 20, (u16_t)(block >> 32));
+
+	rip->i_blocks += sp->s_sectors_in_block;
+	rip->i_dirt = IN_DIRTY;
+	return(OK);
+}
+
+/*
+ * Split one depth-zero leaf when an edit needs more records than it can hold.
+ * The new leaf receives the upper half, and a new inode-root index entry is
+ * inserted immediately after the old one.  Deeper index-node splitting is
+ * intentionally left to a later change.
+ */
+static int
+extent_depth1_split_leaf(struct inode *rip, unsigned char *root,
+	u16_t *root_entriesp, u16_t root_max, unsigned int *leaf_indexp,
+	u32_t logical, struct buf **bpp, unsigned char **nodep,
+	u16_t *leaf_entriesp, u16_t leaf_max,
+	unsigned char **index_entryp, block64_t *leaf_blockp)
+{
+	struct super_block *sp = rip->i_sp;
+	struct buf *new_bp, *old_bp;
+	unsigned char *node, *new_node, *index_entry, *new_index;
+	block64_t new_block, xattr_block;
+	u16_t root_entries, leaf_entries, split_entries, right_entries;
+	u32_t split_key;
+	unsigned int leaf_index;
+	int r, use_right;
+
+	root_entries = *root_entriesp;
+	leaf_entries = *leaf_entriesp;
+	leaf_index = *leaf_indexp;
+	old_bp = *bpp;
+	node = *nodep;
+
+	if (root_entries >= root_max || leaf_entries < 2 ||
+	    leaf_entries > leaf_max || sp->s_sectors_in_block == 0)
+		return(EFBIG);
+	if (!extent_i_blocks_can_add(rip, sp->s_sectors_in_block))
+		return(EFBIG);
+
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
+	    (xattr_block != 0 &&
+	    extent_block_is_mapped(node + 12, leaf_entries, xattr_block)))
+		return(EIO);
+
+	new_block = alloc_block(rip, *leaf_blockp + 1);
+	if (new_block == NO_BLOCK)
+		return(ENOSPC);
+	if (new_block <= sp->s_first_data_block ||
+	    new_block >= sp->s_blocks_count ||
+	    new_block > (((u64_t)1 << 48) - 1) ||
+	    extent_is_group_metadata(sp, new_block) ||
+	    extent_overlaps_tree_node(root, root_entries, new_block, 1) ||
+	    new_block == xattr_block ||
+	    extent_block_is_mapped(node + 12, leaf_entries, new_block)) {
+		free_block(sp, new_block);
+		return(EIO);
+	}
+
+	r = extent_depth1_check_siblings(rip, root, root_entries, leaf_index,
+	    node, leaf_entries, TRUE, new_block);
+	if (r != OK) {
+		free_block(sp, new_block);
+		return(EIO);
+	}
+
+	new_bp = get_block(rip->i_dev, new_block, NO_READ);
+	if (new_bp == NULL) {
+		free_block(sp, new_block);
+		return(EIO);
+	}
+	new_node = (unsigned char *)b_data(new_bp);
+	split_entries = leaf_entries / 2;
+	right_entries = leaf_entries - split_entries;
+	split_key = extent_get32(node + 12 + split_entries * 12);
+
+	memset(new_node, 0, sp->s_block_size);
+	extent_put16(new_node, EXT4_EXTENT_MAGIC);
+	extent_put16(new_node + 2, right_entries);
+	extent_put16(new_node + 4, leaf_max);
+	extent_put16(new_node + 6, 0);
+	memcpy(new_node + 12, node + 12 + split_entries * 12,
+	    right_entries * 12);
+
+	/* Insert the right-hand leaf in the inode's sorted index array. */
+	memmove(root + 12 + (leaf_index + 2) * 12,
+	    root + 12 + (leaf_index + 1) * 12,
+	    (root_entries - leaf_index - 1) * 12);
+	new_index = root + 12 + (leaf_index + 1) * 12;
+	extent_put32(new_index, split_key);
+	extent_put32(new_index + 4, (u32_t)new_block);
+	extent_put16(new_index + 8, (u16_t)(new_block >> 32));
+	extent_put16(root + 2, root_entries + 1);
+
+	memset(node + 12 + split_entries * 12, 0,
+	    right_entries * 12);
+	extent_put16(node + 2, split_entries);
+	lmfs_markdirty(old_bp);
+	lmfs_markdirty(new_bp);
+
+	rip->i_blocks += sp->s_sectors_in_block;
+	rip->i_dirt = IN_DIRTY;
+	*root_entriesp = root_entries + 1;
+
+	use_right = (logical >= split_key);
+	if (use_right) {
+		put_block(old_bp);
+		*bpp = new_bp;
+		*nodep = new_node;
+		*leaf_indexp = leaf_index + 1;
+		*leaf_blockp = new_block;
+		*leaf_entriesp = right_entries;
+	} else {
+		put_block(new_bp);
+		*leaf_entriesp = split_entries;
+	}
+	index_entry = root + 12 + (*leaf_indexp) * 12;
+	*index_entryp = index_entry;
 	return(OK);
 }
 
@@ -1298,10 +1488,15 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		block_to_free = ex.physical + offset;
 		if (rip->i_blocks < rip->i_sp->s_sectors_in_block)
 			return(EIO);
-		/* Splitting a middle extent consumes one additional root slot. */
+		/* Promote a full inline root before splitting an extent. */
 		if (offset != 0 && offset != ex.length - 1 &&
-		    entries >= max_entries)
-			return(EFBIG);
+		    entries >= max_entries) {
+			if ((r = extent_promote_root(rip, root, entries,
+			    max_entries)) != OK)
+				return(r);
+			return(extent_depth1_write_map(rip, position,
+			    new_wblock, op));
+		}
 
 		if (ex.length == 1) {
 			memmove(entry, entry + 12,
@@ -1347,8 +1542,13 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		if (offset == 0 && ex.length == 1) {
 			extent_put(entry, logical, old_physical, 1, FALSE);
 		} else if (offset == 0) {
-			if (entries >= max_entries)
-				return(EFBIG);
+			if (entries >= max_entries) {
+				if ((r = extent_promote_root(rip, root, entries,
+				    max_entries)) != OK)
+					return(r);
+				return(extent_depth1_write_map(rip, position,
+				    new_wblock, op));
+			}
 			memmove(entry + 12, entry,
 			    (entries - i) * 12);
 			extent_put(entry, logical, old_physical, 1, FALSE);
@@ -1365,8 +1565,13 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			extent_put(entry + 12, logical, old_physical, 1, FALSE);
 			entries++;
 		} else {
-			if (entries > max_entries - 2)
-				return(EFBIG);
+			if (entries > max_entries - 2) {
+				if ((r = extent_promote_root(rip, root, entries,
+				    max_entries)) != OK)
+					return(r);
+				return(extent_depth1_write_map(rip, position,
+				    new_wblock, op));
+			}
 			memmove(entry + 36, entry + 12,
 			    (entries - i - 1) * 12);
 			extent_put(entry, ex.logical, ex.physical, offset, TRUE);
@@ -1444,8 +1649,13 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		}
 	}
 
-	if (entries >= max_entries)
-		return(EFBIG);
+	if (entries >= max_entries) {
+		if ((r = extent_promote_root(rip, root, entries,
+		    max_entries)) != OK)
+			return(r);
+		return(extent_depth1_write_map(rip, position,
+		    new_wblock, op));
+	}
 
 	/* Insert a one-block initialized extent in logical-block order. */
 	entry = root + 12 + insert * 12;
