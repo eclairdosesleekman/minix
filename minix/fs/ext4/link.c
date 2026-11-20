@@ -322,12 +322,16 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
   }
 
   /*
-   * Rename may need to delete an existing destination before inserting the
-   * new name and deleting the old one.  Reject it up front when either parent
-   * is indexed so that a later EOPNOTSUPP cannot leave a half-completed rename.
+   * Rename may delete a destination before inserting the new name. Reject
+   * indexed parents up front so a later EOPNOTSUPP cannot leave a half-rename.
+   * Moving an indexed directory across parents is also disabled: its ".."
+   * entry lives in the HTree root and needs a dedicated in-place update.
    */
   if ((old_dirp->i_flags & EXT2_INDEX_FL) ||
-      (new_dirp->i_flags & EXT2_INDEX_FL)) {
+      (new_dirp->i_flags & EXT2_INDEX_FL) ||
+      (((old_ip->i_mode & I_TYPE) == I_DIRECTORY) &&
+       (old_ip->i_flags & EXT2_INDEX_FL) &&
+       old_dirp->i_num != new_dirp->i_num)) {
 	put_inode(old_ip);
 	put_inode(old_dirp);
 	put_inode(new_dirp);

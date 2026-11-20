@@ -154,16 +154,17 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: filesystem is not clean; run fsck first\\n");
 		goto bad_mount;
 	}
-	/* This server has no journal replay/commit or directory-index update
-	 * implementation.  Refuse read-write mounts that would need either. */
+	/* Journal replay/commit is unavailable, so journaled volumes cannot be
+	 * mounted read-write. Operations requiring HTree split/rebalancing are
+	 * rejected individually by search_dir(). */
 	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_HAS_JOURNAL)) {
 		printf("ext4: read-write mounts require ^has_journal\\n");
 		goto bad_mount;
 	}
 	/*
-	 * COMPAT_DIR_INDEX is filesystem-wide.  Unindexed directories can be
-	 * updated safely; search_dir() rejects ENTER/DELETE on individual
-	 * directories carrying EXT2_INDEX_FL until HTree updates are supported.
+	 * COMPAT_DIR_INDEX is filesystem-wide.  search_dir() permits in-place
+	 * updates within an existing indexed leaf when a supported hash path is
+	 * available; index splits and rebalancing remain unsupported.
 	 */
 
 	/* Metadata checksums are verified on reads but not rewritten by this

@@ -86,9 +86,11 @@ read-write mode.
   three with `INCOMPAT_LARGEDIR`, and continues into adjacent leaves when a
   hash collision spans multiple leaves. Root and internal-node checksums and
   index bounds are validated before following block references. `getdents`
-  continues to scan directory blocks linearly. Indexed-directory mutation and
-  index rebalancing remain unsupported; SipHash indexes use the linear lookup
-  compatibility path.
+  continues to scan directory blocks linearly. Create/link and unlink can
+  update an existing hash-selected leaf when it already has room; the HTree
+  index arrays remain unchanged. Leaf splitting, index updates/rebalancing,
+  and appending a new leaf are not implemented. SipHash indexes use linear
+  lookup/delete compatibility, but indexed insertion remains unsupported.
 - Read-write support for filesystems without a journal. On filesystems
   advertising `dir_index`, unindexed directories remain writable; lookup in
   indexed directories follows the HTree for hash versions 0 through 5,
@@ -207,17 +209,20 @@ implementation.
   with `BLOCK_UNINIT` or `INODE_UNINIT` is rejected for writable mounts
   because lazy bitmap initialization is not implemented. The legacy format
   does not use the `metadata_csum` bitmap checksum fields.
-- **No HTree mutation:** a filesystem-wide `dir_index` feature bit does
-  not by itself prevent a writable mount. Lookup follows HTree indexes for
-  hash versions 0 through 5 and searches adjacent leaves for hash collisions;
-  SipHash directories retain linear compatibility lookup. `search_dir()`
-  rejects `ENTER` and `DELETE` for an individual directory carrying
-  `EXT2_INDEX_FL`. `getdents` continues to scan the directory blocks
-  linearly. Rename preflights both parent directories before changing either
-  one, preventing a half-completed cross-directory rename. Unindexed
-  directories on the same volume can be changed normally. Filesystems with
-  `INCOMPAT_LARGEDIR` are additionally restricted to read-only mounts because
-  this server does not update indexes or rebalance deep HTree directories.
+- **Limited HTree leaf updates:** a filesystem-wide `dir_index` feature bit
+  does not by itself prevent a writable mount. Lookup follows HTree indexes
+  for hash versions 0 through 5 and searches adjacent leaves for hash
+  collisions. For those hash versions, `search_dir()` can insert into an
+  existing selected leaf when a free record or record slack is available, and
+  can delete from the exact leaf containing an existing name (including
+  collision leaves). These operations do not change index entries. A full
+  target leaf returns `EOPNOTSUPP`; the directory is never extended without
+  an index update. SipHash directories retain linear lookup and delete, but
+  insertion is unsupported. `getdents` continues to scan blocks linearly.
+  Rename still preflights and rejects indexed parent directories; moving an
+  indexed subdirectory across parents is also rejected because its `..` root
+  entry is not rewritten in-place. Filesystems with `INCOMPAT_LARGEDIR`
+  remain read-only because deep HTree growth/rebalancing is not implemented.
 - **Limited external extent-tree mutation:** inline roots can grow into
   depth-one trees, and depth-one leaves can be allocated, split, merged, and
   compacted while the inode root has capacity. A depth-two tree with a single
@@ -301,10 +306,17 @@ mke2fs -F -t ext4 -b 4096 \
 After creating the image, use one unindexed directory for ordinary
 create/rename/unlink tests and a separate sufficiently populated directory
 indexed by `e2fsck -D`. Confirm lookup and getdents work in the indexed
-directory, while create, unlink, and rename attempts that modify it fail with
-`EOPNOTSUPP` and leave its index metadata unchanged. Confirm the unindexed
-directory on the same filesystem remains writable. Run `e2fsck -fn` after
-clean unmount.
+directory. Exercise create/link/unlink in indexed directories where the
+hash-selected leaf has a free record or enough record slack; the operation
+must change only that leaf, while the root and internal index blocks remain
+byte-for-byte unchanged. Fill a selected leaf so no record can fit and confirm
+insertion returns `EOPNOTSUPP` without allocating a new directory block or
+changing the HTree. Exercise deletion from a secondary same-hash collision
+leaf and confirm only that leaf changes. Confirm SipHash-indexed deletion
+uses the linear fallback while insertion returns `EOPNOTSUPP`. Rename in an
+indexed parent and cross-parent rename of an indexed subdirectory must return
+`EOPNOTSUPP` without changing either name. Confirm unindexed directories on
+the same volume remain writable. Run `e2fsck -fn` after clean unmount.
 
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
