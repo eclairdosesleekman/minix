@@ -31,6 +31,11 @@ read-write mode.
   metadata_csum algorithm is used. Unknown checksum types and non-Linux
   metadata checksum formats are rejected. An invalid inode checksum is
   reported as `EIO` and the inode is not cached.
+- Read-only mounts accept ext4's quota and project-quota read-only-compatible
+  feature flags. The quota metadata is left untouched; writable mounts reject
+  either feature because quota accounting is not implemented.
+- Images carrying `RO_COMPAT_READONLY` are accepted read-only and explicitly
+  rejected for writable mounts.
 - Legacy `gdt_csum` group-descriptor checksums are verified using ext4's
   CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used
   with `64bit` are covered; when `metadata_csum` is also present, its CRC32C
@@ -124,6 +129,12 @@ implementation.
 
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
+- **Quota metadata is read-only:** `RO_COMPAT_QUOTA` and
+  `RO_COMPAT_PROJECT` filesystems can be mounted read-only, but writable
+  mounts are rejected because create, link, unlink, truncate, and allocation
+  paths do not update user/group/project quota records. The
+  `RO_COMPAT_READONLY` flag always requires a read-only mount, independent of
+  the caller's requested mount mode.
 - **Read-only metadata checksums:** `metadata_csum` superblock, group
   descriptor, initialized bitmap, inode, directory, external extent-node, and
   external xattr-block checksums are verified. All initialized block and inode bitmaps are scanned
@@ -310,6 +321,13 @@ bitmaps. Create a second image containing at least one group with
 `BLOCK_UNINIT` or `INODE_UNINIT`; confirm it remains read-only for this
 server. Confirm writable mounts are still rejected when `metadata_csum` is
 enabled.
+
+For quota feature coverage, create disposable ext4 filesystems with
+`quota` and with project quota enabled, both without journaling or metadata
+checksums. Confirm they mount read-only and file lookup/stat/read work, while
+a writable mount is rejected before the filesystem is marked unclean. Also
+set `read-only` on a disposable image and confirm read-only mounting works
+but a writable mount is refused.
 
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
