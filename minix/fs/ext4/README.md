@@ -15,6 +15,13 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Read-only support for `COMPAT_SPARSE_SUPER2`. The two backup group
+  numbers are decoded from `s_backup_bgs`, validated against the filesystem
+  group count, and used instead of the traditional sparse-super power-of-3/5/7
+  rule (as in Linux ext4). The primary GDT and the selected groups' backup
+  superblock/GDT/reserved-GDT ranges are excluded from file and extent mappings
+  and from group bitmap/inode-table placements. Writable mounts remain
+  unsupported because backup copies are not updated.
 - Read-only support for ext4 `meta_bg` group-descriptor placement. The
   descriptor table is assembled in logical order from the classic contiguous
   prefix and the primary descriptor blocks in later meta-block groups; group
@@ -469,6 +476,16 @@ Confirm invalid ranges are rejected before any pointed-to block is read.
 Also construct descriptors whose pointers are individually in range but alias
 another group's bitmap or inode-table extent; confirm the mount rejects these
 cross-group overlaps without rejecting a valid `flex_bg` layout.
+For read-only `sparse_super2` coverage, create disposable ext4 images
+with `-O sparse_super2,^meta_bg`. Test both populated backup-group fields,
+one field set with the other zero, and both fields zero. Confirm the listed
+groups alone contain backup superblock/GDT regions, that both sparse_super2
+and sparse_super with sparse_super2 set use the listed-group rule, and that
+invalid, duplicate, out-of-range, and group-zero backup values fail mount.
+Construct extents and group bitmap/inode-table pointers that alias the primary
+GDT, each listed backup superblock/GDT copy, and reserved-GDT blocks; each must
+be rejected. Writable mounts must fail before marking the volume unclean.
+
 For read-only `meta_bg` coverage, create disposable ext4 images with
 `meta_bg` enabled, both with and without `sparse_super`, and with
 `first_meta_bg` values that leave a classic GDT prefix and values that place
