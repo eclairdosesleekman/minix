@@ -445,6 +445,7 @@ static void super_copy(
 /* Note: we don't convert stuff, used in ext3. */
 {
 /* Copy super_block to the in-core table, swapping bytes if need be. */
+  unsigned int i;
   if (le_CPU) {
 	/* Just use memcpy */
 	memcpy(dest, source, SUPER_SIZE_D);
@@ -491,6 +492,9 @@ static void super_copy(
   dest->s_prealloc_blocks = source->s_prealloc_blocks;
   dest->s_prealloc_dir_blocks = source->s_prealloc_dir_blocks;
   dest->s_padding1 = conv2(le_CPU, source->s_padding1);
+  for (i = 0; i < 4; i++)
+	dest->s_hash_seed[i] = conv4(le_CPU, source->s_hash_seed[i]);
+  dest->s_def_hash_version = source->s_def_hash_version;
 }
 
 
