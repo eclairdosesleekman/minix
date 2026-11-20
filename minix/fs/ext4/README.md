@@ -58,9 +58,10 @@ read-write mode.
   payload fits in the inode plus the inode-body `system.data` xattr (up to the
   bounded in-core inline buffer). The xattr header, entry table, value bounds,
   and the inode checksum (when enabled) are validated before exposing bytes.
-  Inline directories, external xattr-inode payloads, `FSC_PEEK` page mapping, and all
-  inline-data writes remain unsupported; an inline directory inode returns
-  `EOPNOTSUPP`.
+  Inline directories support path lookup (including synthesized `.` and `..`)
+  and `getdents`; both independent dirent areas are validated, and the parent
+  inode is range-checked. External xattr-inode payloads, `FSC_PEEK` page
+  mapping, and all inline-data writes remain unsupported.
 - `INCOMPAT_EA_INODE` filesystems can be mounted read-only. Their ordinary
   files and directories remain readable; large xattr-value inodes are private
   to xattr entries and are rejected if a directory attempts to name one.
@@ -250,7 +251,7 @@ implementation.
   directory entry is removed. Multi-entry depth-two roots and depth-three or
   deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, meta_bg, MMP, encryption,
-  casefold, bigalloc, inline directories, and unsupported feature flags are rejected.
+  casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.
   The filesystem must be clean, with an empty legacy orphan list. An orphan-file
   filesystem is accepted read-only only when `RO_COMPAT_ORPHAN_PRESENT` is
   clear; writable mounts and filesystems with pending orphan-file recovery
@@ -413,6 +414,16 @@ checksums. Confirm they mount read-only and file lookup/stat/read work, while
 a writable mount is rejected before the filesystem is marked unclean. Also
 set `read-only` on a disposable image and confirm read-only mounting works
 but a writable mount is refused.
+
+For `INCOMPAT_INLINE_DATA`, create a disposable ext4 image with inline data
+enabled and no journal or metadata checksums. Create empty and populated
+inline directories, with entries stored both in the 56-byte inode area and
+in the `system.data` xattr area. Confirm `lookup` resolves `.` and `..`, path
+lookup finds names in both areas, and `getdents` returns every entry exactly
+once across short buffers and resumed cookies. Check `IS_EMPTY` for empty and
+non-empty inline directories, and corrupt the parent inode, xattr value
+bounds, dirent record lengths, name lengths, and inode numbers independently;
+the affected inode must fail with `EIO`. Inline directories remain read-only.
 
 For `INCOMPAT_LARGEDIR` coverage, create disposable ext4 images with the
 feature enabled, including an indexed directory whose HTree reaches three
