@@ -10,7 +10,9 @@ read-write mode.
   depth up to 5).
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
-  counters from the ext4 superblock.
+  counters from the ext4 superblock. Group descriptor bitmap and inode-table
+  pointers are range-checked before any per-group metadata blocks are read;
+  `flex_bg` placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
 - Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
