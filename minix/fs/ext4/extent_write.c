@@ -503,6 +503,7 @@ ext4_extent_can_truncate(struct inode *rip)
 	u32_t root_key, previous_key;
 	u16_t root_entries, root_max, depth, leaf_entries, leaf_max;
 	unsigned int i, j, k;
+	int r;
 
 	sp = rip->i_sp;
 	if (!sp->s_is_ext4)
@@ -524,17 +525,15 @@ ext4_extent_can_truncate(struct inode *rip)
 	if (extent_get16(root) != EXT4_EXTENT_MAGIC)
 		return(EIO);
 	depth = extent_get16(root + 6);
-	if (depth == 0)
-		return(OK);
-	if (depth != 1)
+	if (depth > 1)
 		return(EOPNOTSUPP);
 
 	root_entries = extent_get16(root + 2);
 	root_max = extent_get16(root + 4);
 	if (root_max == 0 ||
 	    root_max > (sizeof(rip->i_block) - 12) / 12 ||
-	    root_entries == 0 || root_entries > root_max ||
-	    sp->s_block_size == 0 || rip->i_size < 0)
+	    root_entries > root_max || sp->s_block_size == 0 ||
+	    rip->i_size < 0)
 		return(EIO);
 
 	file_blocks = (u64_t)rip->i_size / sp->s_block_size;
@@ -542,6 +541,35 @@ ext4_extent_can_truncate(struct inode *rip)
 		file_blocks++;
 	if (file_blocks > (u64_t)UINT32_MAX + 1)
 		return(EOPNOTSUPP);
+
+	/*
+	 * Inline roots have no external nodes. Reuse the normal root validator
+	 * and confirm every allocation is covered by the range truncate_inode()
+	 * will visit.
+	 */
+	if (depth == 0) {
+		r = extent_root(rip, &root, &root_entries, &root_max);
+		if (r != OK)
+			return(r);
+		owned_blocks = 0;
+		for (i = 0; i < root_entries; i++) {
+			extent_get(root + 12 + i * 12, &ex);
+			logical_end = (u64_t)ex.logical + ex.length;
+			if (logical_end > file_blocks)
+				return(EOPNOTSUPP);
+			if (owned_blocks > ~(u64_t)0 - ex.length)
+				return(EIO);
+			owned_blocks += ex.length;
+		}
+		if (sp->s_sectors_in_block == 0 ||
+		    owned_blocks > ~(u64_t)0 / sp->s_sectors_in_block ||
+		    owned_blocks * sp->s_sectors_in_block != rip->i_blocks)
+			return(EIO);
+		return(OK);
+	}
+
+	if (root_entries == 0)
+		return(EIO);
 
 	/* Validate all root keys and external-node pointers before reading them. */
 	previous_key = 0;
@@ -655,10 +683,10 @@ ext4_extent_can_truncate(struct inode *rip)
 		put_block(bp);
 	}
 
-	/* i_blocks includes the data blocks and the external leaf nodes. */
+	/* No unreferenced data or extent-node blocks may be lost on final unlink. */
 	if (sp->s_sectors_in_block == 0 ||
 	    owned_blocks > ~(u64_t)0 / sp->s_sectors_in_block ||
-	    owned_blocks * sp->s_sectors_in_block > rip->i_blocks)
+	    owned_blocks * sp->s_sectors_in_block != rip->i_blocks)
 		return(EIO);
 
 	return(OK);
