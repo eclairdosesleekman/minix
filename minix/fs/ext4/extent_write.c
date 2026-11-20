@@ -1037,7 +1037,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	u16_t root_entries, root_max, depth, leaf_entries, leaf_max;
 	u16_t child_hi;
 	unsigned int leaf_index, i, insert;
-	int free_leaf;
+	int free_leaf, r;
 
 	if (rip->i_sp->s_rd_only)
 		return(EROFS);
@@ -1227,8 +1227,27 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		}
 		if (offset != 0 && offset != ex.length - 1 &&
 		    leaf_entries >= leaf_max) {
-			put_block(bp);
-			return(EFBIG);
+			r = extent_depth1_split_leaf(rip, root, &root_entries,
+			    root_max, &leaf_index, logical, &bp, &node,
+			    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+			if (r != OK) {
+				put_block(bp);
+				return(r);
+			}
+			/* The original extent moved intact to one of the leaves. */
+			for (i = 0; i < leaf_entries; i++) {
+				entry = node + 12 + i * 12;
+				extent_get(entry, &ex);
+				if ((u64_t)logical >= ex.logical &&
+				    (u64_t)logical < (u64_t)ex.logical + ex.length)
+					break;
+			}
+			if (i == leaf_entries) {
+				put_block(bp);
+				return(EIO);
+			}
+			offset = logical - ex.logical;
+			block_to_free = ex.physical + offset;
 		}
 
 		if (ex.length == 1) {
@@ -1287,6 +1306,30 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 			return(EEXIST);
 		}
 		offset = logical - ex.logical;
+		if (((offset == 0 || offset == ex.length - 1) &&
+		    ex.length > 1 && leaf_entries >= leaf_max) ||
+		    (offset != 0 && offset != ex.length - 1 &&
+		    leaf_entries > leaf_max - 2)) {
+			r = extent_depth1_split_leaf(rip, root, &root_entries,
+			    root_max, &leaf_index, logical, &bp, &node,
+			    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+			if (r != OK) {
+				put_block(bp);
+				return(r);
+			}
+			for (i = 0; i < leaf_entries; i++) {
+				entry = node + 12 + i * 12;
+				extent_get(entry, &ex);
+				if ((u64_t)logical >= ex.logical &&
+				    (u64_t)logical < (u64_t)ex.logical + ex.length)
+					break;
+			}
+			if (i == leaf_entries) {
+				put_block(bp);
+				return(EIO);
+			}
+			offset = logical - ex.logical;
+		}
 		old_physical = ex.physical + offset;
 		if (offset == 0 && ex.length == 1) {
 			extent_put(entry, logical, old_physical, 1, FALSE);
@@ -1403,6 +1446,21 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		}
 	}
 
+	if (leaf_entries >= leaf_max) {
+		r = extent_depth1_split_leaf(rip, root, &root_entries,
+		    root_max, &leaf_index, logical, &bp, &node,
+		    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+		if (r != OK) {
+			put_block(bp);
+			return(r);
+		}
+		/* Recompute the insertion offset in the selected half. */
+		for (insert = 0; insert < leaf_entries; insert++) {
+			extent_get(node + 12 + insert * 12, &next);
+			if (next.logical > logical)
+				break;
+		}
+	}
 	if (leaf_entries >= leaf_max) {
 		put_block(bp);
 		return(EFBIG);
@@ -1556,8 +1614,13 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    ex.length - 1, TRUE);
 			entries++;
 		} else if (offset == ex.length - 1) {
-			if (entries >= max_entries)
-				return(EFBIG);
+			if (entries >= max_entries) {
+				if ((r = extent_promote_root(rip, root, entries,
+				    max_entries)) != OK)
+					return(r);
+				return(extent_depth1_write_map(rip, position,
+				    new_wblock, op));
+			}
 			extent_put(entry, ex.logical, ex.physical, ex.length - 1,
 			    TRUE);
 			memmove(entry + 24, entry + 12,
