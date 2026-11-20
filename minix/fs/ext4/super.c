@@ -1005,6 +1005,22 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 			return(EIO);
 		}
 
+		/*
+		 * The bitmap and inode-table blocks must not alias any primary or
+		 * backup META_BG descriptor block; those blocks are reserved too.
+		 */
+		if (ext4_meta_bg_overlaps_descriptor_blocks(sp, block_bitmap,
+		    block_bitmap + 1) ||
+		    ext4_meta_bg_overlaps_descriptor_blocks(sp, inode_bitmap,
+		    inode_bitmap + 1) ||
+		    ext4_meta_bg_overlaps_descriptor_blocks(sp, inode_table,
+		    inode_table + table_blocks)) {
+			printf("ext4: group %u metadata overlaps META_BG descriptor blocks\\n",
+			    i);
+			free(ranges);
+			return(EIO);
+		}
+
 		/* A group's own bitmaps cannot occupy its inode table blocks. */
 		if ((block_bitmap >= inode_table &&
 		    block_bitmap - inode_table < table_blocks) ||
