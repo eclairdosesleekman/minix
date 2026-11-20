@@ -1,9 +1,10 @@
 /*
  * Limited ext4 extent-tree updates.
  *
- * This writer supports inline-root promotion, depth-one leaf allocation and
- * splitting, and in-place depth-one updates.  It does not split depth-one root
- * indexes or rebalance depth-two and deeper trees.
+ * This writer supports inline-root promotion, depth-one leaf allocation,
+ * splitting and compaction, plus a guarded depth-two layout whose inode root
+ * has one external depth-one index node. It does not split full external
+ * index nodes, support multi-entry depth-two roots, or mutate deeper trees.
  */
 
 #include "fs.h"
