@@ -36,8 +36,11 @@ read-write mode.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
   leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
-  The 48-bit `i_file_acl` pointer is range-checked and shared xattr blocks use
-  the block-number-based checksum defined by Linux ext4. Bitmap checksums are
+  The 48-bit `i_file_acl` pointer is decoded when `64bit` is enabled and
+  every referenced external xattr block is range-checked. Its magic, reference
+  count, single-block length, and reserved header words are validated even
+  without `metadata_csum`; when checksums are enabled, the Linux ext4
+  block-number-based CRC32C is also verified. Bitmap checksums are
   verified for every initialized group during mount, before the filesystem is
   exposed. Uninitialized bitmaps are skipped according to their group flags.
   Both UUID-derived and `metadata_csum_seed` checksum seeds are supported.
