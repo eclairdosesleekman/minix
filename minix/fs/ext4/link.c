@@ -337,6 +337,19 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 	}
   }
 
+  /*
+   * Rename may need to delete an existing destination before inserting the
+   * new name and deleting the old one.  Reject it up front when either parent
+   * is indexed so that a later EOPNOTSUPP cannot leave a half-completed rename.
+   */
+  if ((old_dirp->i_flags & EXT2_INDEX_FL) ||
+      (new_dirp->i_flags & EXT2_INDEX_FL)) {
+	put_inode(old_ip);
+	put_inode(old_dirp);
+	put_inode(new_dirp);
+	return(EOPNOTSUPP);
+  }
+
   new_ip = advance(new_dirp, new_name); /* not required to exist */
 
   /* If the node does exist, make sure it's not a mountpoint. */
