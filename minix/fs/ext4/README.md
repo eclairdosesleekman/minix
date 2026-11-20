@@ -132,9 +132,12 @@ implementation.
   external index node into a higher level remain unsupported. Operations that
   require those changes fail without changing the tree.
 - Final unlink is supported for inline and validated depth-one extent trees,
-  including inodes with a valid external xattr block. External trees deeper
-  than one level and depth-one trees with mappings beyond EOF are rejected
-  before the final directory entry is removed.
+  including inodes with a valid external xattr block, and for depth-two trees
+  with exactly one inode-root index entry. The depth-two preflight validates
+  the external index and every leaf, checks physical aliases and exact
+  `i_blocks` accounting, and rejects mappings beyond EOF before the final
+  directory entry is removed. Multi-entry depth-two roots and depth-three or
+  deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
   encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
   are rejected. The filesystem must be clean, with an empty legacy orphan list.
