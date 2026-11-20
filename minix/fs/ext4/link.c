@@ -24,10 +24,10 @@ static void zeroblock_half(struct inode *i, off_t p, int l);
 static void zeroblock_range(struct inode *i, off_t p, off_t h);
 
 /*
- * Removing the last name of an inode with an external extent tree would
- * require freeing its extent nodes.  That operation is intentionally not
- * implemented by the bounded inline-root writer.  Keep the inode allocated
- * rather than letting put_inode() discard it after a failed truncate.
+ * Removing the last name of an inode with an external extent tree also
+ * requires freeing its index and leaf nodes.  Leaf-local updates do not
+ * collapse or release those nodes, so keep the inode allocated rather than
+ * letting put_inode() discard it after a failed truncate.
  */
 static int has_external_extent_tree(struct inode *rip)
 {

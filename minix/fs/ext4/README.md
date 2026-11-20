@@ -42,9 +42,11 @@ read-write mode.
   directories. The block and inode bitmaps, group free counters, inode table,
   superblock counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
-- Inline (depth-zero) extent roots can be inserted into, coalesced, and split
-  while allocating, writing, and truncating files. Writes into unwritten
-  inline extents convert the affected block to an initialized extent.
+- Inline extent roots and existing external extent-tree leaves can be updated
+  in place while allocating, writing, and truncating files. External-leaf
+  updates are bounded: they must preserve the leaf's first logical-block key
+  and fit in the existing leaf. Writes into unwritten extents convert the
+  affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
 
@@ -66,11 +68,12 @@ implementation.
   not implemented.
 - **No indexed directories:** writable mounts reject `dir_index`; htree
   directory updates are not implemented.
-- **Inline extent root only for extent mutations:** the inode root has room
-  for four extent records. Allocation, unwritten-extent conversion, and
-  truncation return `EOPNOTSUPP` or `EFBIG` when an external extent node or
-  additional root capacity would be required. Initialized data blocks already
-  mapped by an external extent tree can still be read and overwritten.
+- **Bounded extent-tree mutation:** an external leaf can be edited only when
+  the operation fits in its existing slots and does not change its first
+  logical-block key. Operations that need a new node, split/rebalance a node,
+  insert before a leaf's first extent, or remove the first block of a leaf
+  return `EOPNOTSUPP` or `EFBIG`. These limits avoid changing parent index
+  entries without a complete tree-rebalancing implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
@@ -135,8 +138,16 @@ mke2fs -F -t ext4 -b 4096 \
 
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
-and long symlinks. Include files with unwritten extents and files whose inline
-extent root reaches its four-entry capacity. For the 64 KiB image, exercise
+and long symlinks. Include files with unwritten extents and files whose
+inline extent root reaches its four-entry capacity. To exercise external-leaf
+updates, first populate a disposable image on Linux with a fragmented file
+containing more than four extents, then attach that image to MINIX; this server
+does not yet create or split external extent nodes. On that file, exercise
+writes into holes within a leaf, unwritten-extent conversion, and tail
+truncation while keeping the first extent of each leaf intact. Operations that
+require changing a leaf's first logical-block key or splitting a full leaf
+must fail without damaging the filesystem. Unmount cleanly and run
+`e2fsck -fn`. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
@@ -194,6 +205,7 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The 64 KiB directory-record, `huge_file`, and `metadata_csum` extensions have not yet
-been compiled or runtime-tested in a MINIX build environment. Treat this as a
-review candidate and test it on disposable images only.
+The 64 KiB directory-record, `huge_file`, `metadata_csum`, and bounded
+external-extent-leaf update changes have not yet been compiled or
+runtime-tested in a MINIX build environment. Treat this as a review candidate
+and test it on disposable images only.
