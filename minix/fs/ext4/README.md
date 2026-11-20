@@ -15,6 +15,15 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Read-only support for ext4 `meta_bg` group-descriptor placement. The
+  descriptor table is assembled in logical order from the classic contiguous
+  prefix and the primary descriptor blocks in later meta-block groups; group
+  selection follows the standard `sparse_super` backup-superblock rules, and
+  descriptor checksums are verified only after all blocks have been gathered.
+  Writable mounts remain rejected because the writer still persists a classic
+  contiguous descriptor table. `sparse_super2` combined with `meta_bg` and
+  alternate-superblock selection are rejected rather than guessing descriptor
+  locations.
 - Linux extended inode timestamps are decoded and stored using ext4's
   34-bit seconds and nanosecond fields when present in `i_extra_isize`.
   `stat` reports atime/mtime/ctime nanoseconds and the inode creation time
@@ -250,8 +259,8 @@ implementation.
   `i_blocks` accounting, and rejects mappings beyond EOF before the final
   directory entry is removed. Multi-entry depth-two roots and depth-three or
   deeper trees remain unsupported for final unlink.
-- Existing restrictions still apply: recovery, meta_bg, MMP, encryption,
-  casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.
+- Existing restrictions still apply: recovery, MMP, encryption,
+  casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.\n  META_BG is supported only for read-only primary-superblock mounts with the\n  classic sparse_super backup layout; SPARSE_SUPER2 and alternate-superblock\n  META_BG layouts remain unsupported.
   The filesystem must be clean, with an empty legacy orphan list. An orphan-file
   filesystem is accepted read-only only when `RO_COMPAT_ORPHAN_PRESENT` is
   clear; writable mounts and filesystems with pending orphan-file recovery
@@ -453,6 +462,17 @@ Confirm invalid ranges are rejected before any pointed-to block is read.
 Also construct descriptors whose pointers are individually in range but alias
 another group's bitmap or inode-table extent; confirm the mount rejects these
 cross-group overlaps without rejecting a valid `flex_bg` layout.
+For read-only `meta_bg` coverage, create disposable ext4 images with
+`meta_bg` enabled, both with and without `sparse_super`, and with
+`first_meta_bg` values that leave a classic GDT prefix and values that place
+all descriptor blocks in meta groups. Verify 32-byte and 64-byte descriptors,
+including `metadata_csum` and legacy `gdt_csum` variants where supported.
+Check groups whose first group number is a power of 3, 5, or 7, plus ordinary
+groups without backup superblocks. Corrupt a descriptor in a later meta group
+and confirm mount fails checksum validation before its bitmap or inode-table
+pointers are followed. Confirm writable mounts, `sparse_super2` +
+`meta_bg`, and alternate-superblock selection are rejected.
+
 Use `e2fsck -fn` on the unmounted image after each test.
 
 The large-file read path should be tested with files larger than 2 TiB on
