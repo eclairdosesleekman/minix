@@ -91,6 +91,13 @@ ext4_csum_write16(unsigned char *p, u16_t value)
 	memcpy(p, &value, sizeof(value));
 }
 
+static void
+ext4_csum_write32(unsigned char *p, u32_t value)
+{
+	value = (u32_t)conv4(le_CPU, value);
+	memcpy(p, &value, sizeof(value));
+}
+
 int
 ext4_update_inode_csum(struct super_block *sp, ino_t ino,
 	unsigned char *raw, size_t inode_size)
@@ -341,6 +348,39 @@ ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 	return(stored == crc);
 }
 
+
+/*
+ * Regenerate the checksum on an ordinary ext4 directory leaf block. Indexed
+ * directories use dx tails and require HTree mutation support; keep those
+ * updates explicitly unsupported rather than writing a leaf checksum there.
+ */
+int
+ext4_update_dir_block_csum(struct inode *rip, unsigned char *data)
+{
+	unsigned int block_size, tail_offset;
+	unsigned char *tail;
+	u32_t crc;
+
+	if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM))
+		return(OK);
+	if (rip->i_sp->s_creator_os != EXT4_OS_LINUX ||
+	    (rip->i_flags & EXT2_INDEX_FL))
+		return(EOPNOTSUPP);
+
+	block_size = rip->i_sp->s_block_size;
+	if (block_size < 32)
+		return(EIO);
+	tail_offset = block_size - 12;
+	tail = data + tail_offset;
+	if (ext4_csum_read32(tail) != 0 ||
+	    ext4_csum_read16(tail + 4) != 12 ||
+	    tail[6] != 0 || tail[7] != 0xde)
+		return(EIO);
+
+	crc = ext4_crc32c(ext4_inode_csum_seed(rip), data, tail_offset);
+	ext4_csum_write32(tail + 8, crc);
+	return(OK);
+}
 
 /*
  * ext4 reserves 0xffff (and, for larger block sizes, zero) to represent
