@@ -355,7 +355,7 @@ ext4_dx_load_frame(struct inode *rip, u32_t logical, int root,
 	struct ext4_dx_frame *frame)
 {
 	struct super_block *sp = rip->i_sp;
-	struct ext2_disk_dir_desc *fake;
+	const struct ext2_disk_dir_desc *fake;
 	const unsigned char *data;
 	u64_t directory_blocks, offset;
 	unsigned int limit_offset, max_limit, i;
@@ -387,7 +387,7 @@ ext4_dx_load_frame(struct inode *rip, u32_t logical, int root,
 			return(EIO);
 		}
 	} else {
-		fake = (struct ext2_disk_dir_desc *)(uintptr_t)data;
+		fake = (const struct ext2_disk_dir_desc *)data;
 		if (fake->d_ino != 0 ||
 		    ext4_dir_rec_len(fake, sp->s_block_size) != sp->s_block_size ||
 		    fake->d_name_len != 0 || fake->d_file_type != 0) {
