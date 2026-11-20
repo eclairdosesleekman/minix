@@ -19,6 +19,7 @@ read-write mode.
   counter is 64-bit; writes serialize the 48-bit on-disk counter in 512-byte
   units when possible, then switch to filesystem-block units and set
   `HUGE_FILE` when the 48-bit sector representation is exceeded.
+- Read-only verification of legacy `gdt_csum` group-descriptor checksums using ext4's CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used with `64bit` are covered; `metadata_csum` takes precedence when both features are present.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
   leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
@@ -60,7 +61,9 @@ implementation.
   external xattr-block checksums are verified. All initialized block and inode bitmaps are scanned
   at mount time. Writable mounts reject `metadata_csum` because allocation,
   inode and directory mutation paths do not update checksums. Legacy
-  `gdt_csum` without `metadata_csum` remains unsupported.
+  `gdt_csum` without `metadata_csum` is verified for read-only mounts;
+  writable mounts reject it because group descriptor checksum updates are
+  not implemented.
 - **No indexed directories:** writable mounts reject `dir_index`; htree
   directory updates are not implemented.
 - **Inline extent root only for extent mutations:** the inode root has room
@@ -143,6 +146,27 @@ accepts an allocation that moves the in-core sector count beyond 2^32 when
 feature. Exercise encoder boundary values at 2^32 and 2^48 sectors, and the
 switch to filesystem-block units above 2^48 sectors; reject values exceeding
 the 48-bit filesystem-block limit before changing the extent tree.
+
+For legacy `gdt_csum` coverage, create disposable ext4 images with
+`metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:
+
+```sh
+truncate -s 512M ext4-gdt-csum-test.img
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,gdt_csum,^metadata_csum,^has_journal,^dir_index,\
+^64bit,^huge_file,^orphan_file ext4-gdt-csum-test.img
+
+truncate -s 512M ext4-gdt-csum-64bit-test.img
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,64bit,gdt_csum,^metadata_csum,^has_journal,^dir_index,\
+^huge_file,^orphan_file ext4-gdt-csum-64bit-test.img
+```
+
+Mount both images read-only and verify normal directory and inode reads.
+Corrupt a group's descriptor payload and its stored `bg_checksum`
+independently; each image must be rejected before the affected group metadata
+is used. A read-write mount must be rejected without changing the image.
+Run `e2fsck -fn` on each unmounted image after testing.
 
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
