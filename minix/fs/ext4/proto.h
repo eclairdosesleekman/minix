@@ -99,6 +99,8 @@ u32_t ext4_crc32c(u32_t crc, const void *data, size_t len);
 u32_t ext4_inode_csum_seed(struct inode *rip);
 int ext4_verify_inode_csum(struct super_block *sp, ino_t ino,
 	const unsigned char *raw, size_t inode_size);
+int ext4_validate_data_range(struct inode *rip, block64_t first,
+	u64_t length);
 int ext4_validate_xattr_block(struct super_block *sp, dev_t dev,
 	block64_t block);
 int ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
