@@ -42,6 +42,8 @@ static int verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	unsigned int ngroups, unsigned int desc_size);
 static int verify_group_descriptor_block_ranges(struct super_block *sp,
 	struct group_desc *groups, unsigned int ngroups);
+static void update_legacy_group_descriptor_checksums(
+	struct super_block *sp);
 
 
 /*===========================================================================*
@@ -320,6 +322,8 @@ write_super(struct super_block *sp)
 			}
 		}
 
+		update_legacy_group_descriptor_checksums(sp);
+
 		if (opt.block_with_super == 0)
 			gdt_position = ((u64_t)sp->s_first_data_block + 1) *
 			    sp->s_block_size;
@@ -495,6 +499,39 @@ ext4_crc16(u16_t crc, const void *data, size_t len)
 			    (0xa001U & (u16_t)-(int)(crc & 1)));
 	}
 	return(crc);
+}
+
+/*
+ * Recompute the legacy gdt_csum checksum after the in-memory descriptor
+ * counters have been serialized into the raw descriptor array. The checksum
+ * covers the filesystem UUID, the little-endian group number, and the complete
+ * descriptor with bg_checksum (bytes 30..31) omitted. This covers both the
+ * 32-byte descriptors and the 64-byte descriptors used by ext4 64bit volumes.
+ * metadata_csum supersedes gdt_csum and remains read-only in this server.
+ */
+static void
+update_legacy_group_descriptor_checksums(struct super_block *sp)
+{
+	unsigned char *p;
+	u32_t group_le;
+	u16_t crc;
+	unsigned int i;
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) ||
+	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+		return;
+
+	for (i = 0; i < sp->s_groups_count; i++) {
+		p = ondisk_group_descs + (size_t)i * sp->s_desc_size;
+		group_le = (u32_t)conv4(le_CPU, i);
+		crc = ext4_crc16((u16_t)~0U, sp->s_uuid,
+		    sizeof(sp->s_uuid));
+		crc = ext4_crc16(crc, &group_le, sizeof(group_le));
+		crc = ext4_crc16(crc, p, 30);
+		if (sp->s_desc_size > 32)
+			crc = ext4_crc16(crc, p + 32, sp->s_desc_size - 32);
+		ext4_store16(p + 30, crc);
+	}
 }
 
 static int

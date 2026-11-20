@@ -19,7 +19,7 @@ read-write mode.
   counter is 64-bit; writes serialize the 48-bit on-disk counter in 512-byte
   units when possible, then switch to filesystem-block units and set
   `HUGE_FILE` when the 48-bit sector representation is exceeded.
-- Read-only verification of legacy `gdt_csum` group-descriptor checksums using ext4's CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used with `64bit` are covered; `metadata_csum` takes precedence when both features are present.
+- Verification and write-time regeneration of legacy `gdt_csum` group-descriptor checksums using ext4's CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used with `64bit` are covered. Read-write mounts can use `gdt_csum` when `metadata_csum` is absent; descriptor checksums are recomputed after updated group counters are serialized. `metadata_csum` takes precedence when both features are present.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
   leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
@@ -75,9 +75,9 @@ implementation.
   external xattr-block checksums are verified. All initialized block and inode bitmaps are scanned
   at mount time. Writable mounts reject `metadata_csum` because allocation,
   inode and directory mutation paths do not update checksums. Legacy
-  `gdt_csum` without `metadata_csum` is verified for read-only mounts;
-  writable mounts reject it because group descriptor checksum updates are
-  not implemented.
+  `gdt_csum` without `metadata_csum` is verified at mount and its CRC16
+  checksum is regenerated whenever group descriptors are written, so it is
+  supported on read-write mounts.
 - **No indexed-directory updates:** writable mounts reject `dir_index`
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level
@@ -214,6 +214,31 @@ independently; each image must be rejected before the affected group metadata
 is used. A read-write mount must be rejected without changing the image.
 Run `e2fsck -fn` on each unmounted image after testing.
 
+For writable legacy `gdt_csum` coverage, create two disposable images with
+checksums enabled and metadata_csum/journaling/indexed directories disabled:
+
+```sh
+truncate -s 512M ext4-gdt-csum-rw-test.img
+mke2fs -F -t ext4 -b 4096 \\
+  -O extent,gdt_csum,^metadata_csum,^has_journal,^dir_index,^64bit,\\
+^huge_file,^orphan_file ext4-gdt-csum-rw-test.img
+
+truncate -s 512M ext4-gdt-csum-rw-64bit-test.img
+mke2fs -F -t ext4 -b 4096 \\
+  -O extent,64bit,gdt_csum,^metadata_csum,^has_journal,^dir_index,\\
+^huge_file,^orphan_file ext4-gdt-csum-rw-64bit-test.img
+
+e2fsck -fn ext4-gdt-csum-rw-test.img
+e2fsck -fn ext4-gdt-csum-rw-64bit-test.img
+```
+
+Attach each image to MINIX and mount it read-write. Create and remove files
+and directories so that block, inode, and used-directory counters change.
+Unmount cleanly, then run `e2fsck -fn` on both images. Repeat after enough
+operations to cross group boundaries. Verify that the 32-byte and 64-byte
+group descriptors both pass checksum validation and that a deliberately
+corrupted `bg_checksum` still causes a read-only mount to fail.
+
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
 indexed directories, nested external extent trees, and large inode tables.
@@ -249,7 +274,7 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The 64 KiB directory-record, `huge_file`, `metadata_csum`, and bounded
-external-extent-leaf update changes have not yet been compiled or
-runtime-tested in a MINIX build environment. Treat this as a review candidate
+The 64 KiB directory-record, `huge_file`, `metadata_csum`, bounded
+external-extent-leaf update, and writable legacy `gdt_csum` changes have not
+yet been compiled or runtime-tested in a MINIX build environment. Treat this as a review candidate
 and test it on disposable images only.
