@@ -18,13 +18,13 @@
  */
 EXTERN struct inode {
     u16_t  i_mode;         /* File mode */
-    u16_t  i_uid;          /* Low 16 bits of Owner Uid */
+    u32_t  i_uid;          /* Full 32-bit owner UID (decoded from ext4) */
     off_t  i_size;         /* Size in bytes */
     u32_t  i_atime;        /* Access time */
     u32_t  i_ctime;        /* Creation time */
     u32_t  i_mtime;        /* Modification time */
     u32_t  i_dtime;        /* Deletion Time */
-    u16_t  i_gid;          /* Low 16 bits of Group Id */
+    u32_t  i_gid;          /* Full 32-bit group ID (decoded from ext4) */
     u16_t  i_links_count;  /* Links count */
     u64_t  i_blocks;       /* 512-byte sectors (decoded from ext4 huge_file) */
     u32_t  i_flags;        /* File flags */
