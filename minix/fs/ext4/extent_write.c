@@ -498,7 +498,7 @@ ext4_extent_can_truncate(struct inode *rip)
 	struct ext4_extent ex, prior;
 	struct super_block *sp;
 	struct buf *bp;
-	block64_t child, leaf_block, prior_child;
+	block64_t child, leaf_block, prior_child, xattr_block;
 	u64_t file_blocks, previous_end, next_key, logical_end, owned_blocks;
 	u32_t root_key, previous_key;
 	u16_t root_entries, root_max, depth, leaf_entries, leaf_max;
@@ -509,15 +509,9 @@ ext4_extent_can_truncate(struct inode *rip)
 	if (!sp->s_is_ext4)
 		return(OK);
 
-	/*
-	 * External xattr blocks have independent reference counts and checksum
-	 * handling. Until their unlink path updates both, never drop the inode
-	 * pointer and leak (or incorrectly release) an external xattr block.
-	 */
-	if (rip->i_file_acl != 0 ||
-	    (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT) &&
-	    conv2(le_CPU, rip->osd2.linux2.i_pad1) != 0))
-		return(EOPNOTSUPP);
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK)
+		return(EIO);
 	if (!(rip->i_flags & EXT4_EXTENTS_FL))
 		return(OK);
 
@@ -552,6 +546,10 @@ ext4_extent_can_truncate(struct inode *rip)
 		if (r != OK)
 			return(r);
 		owned_blocks = 0;
+		if (xattr_block != 0 &&
+		    extent_block_is_mapped(root + 12, root_entries,
+		    xattr_block))
+			return(EIO);
 		for (i = 0; i < root_entries; i++) {
 			extent_get(root + 12 + i * 12, &ex);
 			logical_end = (u64_t)ex.logical + ex.length;
@@ -581,6 +579,7 @@ ext4_extent_can_truncate(struct inode *rip)
 		if (child <= sp->s_first_data_block ||
 		    child >= sp->s_blocks_count ||
 		    extent_is_group_metadata(sp, child) ||
+		    child == xattr_block ||
 		    (i != 0 && root_key <= previous_key))
 			return(EIO);
 		for (j = 0; j < i; j++) {
@@ -615,6 +614,12 @@ ext4_extent_can_truncate(struct inode *rip)
 		if (leaf_max == 0 ||
 		    leaf_max > (sp->s_block_size - 12) / 12 ||
 		    leaf_entries == 0 || leaf_entries > leaf_max) {
+			put_block(bp);
+			return(EIO);
+		}
+
+		if (xattr_block != 0 &&
+		    extent_block_is_mapped(node + 12, leaf_entries, xattr_block)) {
 			put_block(bp);
 			return(EIO);
 		}
@@ -689,6 +694,123 @@ ext4_extent_can_truncate(struct inode *rip)
 	    owned_blocks * sp->s_sectors_in_block != rip->i_blocks)
 		return(EIO);
 
+	return(OK);
+}
+
+/*
+ * Return the external xattr block pointer stored in the inode. The high
+ * 16 bits occupy l_i_file_acl_high when the 64-bit feature is present.
+ */
+static block64_t
+extent_inode_xattr_block(struct inode *rip)
+{
+	block64_t block;
+
+	block = (block64_t)(u32_t)rip->i_file_acl;
+	if (HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_64BIT))
+		block |= (block64_t)conv2(le_CPU,
+		    rip->osd2.linux2.i_pad1) << 32;
+	return(block);
+}
+
+/*
+ * Validate the xattr block header before it is ever detached from an inode.
+ * ext4 stores one external xattr block per inode; identical blocks may be
+ * shared, so h_refcount must be in the supported range.
+ */
+static int
+extent_validate_xattr_block(struct inode *rip, block64_t block)
+{
+	struct super_block *sp = rip->i_sp;
+	struct buf *bp;
+	const unsigned char *data;
+	u32_t magic, refcount, blocks;
+
+	if (block == 0)
+		return(OK);
+	if (block <= sp->s_first_data_block ||
+	    block >= sp->s_blocks_count ||
+	    extent_is_group_metadata(sp, block))
+		return(EIO);
+
+	bp = get_block(rip->i_dev, block, NORMAL);
+	if (bp == NULL)
+		return(EIO);
+	data = (const unsigned char *)b_data(bp);
+	magic = extent_get32(data);
+	refcount = extent_get32(data + 4);
+	blocks = extent_get32(data + 8);
+	put_block(bp);
+
+	if (magic != EXT4_XATTR_MAGIC || refcount == 0 ||
+	    refcount > EXT4_XATTR_REFCOUNT_MAX || blocks != 1)
+		return(EIO);
+
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+	    !ext4_verify_xattr_block_csum(sp, rip->i_dev, block))
+		return(EIO);
+
+	return(OK);
+}
+
+/*
+ * Drop this inode's reference to its external xattr block. Shared blocks are
+ * retained with a decremented reference count; an unshared block is returned
+ * to the allocation bitmap. Xattr blocks are quota/accounting objects and are
+ * not included in the inode's i_blocks extent-data counter.
+ */
+int
+ext4_release_xattr_block(struct inode *rip)
+{
+	struct super_block *sp = rip->i_sp;
+	struct buf *bp;
+	unsigned char *data;
+	block64_t block;
+	u32_t magic, refcount, blocks;
+
+	if (!sp->s_is_ext4)
+		return(OK);
+	block = extent_inode_xattr_block(rip);
+	if (block == 0)
+		return(OK);
+	if (sp->s_rd_only)
+		return(EROFS);
+	/* Writable metadata_csum is not supported by the mount path. */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+		return(EOPNOTSUPP);
+	if (block <= sp->s_first_data_block ||
+	    block >= sp->s_blocks_count ||
+	    extent_is_group_metadata(sp, block))
+		return(EIO);
+
+	bp = get_block(rip->i_dev, block, NORMAL);
+	if (bp == NULL)
+		return(EIO);
+	data = (unsigned char *)b_data(bp);
+	magic = extent_get32(data);
+	refcount = extent_get32(data + 4);
+	blocks = extent_get32(data + 8);
+	if (magic != EXT4_XATTR_MAGIC || refcount == 0 ||
+	    refcount > EXT4_XATTR_REFCOUNT_MAX || blocks != 1) {
+		put_block(bp);
+		return(EIO);
+	}
+
+	/* Clear both pointer halves before the inode is written back. */
+	rip->i_file_acl = 0;
+	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT))
+		rip->osd2.linux2.i_pad1 = 0;
+	rip->i_dirt = IN_DIRTY;
+
+	if (refcount > 1) {
+		extent_put32(data + 4, refcount - 1);
+		lmfs_markdirty(bp);
+		put_block(bp);
+		return(OK);
+	}
+
+	put_block(bp);
+	free_block(sp, block);
 	return(OK);
 }
 
