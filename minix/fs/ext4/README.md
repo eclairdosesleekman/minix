@@ -62,6 +62,17 @@ read-write mode.
   first extent changes, and an empty leaf is detached and freed. Operations
   that require leaf splitting or tree rebalancing are rejected; deeper trees
   remain read-only for mutation.
+- Final unlink of ext4 extent-backed files is supported for inline roots
+  and validated depth-one trees. Before removing the last directory entry,
+  all mappings are checked for valid physical ranges, non-aliasing, and
+  containment within the file's logical size. The preflight also verifies
+  that `i_blocks` exactly matches data and external extent-node blocks.
+  Truncation frees the data blocks and detaches/frees each external leaf.
+  Depth-two and deeper trees, mappings beyond EOF, and inodes with external
+  xattr blocks are rejected before the name is removed.
+- If truncation fails unexpectedly during inode reclamation, the inode bitmap
+  is not released. The zero-link inode is kept allocated for later fsck/recovery
+  rather than allowing its still-referenced blocks to be reallocated.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
 
@@ -93,8 +104,10 @@ implementation.
   allocate/split external nodes or rebalance trees. Such operations return
   `EOPNOTSUPP` or `EFBIG` without modifying the extent tree. Trees deeper
   than one external level remain read-only for mutation.
-- Removing the final name of an inode with an external extent tree is rejected
-  rather than freeing the inode while leaking its data blocks.
+- Final unlink is supported for inline and validated depth-one extent trees.
+  External trees deeper than one level, depth-one trees with mappings beyond
+  EOF, and inodes referencing external xattr blocks are rejected before the
+  final directory entry is removed.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
   encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
   are rejected. The filesystem must be clean, with an empty legacy orphan list.
@@ -184,10 +197,15 @@ selected leaf, or sibling leaf and confirm it is rejected.
 Also create fragmented files
 whose extent roots grow to depth one; overwrite unwritten extents, allocate
 holes within existing leaves, trim extents at both ends, split an extent by
-punching a middle block, and remove all mappings from one leaf. Confirm
-updates that would require a full leaf or tree split fail without changing
-the inode or leaf metadata. Depth-two and deeper trees must remain readable
-but reject mutations. For the 64 KiB image, exercise
+punching a middle block, and remove all mappings from one leaf. Unlink files
+with one and multiple external leaves and confirm all data and leaf blocks are
+freed; then check free-block/free-inode counts with `e2fsck -fn`. Construct a
+depth-one file with a mapping beyond EOF and confirm final unlink fails before
+removing its name. Inject an extent-node read/write failure during final
+reclamation and confirm the inode bitmap is not released. Confirm updates
+that would require a full leaf or tree split fail without changing the inode
+or leaf metadata. Depth-two and deeper trees must remain readable but reject
+mutation and final unlink. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
