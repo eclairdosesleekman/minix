@@ -212,7 +212,6 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				 * logical block before its first key still belongs in
 				 * the first leaf; the root key can be lowered on insert.
 				 */
-				entry = NULL;
 				selected_index = 0;
 				selected_key = extent_get32(node + 12);
 				child = ((u64_t)extent_get16(node + 20) << 32) |
