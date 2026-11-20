@@ -245,7 +245,9 @@ tree to four or fewer extents and confirm it is demoted to an inline root and
 its metadata block is freed. Also remove an entire leaf and verify the
 surviving neighboring leaves are reconsidered for merging/demotion. Fill all
 inode-root index slots and verify a
-further split request fails without changing either leaf or the index. Unlink files
+further split request fails without changing either leaf or the index. For the
+depth-two single-root case, also verify that an external parent index with no
+free slots rejects a split without changing the parent or selected leaf. Unlink files
 with one and multiple external leaves and confirm all data and leaf blocks are
 freed; then check free-block/free-inode counts with `e2fsck -fn`. Construct a
 depth-one file with a mapping beyond EOF and confirm final unlink fails before
@@ -258,8 +260,9 @@ cases when rename replaces an existing destination; the rename must preflight
 before changing either name. Also test an xattr pointer that aliases a data
 extent, an extent leaf, or group metadata. Inject an extent-node read/write
 failure during final reclamation and confirm the inode bitmap is not released. Confirm depth-one leaf splits succeed when a root index slot is available;
-requests that would require depth-two index-node creation fail without
-changing the extent tree. Depth-two and deeper trees must remain readable but
+requests that would require splitting an external index node into
+another tree level fail without changing the extent tree. Multi-root
+depth-two trees and depth-three or deeper trees must remain readable but
 reject mutation and final unlink. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
