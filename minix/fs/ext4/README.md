@@ -45,7 +45,9 @@ read-write mode.
   groups carrying `BLOCK_UNINIT` or `INODE_UNINIT` remain read-only because
   lazy bitmap initialization is not implemented.
 - Directory record lengths, names, and inode numbers are bounds-checked before
-  use.
+  use. The ext4 directory-entry type table maps all eight defined on-disk
+  values, including UNIX-domain sockets (`EXT2_FT_SOCK` to `DT_SOCK`); unknown
+  or unsupported values continue to report `DT_UNKNOWN`.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
