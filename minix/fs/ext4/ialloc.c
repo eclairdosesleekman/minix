@@ -80,7 +80,7 @@ struct inode *alloc_inode(struct inode *parent, mode_t bits, uid_t uid,
 	 * not to repeat the code twice.
 	 */
 	wipe_inode(rip);
-	if (sp->s_is_ext4) {
+	if (sp->s_is_ext4 && sp->s_creator_os == EXT4_OS_LINUX) {
 		rip->i_crtime = clock_time(NULL);
 		rip->i_crtime_nsec = 0;
 	}
