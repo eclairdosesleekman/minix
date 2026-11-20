@@ -77,8 +77,8 @@ extent_put(unsigned char *p, u32_t logical, u64_t physical,
 }
 
 /*
- * Return the inode's inline extent root.  A non-zero depth is a valid ext4
- * tree, but this writer cannot rebalance its external nodes.
+ * Return the inode's inline extent root.  Depth-one trees are handled by the
+ * separate in-place leaf updater; this helper accepts only depth zero.
  */
 static int
 extent_root(struct inode *rip, unsigned char **rootp, u16_t *entriesp,
@@ -206,6 +206,25 @@ extent_overlaps_group_metadata(struct super_block *sp, block64_t first,
 }
 
 static int
+extent_overlaps_tree_node(const unsigned char *root,
+	u16_t root_entries, block64_t first, u32_t length)
+{
+	block64_t end, child;
+	unsigned int i;
+
+	end = first + length;
+	for (i = 0; i < root_entries; i++) {
+		const unsigned char *index_entry = root + 12 + i * 12;
+
+		child = ((u64_t)extent_get16(index_entry + 8) << 32) |
+		    extent_get32(index_entry + 4);
+		if (child >= first && child < end)
+			return(TRUE);
+	}
+	return(FALSE);
+}
+
+static int
 extent_depth1_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
 {
@@ -309,6 +328,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		    ex.physical >= rip->i_sp->s_blocks_count ||
 		    ex.length > rip->i_sp->s_blocks_count - ex.physical ||
 		    extent_overlaps_group_metadata(rip->i_sp, ex.physical,
+		    ex.length) ||
+		    extent_overlaps_tree_node(root, root_entries, ex.physical,
 		    ex.length) ||
 		    (u64_t)ex.logical + ex.length >
 		    ((u64_t)UINT32_MAX + 1) ||
@@ -477,7 +498,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	if (new_wblock <= rip->i_sp->s_first_data_block ||
 	    new_wblock >= rip->i_sp->s_blocks_count ||
 	    new_wblock > (((u64_t)1 << 48) - 1) ||
-	    extent_is_group_metadata(rip->i_sp, new_wblock)) {
+	    extent_is_group_metadata(rip->i_sp, new_wblock) ||
+	    extent_overlaps_tree_node(root, root_entries, new_wblock, 1)) {
 		put_block(bp);
 		return(EIO);
 	}
