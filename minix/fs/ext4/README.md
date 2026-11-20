@@ -53,10 +53,11 @@ read-write mode.
   inode-table ranges; invalid mappings fail with `EIO` before a block is
   released or the extent root is changed.
   Physical ranges in the inline root are also checked for overlap, and a
-  newly allocated block is rejected if it is already mapped by that inode.
+  newly allocated block is rejected if it is already mapped by that root.
   The depth-one writer applies the same overlap check within the selected
-  external leaf and validates speculative allocations before freeing or
-  inserting them.
+  external leaf and rejects speculative allocations that overlap that leaf
+  or any indexed tree node before freeing or inserting them. Cross-leaf data
+  overlap detection is not yet implemented.
 - Depth-one extent trees can be edited in place when the selected external
   leaf already has capacity. The inode index is kept in sync when a leaf's
   first extent changes, and an empty leaf is detached and freed. Operations
