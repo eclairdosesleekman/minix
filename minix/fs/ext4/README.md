@@ -260,7 +260,10 @@ implementation.
   directory entry is removed. Multi-entry depth-two roots and depth-three or
   deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, MMP, encryption,
-  casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.\n  META_BG is supported only for read-only primary-superblock mounts with the\n  classic sparse_super backup layout; SPARSE_SUPER2 and alternate-superblock\n  META_BG layouts remain unsupported.
+  casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.
+  META_BG is supported only for read-only primary-superblock mounts with the
+  classic sparse_super backup layout; SPARSE_SUPER2 and alternate-superblock
+  META_BG layouts remain unsupported.
   The filesystem must be clean, with an empty legacy orphan list. An orphan-file
   filesystem is accepted read-only only when `RO_COMPAT_ORPHAN_PRESENT` is
   clear; writable mounts and filesystems with pending orphan-file recovery
