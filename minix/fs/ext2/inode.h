@@ -2,9 +2,9 @@
  * cases they have been opened by an open() or creat() system call, in other
  * cases the file system itself needs the inode for one reason or another,
  * such as to search a directory for a path name.
- * The first part of the struct holds fields that are present on the
- * disk; the second part holds fields not present on the disk.
- * The disk inode part is also declared in "type.h" as 'd_inode'
+ * The fields mostly mirror the on-disk inode; i_blocks is widened to 64
+ * bits in memory so ext4 huge_file accounting does not overflow. The actual
+ * on-disk inode layout is declared in "type.h" as 'd_inode'.
  *
  */
 
@@ -26,7 +26,7 @@ EXTERN struct inode {
     u32_t  i_dtime;        /* Deletion Time */
     u16_t  i_gid;          /* Low 16 bits of Group Id */
     u16_t  i_links_count;  /* Links count */
-    u32_t  i_blocks;       /* 512-byte blocks count */
+    u64_t  i_blocks;       /* In-core 512-byte sector count (ext4: 64-bit) */
     u32_t  i_flags;        /* File flags */
     union {
         struct {

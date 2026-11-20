@@ -23,7 +23,7 @@
 #include <minix/vfsif.h>
 
 static void icopy(struct inode *rip, d_inode *dip, int direction, int
-	norm);
+	norm, u64_t ext4_i_blocks);
 static void addhash_inode(struct inode *node);
 static void unhash_inode(struct inode *node);
 
@@ -316,6 +316,52 @@ void update_times(
 /*===========================================================================*
  *                rw_inode                                                   *
  *===========================================================================*/
+/*
+ * Convert the in-core 512-byte sector count to ext4's on-disk i_blocks
+ * representation. The huge_file feature provides a 48-bit counter; values
+ * beyond 48 bits of sectors are stored in filesystem-block units and require
+ * EXT4_HUGE_FILE_FL on the inode.
+ */
+static int
+ext4_encode_inode_blocks(struct inode *rip, u64_t *disk_blocks)
+{
+	struct super_block *sp = rip->i_sp;
+	u64_t blocks;
+
+	blocks = rip->i_blocks;
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_HUGE_FILE)) {
+		if (blocks > 0xffffffffULL)
+			return(EFBIG);
+		rip->i_flags &= ~EXT4_HUGE_FILE_FL;
+		*disk_blocks = blocks;
+		return(OK);
+	}
+
+	/* The 48-bit field can first represent 512-byte sectors directly. */
+	if (blocks <= 0xffffffffffffULL) {
+		rip->i_flags &= ~EXT4_HUGE_FILE_FL;
+		*disk_blocks = blocks;
+		return(OK);
+	}
+
+	/*
+	 * For still larger files, Linux stores filesystem blocks instead of
+	 * 512-byte sectors and marks the inode with HUGE_FILE. Allocation
+	 * accounting is block-granular, so the conversion must be exact.
+	 */
+	if (sp->s_sectors_in_block == 0 ||
+	    blocks % sp->s_sectors_in_block != 0)
+		return(EINVAL);
+	blocks /= sp->s_sectors_in_block;
+	if (blocks > 0xffffffffffffULL)
+		return(EFBIG);
+
+	rip->i_flags |= EXT4_HUGE_FILE_FL;
+	*disk_blocks = blocks;
+	return(OK);
+}
+
 int rw_inode(
   register struct inode *rip,         /* pointer to inode to be read/written */
   int rw_flag                         /* READING or WRITING */
@@ -330,6 +376,8 @@ int rw_inode(
   u32_t block_group_number;
   block64_t b, xattr_block;
   u16_t xattr_block_hi;
+  u64_t disk_blocks = 0;
+  int r;
   size_t offset;
 
   /* Get the block where the inode resides. */
@@ -388,11 +436,18 @@ int rw_inode(
   if (rw_flag == WRITING) {
 	if (rip->i_update)
 		update_times(rip);    /* times need updating */
-	if (sp->s_rd_only == FALSE)
-		lmfs_markdirty(bp);
+	if (sp->s_is_ext4) {
+		r = ext4_encode_inode_blocks(rip, &disk_blocks);
+		if (r != OK) {
+			put_block(bp);
+			return(r);
+		}
+	}
   }
 
-  icopy(rip, dip, rw_flag, TRUE);
+  icopy(rip, dip, rw_flag, TRUE, disk_blocks);
+  if (rw_flag == WRITING && sp->s_rd_only == FALSE)
+	lmfs_markdirty(bp);
 
   put_block(bp);
   rip->i_dirt = IN_CLEAN;
@@ -407,7 +462,8 @@ static void icopy(
   register struct inode *rip,	/* pointer to the in-core inode struct */
   register d_inode *dip,	/* pointer to the on-disk struct */
   int direction,		/* READING (from disk) or WRITING (to disk) */
-  int norm			/* TRUE = do not swap bytes; FALSE = swap */
+  int norm,			/* TRUE = do not swap bytes; FALSE = swap */
+  u64_t ext4_i_blocks		/* encoded ext4 48-bit block count */
 )
 {
   int i;
@@ -440,6 +496,7 @@ static void icopy(
 		 * The combined value is in 512-byte sectors unless the inode's
 		 * HUGE_FILE flag says it is in filesystem blocks.
 		 */
+		/* Linux l_i_blocks_high is the first 16 bits of osd2. */
 		memcpy(&blocks_high, &dip->osd2, sizeof(blocks_high));
 		rip->i_blocks |= (u64_t)(u16_t)conv2(norm, blocks_high) << 32;
 		if (rip->i_flags & EXT4_HUGE_FILE_FL)
@@ -472,7 +529,8 @@ static void icopy(
 	dip->i_dtime   = conv4(norm,rip->i_dtime);
 	dip->i_gid     = conv2(norm,rip->i_gid);
 	dip->i_links_count  = conv2(norm,rip->i_links_count);
-	dip->i_blocks	= conv4(norm, (u32_t)rip->i_blocks);
+	dip->i_blocks	= conv4(norm, rip->i_sp->s_is_ext4 ?
+	    (u32_t)ext4_i_blocks : (u32_t)rip->i_blocks);
 	dip->i_flags	= conv4(norm,rip->i_flags);
 	/* Minix doesn't touch osd1 and osd2 either, so just copy. */
 	memcpy(&dip->osd1, &rip->osd1, sizeof(dip->osd1));
@@ -483,6 +541,15 @@ static void icopy(
 	dip->i_dir_acl	= conv4(norm,rip->i_dir_acl);
 	dip->i_faddr	= conv4(norm,rip->i_faddr);
 	memcpy(&dip->osd2, &rip->osd2, sizeof(dip->osd2));
+	if (rip->i_sp->s_is_ext4 &&
+	    HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_HUGE_FILE)) {
+		u16_t blocks_high;
+
+		blocks_high = (u16_t)conv2(norm,
+		    (u16_t)(ext4_i_blocks >> 32));
+		/* Linux stores i_blocks_high in the first 16 bits of osd2. */
+		memcpy(&dip->osd2, &blocks_high, sizeof(blocks_high));
+	}
   }
 }
 
