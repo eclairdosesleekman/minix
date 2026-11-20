@@ -69,9 +69,10 @@ read-write mode.
   records fit in one block; physically and logically contiguous boundary
   extents are coalesced as part of the merge. When one remaining leaf fits in
   the inode root, the tree is demoted back to an inline root and its external
-  metadata block is freed. Empty leaves are detached and freed. A full
-  depth-one root is not promoted to depth two; trees deeper than one external
-  level remain read-only for mutation.
+  metadata block is freed. Empty leaves are detached and freed, and the
+  surviving neighbors are reconsidered for merging/demotion. A full depth-one
+  root is not promoted to depth two; trees deeper than one external level
+  remain read-only for mutation.
 - Final unlink of ext4 extent-backed files is supported for inline roots
   and validated depth-one trees. Before removing the last directory entry,
   mappings are checked for valid physical ranges, non-aliasing, and
@@ -220,7 +221,9 @@ leaves fit together; verify the right-hand leaf is freed, the remaining
 root keys stay sorted, and contiguous boundary extents coalesce only when
 their written/unwritten state and physical ranges agree. Reduce a one-leaf
 tree to four or fewer extents and confirm it is demoted to an inline root and
-its metadata block is freed. Fill all inode-root index slots and verify a
+its metadata block is freed. Also remove an entire leaf and verify the
+surviving neighboring leaves are reconsidered for merging/demotion. Fill all
+inode-root index slots and verify a
 further split request fails without changing either leaf or the index. Unlink files
 with one and multiple external leaves and confirm all data and leaf blocks are
 freed; then check free-block/free-inode counts with `e2fsck -fn`. Construct a
