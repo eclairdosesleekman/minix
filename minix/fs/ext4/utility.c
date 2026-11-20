@@ -105,6 +105,10 @@ ext4_validate_data_range(struct inode *rip, block64_t first, u64_t length)
 		return(FALSE);
 	end = first + length;
 
+	/* META_BG descriptor copies are reserved metadata, just like bitmaps. */
+	if (ext4_meta_bg_overlaps_descriptor_blocks(sp, first, end))
+		return(FALSE);
+
 	for (group = 0; group < sp->s_groups_count; group++) {
 		gd = &sp->s_group_desc[group];
 		if ((gd->block_bitmap >= first && gd->block_bitmap < end) ||
