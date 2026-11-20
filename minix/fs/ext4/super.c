@@ -122,7 +122,7 @@ ext4_meta_bg_group_descriptor_block(struct super_block *sp,
 	    (u64_t)group != first_group + 1 &&
 	    (u64_t)group != last_group))
 		return(FALSE);
-	max_value = (u64_t)~(u64_t)0;
+	max_value = ((u64_t)~(u64_t)0) >> 1; /* signed off_t limit */
 	if ((u64_t)group >
 	    (max_value - sp->s_first_data_block) / sp->s_blocks_per_group)
 		return(FALSE);
@@ -142,7 +142,9 @@ ext4_meta_bg_group_descriptor_block(struct super_block *sp,
 		return(FALSE);
 	block = first_block + has_super;
 	if (block >= sp->s_blocks_count ||
-	    block > max_value / sp->s_block_size)
+	    sp->s_block_size == 0 ||
+	    block > (max_value - (sp->s_block_size - 1)) /
+	    sp->s_block_size)
 		return(FALSE);
 
 	*blockp = (block64_t)block;
@@ -389,6 +391,11 @@ int read_super(register struct super_block *sp)
 
 	/* Read the descriptor blocks that still use the classic GDT location. */
 	classic_gdt_size = (size_t)classic_gdb_count * sp->s_block_size;
+	if (classic_gdt_size != 0 &&
+	    (gdt_position > (((u64_t)~(u64_t)0) >> 1) ||
+	    classic_gdt_size >
+	    (((u64_t)~(u64_t)0) >> 1) - gdt_position))
+		return(EINVAL);
 	for (off = 0; off < classic_gdt_size; off += chunk) {
 		chunk = classic_gdt_size - off;
 		if (chunk > PAGE_SIZE)
