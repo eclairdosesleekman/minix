@@ -95,17 +95,6 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 
-	/*
-	 * The current write path updates only the low 32 bits of i_blocks.
-	 * Until inode high-counter serialization is implemented, volumes
-	 * advertising huge_file must remain read-only.
-	 */
-	if (!readonly &&
-	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_HUGE_FILE)) {
-		printf("ext4: read-write mounts require ^huge_file\\n");
-		goto bad_mount;
-	}
-
 	/* Metadata checksums are verified on reads but not rewritten by this
 	 * server's metadata mutation paths, so such volumes must stay read-only.
 	 */
