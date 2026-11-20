@@ -275,7 +275,7 @@ implementation.
   BIGALLOC is supported only on read-only mounts. Its cluster geometry and
   block-bitmap checksum length are validated, and mapped file-data ranges are
   checked against every metadata cluster (including backup super/GDT, group
-  bitmaps, inode tables, and external xattr blocks). The allocator and writers
+  bitmaps, inode tables, and that inode's external xattr block). The allocator and writers
   remain disabled because they account for individual blocks rather than
   allocation clusters.
   META_BG is supported only for read-only primary-superblock mounts with
