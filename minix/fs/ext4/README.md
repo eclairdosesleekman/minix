@@ -219,13 +219,13 @@ checksums enabled and metadata_csum/journaling/indexed directories disabled:
 
 ```sh
 truncate -s 512M ext4-gdt-csum-rw-test.img
-mke2fs -F -t ext4 -b 4096 \\
-  -O extent,gdt_csum,^metadata_csum,^has_journal,^dir_index,^64bit,\\
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,gdt_csum,^metadata_csum,^has_journal,^dir_index,^64bit,\
 ^huge_file,^orphan_file ext4-gdt-csum-rw-test.img
 
 truncate -s 512M ext4-gdt-csum-rw-64bit-test.img
-mke2fs -F -t ext4 -b 4096 \\
-  -O extent,64bit,gdt_csum,^metadata_csum,^has_journal,^dir_index,\\
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,64bit,gdt_csum,^metadata_csum,^has_journal,^dir_index,\
 ^huge_file,^orphan_file ext4-gdt-csum-rw-64bit-test.img
 
 e2fsck -fn ext4-gdt-csum-rw-test.img
@@ -276,5 +276,5 @@ the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
 The 64 KiB directory-record, `huge_file`, `metadata_csum`, bounded
 external-extent-leaf update, and writable legacy `gdt_csum` changes have not
-yet been compiled or runtime-tested in a MINIX build environment. Treat this as a review candidate
-and test it on disposable images only.
+yet been compiled or runtime-tested in a MINIX build environment. Treat this
+as a review candidate and test it on disposable images only.
