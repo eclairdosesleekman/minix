@@ -114,6 +114,7 @@
 #define COMPAT_EXT_ATTR            0x0008
 #define COMPAT_RESIZE_INO          0x0010
 #define COMPAT_DIR_INDEX           0x0020
+#define COMPAT_SPARSE_SUPER2       0x0200
 #define COMPAT_ORPHAN_FILE         0x1000
 #define RO_COMPAT_ORPHAN_PRESENT   0x10000
 #define RO_COMPAT_SPARSE_SUPER     0x0001
@@ -150,6 +151,7 @@
 /* Ext4 features understood by this server. */
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
+                                     INCOMPAT_META_BG | \
                                      INCOMPAT_EA_INODE | INCOMPAT_CSUM_SEED | \
                                      INCOMPAT_LARGEDIR | INCOMPAT_INLINE_DATA)
 
