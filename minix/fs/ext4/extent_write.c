@@ -1,10 +1,10 @@
 /*
- * Bounded ext4 extent-tree updates.
+ * ext4 extent-tree updates.
  *
- * Inline roots and existing external leaves are edited in place.  Allocating
- * or splitting nodes, rebalancing the tree, and changing ancestor index keys
- * remain unsupported; those operations are rejected rather than treating
- * extents as ext2 indirect blocks.
+ * The inode-resident root is promoted to one external leaf when its four
+ * entries are exhausted.  That leaf is edited in place; splitting a full
+ * external leaf, growing internal index levels, and general tree rebalancing
+ * remain unsupported.
  */
 
 #include "fs.h"
@@ -267,6 +267,135 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 	return(new_blocks / sectors_per_block <= 0xffffffffffffULL);
 }
 
+/*
+ * Move an inline extent root into one external leaf.  This buys the tree the
+ * full block-sized leaf capacity without changing any logical/physical
+ * extent mappings.  Read-write mounts currently reject metadata_csum, so
+ * the external-node checksum tail is not required on this write path.
+ */
+static int
+extent_promote_root(struct inode *rip, u32_t logical, block64_t goal)
+{
+	unsigned char *root, *node;
+	struct buf *bp;
+	block64_t node_block;
+	u16_t entries, max_entries, root_max;
+	u32_t first_logical, generation;
+	u64_t sectors;
+
+	root = (unsigned char *)rip->i_block;
+	root_max = (u16_t)((sizeof(rip->i_block) - 12) / 12);
+	if (extent_get16(root) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(root + 6) != 0)
+		return(EOPNOTSUPP);
+
+	entries = extent_get16(root + 2);
+	max_entries = extent_get16(root + 4);
+	if (max_entries != root_max || entries == 0 ||
+	    entries > max_entries)
+		return(EIO);
+
+	first_logical = extent_get32(root + 12);
+	/* A one-child external tree cannot prepend before its parent key. */
+	if (logical < first_logical)
+		return(EOPNOTSUPP);
+
+	sectors = rip->i_sp->s_sectors_in_block;
+	if (sectors == 0 || !extent_i_blocks_can_add(rip, sectors))
+		return(EFBIG);
+
+	node_block = alloc_block(rip, goal);
+	if (node_block == NO_BLOCK)
+		return(ENOSPC);
+	if (node_block == 0 || node_block >= rip->i_sp->s_blocks_count ||
+	    node_block > 0xffffffffffffULL) {
+		free_block(rip->i_sp, node_block);
+		return(EIO);
+	}
+
+	bp = get_block(rip->i_dev, node_block, NO_READ);
+	if (bp == NULL) {
+		free_block(rip->i_sp, node_block);
+		return(EIO);
+	}
+	node = (unsigned char *)b_data(bp);
+	memset(node, 0, rip->i_sp->s_block_size);
+	generation = extent_get32(root + 8);
+	memcpy(node + 12, root + 12, (size_t)entries * 12);
+	extent_put16(node, EXT4_EXTENT_MAGIC);
+	extent_put16(node + 2, entries);
+	extent_put16(node + 4,
+	    (u16_t)((rip->i_sp->s_block_size - 12) / 12));
+	extent_put16(node + 6, 0);
+	extent_put32(node + 8, generation);
+	lmfs_markdirty(bp);
+	put_block(bp);
+
+	/* Replace the inline leaf with a depth-one root and one index entry. */
+	memset(root, 0, sizeof(rip->i_block));
+	extent_put16(root, EXT4_EXTENT_MAGIC);
+	extent_put16(root + 2, 1);
+	extent_put16(root + 4, root_max);
+	extent_put16(root + 6, 1);
+	extent_put32(root + 8, generation);
+	extent_put32(root + 12, first_logical);
+	extent_put32(root + 16, (u32_t)node_block);
+	extent_put16(root + 20, (u16_t)(node_block >> 32));
+	extent_put16(root + 22, 0);
+
+	rip->i_blocks += sectors;
+	rip->i_dirt = IN_DIRTY;
+	return(OK);
+}
+
+/*
+ * Collapse a depth-one tree containing a single external leaf when its last
+ * one-block extent is removed.  Multi-leaf and deeper trees need parent
+ * rebalancing and are deliberately left untouched.
+ */
+static int
+extent_collapse_single_leaf(struct inode *rip, block64_t data_block)
+{
+	unsigned char *root;
+	block64_t leaf_block;
+	u16_t root_max;
+	u64_t sectors;
+	u32_t generation;
+
+	root = (unsigned char *)rip->i_block;
+	root_max = (u16_t)((sizeof(rip->i_block) - 12) / 12);
+	if (extent_get16(root) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(root + 6) != 1 ||
+	    extent_get16(root + 2) != 1 ||
+	    extent_get16(root + 4) != root_max)
+		return(EOPNOTSUPP);
+
+	leaf_block = ((u64_t)extent_get16(root + 20) << 32) |
+	    extent_get32(root + 16);
+	if (leaf_block == 0 || leaf_block >= rip->i_sp->s_blocks_count ||
+	    rip->i_sp->s_sectors_in_block == 0)
+		return(EIO);
+
+	sectors = rip->i_sp->s_sectors_in_block;
+	if (sectors > ~(u64_t)0 / 2 ||
+	    rip->i_blocks < sectors * 2)
+		return(EIO);
+
+	generation = extent_get32(root + 8);
+	free_block(rip->i_sp, data_block);
+	free_block(rip->i_sp, leaf_block);
+	rip->i_blocks -= sectors * 2;
+
+	memset(root, 0, sizeof(rip->i_block));
+	extent_put16(root, EXT4_EXTENT_MAGIC);
+	extent_put16(root + 2, 0);
+	extent_put16(root + 4, root_max);
+	extent_put16(root + 6, 0);
+	extent_put32(root + 8, generation);
+	rip->i_dirt = IN_DIRTY;
+	return(OK);
+}
+
 int
 ext4_extent_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
@@ -320,8 +449,17 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			return(EIO);
 		}
 		/*
-		 * Changing or removing the first extent in an external leaf
-		 * also changes its parent's index key.  Do not leave a stale key.
+		 * Removing the only extent from our one-leaf tree can release
+		 * both the data block and the external extent node.  Other
+		 * external trees need parent rebalancing and remain unsupported.
+		 */
+		if (leaf_bp != NULL && entries == 1 && ex.length == 1) {
+			extent_release_leaf(leaf_bp, FALSE);
+			return(extent_collapse_single_leaf(rip, block_to_free));
+		}
+		/*
+		 * Changing the first entry of a general external leaf changes
+		 * its parent index key; do not leave a stale key.
 		 */
 		if (leaf_bp != NULL && i == 0 && offset == 0) {
 			extent_release_leaf(leaf_bp, FALSE);
@@ -330,6 +468,14 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		/* Splitting a middle extent consumes one additional leaf slot. */
 		if (offset != 0 && offset != ex.length - 1 &&
 		    entries >= max_entries) {
+			if (leaf_bp == NULL) {
+				r = extent_promote_root(rip, logical, block_to_free);
+				if (r == OK)
+					return(ext4_extent_write_map(rip, position,
+					    new_wblock, op));
+				extent_release_leaf(leaf_bp, FALSE);
+				return(r);
+			}
 			extent_release_leaf(leaf_bp, FALSE);
 			return(EFBIG);
 		}
@@ -382,6 +528,15 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			extent_put(entry, logical, old_physical, 1, FALSE);
 		} else if (offset == 0) {
 			if (entries >= max_entries) {
+				if (leaf_bp == NULL) {
+					r = extent_promote_root(rip, logical,
+					    new_wblock);
+					if (r == OK)
+						return(ext4_extent_write_map(rip,
+						    position, new_wblock, op));
+					extent_release_leaf(leaf_bp, FALSE);
+					return(r);
+				}
 				extent_release_leaf(leaf_bp, FALSE);
 				return(EFBIG);
 			}
@@ -393,6 +548,15 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			entries++;
 		} else if (offset == ex.length - 1) {
 			if (entries >= max_entries) {
+				if (leaf_bp == NULL) {
+					r = extent_promote_root(rip, logical,
+					    new_wblock);
+					if (r == OK)
+						return(ext4_extent_write_map(rip,
+						    position, new_wblock, op));
+					extent_release_leaf(leaf_bp, FALSE);
+					return(r);
+				}
 				extent_release_leaf(leaf_bp, FALSE);
 				return(EFBIG);
 			}
@@ -404,6 +568,15 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			entries++;
 		} else {
 			if (entries > max_entries - 2) {
+				if (leaf_bp == NULL) {
+					r = extent_promote_root(rip, logical,
+					    new_wblock);
+					if (r == OK)
+						return(ext4_extent_write_map(rip,
+						    position, new_wblock, op));
+					extent_release_leaf(leaf_bp, FALSE);
+					return(r);
+				}
 				extent_release_leaf(leaf_bp, FALSE);
 				return(EFBIG);
 			}
@@ -509,6 +682,14 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	}
 
 	if (entries >= max_entries) {
+		if (leaf_bp == NULL) {
+			r = extent_promote_root(rip, logical, physical);
+			if (r == OK)
+				return(ext4_extent_write_map(rip, position,
+				    new_wblock, op));
+			extent_release_leaf(leaf_bp, FALSE);
+			return(r);
+		}
 		extent_release_leaf(leaf_bp, FALSE);
 		return(EFBIG);
 	}
