@@ -123,5 +123,6 @@ void zero_block(struct buf *bp);
 int write_map(struct inode *, off_t, block64_t, int);
 int ext4_extent_write_map(struct inode *, off_t, block64_t, int);
 int ext4_extent_can_truncate(struct inode *);
+int ext4_release_xattr_block(struct inode *);
 
 #endif /* EXT2_PROTO_H */

@@ -397,10 +397,13 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 		ndir = ((new_ip->i_mode & I_TYPE) == I_DIRECTORY);/* dir ? */
 		if(odir == TRUE && ndir == FALSE) r = ENOTDIR;
 		if(odir == FALSE && ndir == TRUE) r = EISDIR;
-		/* Replacing the last name would otherwise leak external extents. */
-		if (r == OK && has_external_extent_tree(new_ip) &&
-		    (ndir || new_ip->i_links_count <= 1))
-			r = EOPNOTSUPP;
+		/*
+		 * Renaming over a destination can perform its final unlink. Run
+		 * the same extent/xattr preflight as fs_unlink() before changing
+		 * either directory entry.
+		 */
+		if (r == OK && (ndir || new_ip->i_links_count <= 1))
+			r = ext4_extent_can_truncate(new_ip);
 	}
   }
 
