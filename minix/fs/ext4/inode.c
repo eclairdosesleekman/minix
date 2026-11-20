@@ -497,7 +497,13 @@ static void icopy(
 	rip->i_mode    = conv2(norm,dip->i_mode);
 	rip->i_uid     = conv2(norm,dip->i_uid);
 	if (rip->i_sp->s_is_ext4 &&
-	    (rip->i_mode & I_TYPE) == I_REGULAR) {
+	    ((rip->i_mode & I_TYPE) == I_REGULAR ||
+	    ((rip->i_mode & I_TYPE) == I_DIRECTORY &&
+	    HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_LARGEDIR)))) {
+		/*
+		 * ext4 stores the upper 32 bits of large directory sizes in
+		 * i_dir_acl/i_size_high when INCOMPAT_LARGEDIR is enabled.
+		 */
 		rip->i_size = (off_t)(((u64_t)(u32_t)conv4(norm,
 		    dip->i_dir_acl) << 32) |
 		    (u32_t)conv4(norm, dip->i_size));

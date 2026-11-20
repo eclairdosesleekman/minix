@@ -53,6 +53,18 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		    unsupported);
 		goto bad_mount;
 	}
+
+	/*
+	 * Large directories are read by scanning every directory data block.
+	 * That path understands 64-bit directory sizes and treats all HTree
+	 * index nodes as unused full-block dirents, including three-level
+	 * trees. Index insertion/splitting is not implemented, so keep this
+	 * incompat feature read-only.
+	 */
+	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_LARGEDIR)) {
+		printf("ext4: largedir currently requires a read-only mount\\n");
+		goto bad_mount;
+	}
 	/*
 	 * ORPHAN_PRESENT means the orphan file can contain inodes that must be
 	 * recovered before the filesystem is used. This server has no orphan
