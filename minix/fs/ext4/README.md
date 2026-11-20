@@ -37,9 +37,13 @@ read-write mode.
   decoded and encoded consistently by directory traversal and mutation paths.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block.
-- Read-write support for filesystems without a journal and without indexed
-  directories. The block and inode bitmaps, group free counters, inode table,
-  superblock counters, and data blocks are updated.
+- Read-write support for filesystems without a journal. On filesystems
+  advertising `dir_index`, unindexed directories remain writable; lookup in
+  indexed directories is supported by linear traversal, but entry insertion
+  and deletion in directories carrying `EXT2_INDEX_FL` are rejected with
+  `EOPNOTSUPP` until HTree maintenance is implemented. The block and inode
+  bitmaps, group free counters, inode table, superblock counters, and data
+  blocks are updated.
 - 64-bit physical block allocation and release.
 - Inline (depth-zero) extent roots can be inserted into, coalesced, and split
   while allocating, writing, and truncating files. Writes into unwritten
@@ -66,8 +70,12 @@ implementation.
   at mount time. Writable mounts reject `metadata_csum` because allocation,
   inode and directory mutation paths do not update checksums. Legacy
   `gdt_csum` without `metadata_csum` remains unsupported.
-- **No indexed directories:** writable mounts reject `dir_index`; htree
-  directory updates are not implemented.
+- **No HTree mutation:** a filesystem-wide `dir_index` feature bit does
+  not by itself prevent a writable mount. Lookup still linearly scans indexed
+  directories, but `search_dir()` rejects `ENTER` and `DELETE` for an
+  individual directory carrying `EXT2_INDEX_FL`. Unindexed directories on
+  the same volume can be changed normally. HTree index maintenance and
+  conversion of indexed directories to linear form are not implemented.
 - **Limited external extent-tree mutation:** depth-zero inode roots and
   depth-one trees with pre-existing leaf nodes are writable. Depth-one updates
   require enough free slots in the selected leaf; this server does not
@@ -105,13 +113,14 @@ mount -t ext4 /dev/c0d0p1 /mnt
 ```
 
 A host-side test image can be prepared with e2fsprogs. The feature list below
-disables journaling, indexed directories, and checksum features that this
-server does not update:
+disables journaling and checksum features that this server does not update.
+The `dir_index` feature can be enabled: keep the test directory unindexed for
+write tests, and verify mutations in an indexed directory are rejected:
 
 ```sh
 truncate -s 512M ext4-rw-test.img
 mke2fs -F -t ext4 -b 4096 \
-  -O extent,64bit,^has_journal,^dir_index,^metadata_csum,^gdt_csum,\
+  -O extent,64bit,dir_index,^has_journal,^metadata_csum,^gdt_csum,\
 ^huge_file,^orphan_file ext4-rw-test.img
 e2fsck -fn ext4-rw-test.img
 ```
@@ -135,6 +144,14 @@ mke2fs -F -t ext4 -b 4096 \
   -O extent,64bit,huge_file,^has_journal,^dir_index,\
 ^metadata_csum,^gdt_csum,^orphan_file ext4-huge-file-test.img
 ```
+
+After creating the image, use one unindexed directory for ordinary
+create/rename/unlink tests and a separate sufficiently populated directory
+indexed by `e2fsck -D`. Confirm lookup and getdents work in the indexed
+directory, while create, unlink, and rename attempts that modify it fail with
+`EOPNOTSUPP` and leave its index metadata unchanged. Confirm the unindexed
+directory on the same filesystem remains writable. Run `e2fsck -fn` after
+clean unmount.
 
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
