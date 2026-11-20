@@ -233,7 +233,8 @@ int read_super(register struct super_block *sp)
 			return(EINVAL);
 		}
 	}
-	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+	if ((HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) ||
+	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM)) &&
 	    !verify_group_descriptor_checksums(sp, ondisk_group_descs,
 	    sp->s_groups_count, sp->s_desc_size))
 		return(EINVAL);
@@ -477,16 +478,33 @@ static void super_copy(
 
 
 /*
- * With metadata_csum, bg_checksum is the low 16 bits of CRC32C(seed,
- * little-endian group number, descriptor with bg_checksum set to zero).
+ * The legacy gdt_csum format uses Linux's reflected CRC16 (polynomial
+ * 0xa001) over the UUID, little-endian group number, and descriptor.
+ * metadata_csum supersedes it and uses CRC32C with the filesystem seed.
  */
+static u16_t
+ext4_crc16(u16_t crc, const void *data, size_t len)
+{
+	const unsigned char *p = data;
+	unsigned int bit;
+
+	while (len-- != 0) {
+		crc ^= *p++;
+		for (bit = 0; bit < 8; bit++)
+			crc = (u16_t)((crc >> 1) ^
+			    (0xa001U & (u16_t)-(int)(crc & 1)));
+	}
+	return(crc);
+}
+
 static int
 verify_group_descriptor_checksums(struct super_block *sp,
 	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size)
 {
 	static const u16_t zero16 = 0;
 	unsigned int i;
-	u32_t group_le, crc;
+	u32_t group_le, crc32;
+	u16_t expected, crc16, stored;
 	const unsigned char *p;
 
 	if (desc_size < 32)
@@ -494,20 +512,31 @@ verify_group_descriptor_checksums(struct super_block *sp,
 	for (i = 0; i < ngroups; i++) {
 		p = raw + (size_t)i * desc_size;
 		group_le = (u32_t)conv4(le_CPU, i);
-		crc = ext4_crc32c(sp->s_csum_seed, &group_le,
-		    sizeof(group_le));
-		crc = ext4_crc32c(crc, p, 30);
-		crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
-		if (desc_size > 32)
-			crc = ext4_crc32c(crc, p + 32, desc_size - 32);
-		{
-			u16_t stored;
-
-			memcpy(&stored, p + 30, sizeof(stored));
-			stored = (u16_t)conv2(le_CPU, stored);
-			if ((u16_t)crc != stored)
-				return(FALSE);
+		if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+			crc32 = ext4_crc32c(sp->s_csum_seed, &group_le,
+			    sizeof(group_le));
+			crc32 = ext4_crc32c(crc32, p, 30);
+			crc32 = ext4_crc32c(crc32, &zero16, sizeof(zero16));
+			if (desc_size > 32)
+				crc32 = ext4_crc32c(crc32, p + 32,
+				    desc_size - 32);
+			expected = (u16_t)crc32;
+		} else {
+			crc16 = ext4_crc16((u16_t)~0U, sp->s_uuid,
+			    sizeof(sp->s_uuid));
+			crc16 = ext4_crc16(crc16, &group_le,
+			    sizeof(group_le));
+			crc16 = ext4_crc16(crc16, p, 30);
+			/* The 64-bit descriptor extends beyond bg_checksum. */
+			if (desc_size > 32)
+				crc16 = ext4_crc16(crc16, p + 32,
+				    desc_size - 32);
+			expected = crc16;
 		}
+		memcpy(&stored, p + 30, sizeof(stored));
+		stored = (u16_t)conv2(le_CPU, stored);
+		if (expected != stored)
+			return(FALSE);
 	}
 	return(TRUE);
 }
