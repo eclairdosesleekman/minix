@@ -233,12 +233,12 @@ ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 			return(TRUE);
 		seed = ext4_inode_csum_seed(rip);
 		if ((rip->i_flags & EXT2_INDEX_FL) &&
-	    ext4_csum_read32(data) == 0 && data[6] == 0 &&
-	    ext4_dir_rec_len(first, block_size) == block_size &&
-	    ext4_csum_read16(data + 8) != 0 &&
-	    ext4_csum_read16(data + 10) != 0 &&
-	    ext4_csum_read16(data + 10) <= ext4_csum_read16(data + 8) &&
-	    ext4_csum_read16(data + 8) <= (block_size - 16) / 8) {
+		    ext4_csum_read32(data) == 0 && data[6] == 0 &&
+		    ext4_dir_rec_len(first, block_size) == block_size &&
+		    ext4_csum_read16(data + 8) != 0 &&
+		    ext4_csum_read16(data + 10) != 0 &&
+		    ext4_csum_read16(data + 10) <= ext4_csum_read16(data + 8) &&
+		    ext4_csum_read16(data + 8) <= (block_size - 16) / 8) {
 			/* Internal htree node: fake full-block dirent precedes dx entries. */
 			count_offset = 8;
 		} else {
