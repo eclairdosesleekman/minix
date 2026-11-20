@@ -326,7 +326,12 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 	unsigned int i, j, k;
 
 	xattr_block = extent_inode_xattr_block(rip);
-	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
+	if (extent_validate_xattr_block(rip, xattr_block) != OK)
+		return(EIO);
+	index_entry = root + 12 + selected * 12;
+	leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
+	    extent_get32(index_entry + 4);
+	if (leaf_block == xattr_block ||
 	    (xattr_block != 0 && extent_block_is_mapped(selected_node + 12,
 	    selected_entries, xattr_block)))
 		return(EIO);
@@ -339,6 +344,8 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		root_key = extent_get32(index_entry);
 		leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
 		    extent_get32(index_entry + 4);
+		if (leaf_block == xattr_block)
+			return(EIO);
 		bp = get_block(rip->i_dev, leaf_block, NORMAL);
 		if (bp == NULL)
 			return(EIO);
@@ -1353,6 +1360,10 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	child = ((u64_t)extent_get16(index_entry + 8) << 32) |
 	    extent_get32(index_entry + 4);
 	leaf_block = child;
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
+	    leaf_block == xattr_block)
+		return(EIO);
 	bp = get_block(rip->i_dev, leaf_block, NORMAL);
 	if (bp == NULL)
 		return(EIO);
@@ -1420,10 +1431,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	 * replaces an unwritten extent. Never free or insert it if allocator
 	 * metadata points at a block already owned by the selected leaf or its tree.
 	 */
-	xattr_block = extent_inode_xattr_block(rip);
-	if (extent_validate_xattr_block(rip, xattr_block) != OK ||
-	    (xattr_block != 0 &&
-	    extent_block_is_mapped(node + 12, leaf_entries, xattr_block))) {
+	if (xattr_block != 0 &&
+	    extent_block_is_mapped(node + 12, leaf_entries, xattr_block)) {
 		put_block(bp);
 		return(EIO);
 	}
