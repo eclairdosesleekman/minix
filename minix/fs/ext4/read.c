@@ -489,9 +489,6 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 		put_block(bp);
 		if (block == NO_BLOCK)
 			return(NO_BLOCK);
-		if (!ext4_indirect_add_node(rip, block, visited,
-		    &visited_count))
-			goto corrupt;
 		excess %= addresses2;
 	} else {
 		excess = block_pos - EXT2_NDIR_BLOCKS - addresses;
