@@ -966,6 +966,9 @@ extent_depth1_compact(struct inode *rip, unsigned char *root,
  * The existing depth-one writer removes each external leaf when its final
  * extent is freed.
  */
+static int extent_depth2_preflight_single_root(struct inode *,
+	block64_t *, int);
+
 int
 ext4_extent_can_truncate(struct inode *rip)
 {
@@ -1004,7 +1007,12 @@ ext4_extent_can_truncate(struct inode *rip)
 	if (extent_get16(root) != EXT4_EXTENT_MAGIC)
 		return(EIO);
 	depth = extent_get16(root + 6);
-	if (depth > 1)
+	if (depth == 2) {
+		block64_t parent_block;
+		return(extent_depth2_preflight_single_root(rip, &parent_block,
+		    TRUE));
+	}
+	if (depth > 2)
 		return(EOPNOTSUPP);
 
 	root_entries = extent_get16(root + 2);
@@ -1895,7 +1903,7 @@ extent_depth1_write_map_root(struct inode *rip, off_t position,
  */
 static int
 extent_depth2_preflight_single_root(struct inode *rip,
-	block64_t *parent_blockp)
+	block64_t *parent_blockp, int for_truncate)
 {
 	struct super_block *sp = rip->i_sp;
 	unsigned char *root, *parent_node, *leaf_node;
@@ -1903,7 +1911,7 @@ extent_depth2_preflight_single_root(struct inode *rip,
 	struct ext4_extent ex, prior;
 	const unsigned char *root_index, *leaf_index;
 	block64_t parent_block, leaf_block, xattr_block;
-	u64_t owned_blocks, previous_end, next_key;
+	u64_t owned_blocks, previous_end, next_key, file_blocks;
 	u32_t root_key, leaf_key;
 	u16_t root_entries, root_max, parent_entries, parent_max;
 	u16_t leaf_entries, leaf_max;
@@ -1924,6 +1932,15 @@ extent_depth2_preflight_single_root(struct inode *rip,
 		return(EOPNOTSUPP);
 	if (sp->s_block_size <= 12 || sp->s_sectors_in_block == 0)
 		return(EIO);
+	if (for_truncate) {
+		if (rip->i_size < 0)
+			return(EIO);
+		file_blocks = (u64_t)rip->i_size / sp->s_block_size;
+		if ((u64_t)rip->i_size % sp->s_block_size != 0)
+			file_blocks++;
+		if (file_blocks > (u64_t)UINT32_MAX + 1)
+			return(EOPNOTSUPP);
+	}
 
 	xattr_block = extent_inode_xattr_block(rip);
 	if (extent_validate_xattr_block(rip, xattr_block) != OK)
@@ -2039,6 +2056,7 @@ extent_depth2_preflight_single_root(struct inode *rip,
 			    xattr_block >= ex.physical &&
 			    xattr_block - ex.physical < ex.length) ||
 			    logical_end > ((u64_t)UINT32_MAX + 1) ||
+			    (for_truncate && logical_end > file_blocks) ||
 			    (j != 0 && ex.logical < previous_end) ||
 			    logical_end > next_key) {
 				put_block(leaf_bp);
@@ -2116,7 +2134,7 @@ extent_depth2_write_map_single(struct inode *rip, off_t position,
 
 	root = (unsigned char *)rip->i_block;
 	root_max = extent_get16(root + 4);
-	r = extent_depth2_preflight_single_root(rip, &parent_block);
+	r = extent_depth2_preflight_single_root(rip, &parent_block, FALSE);
 	if (r != OK)
 		return(r);
 
