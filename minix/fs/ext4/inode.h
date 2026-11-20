@@ -2,9 +2,9 @@
  * cases they have been opened by an open() or creat() system call, in other
  * cases the file system itself needs the inode for one reason or another,
  * such as to search a directory for a path name.
- * The first part of the struct holds fields that are present on the
- * disk; the second part holds fields not present on the disk.
- * The disk inode part is also declared in "type.h" as 'd_inode'
+ * The first part mirrors the on-disk inode. Extended ext4 values such as
+ * full-width UID/GID are decoded into widened in-core fields; the exact disk
+ * layout is declared in "type.h" as 'd_inode'.
  *
  */
 
