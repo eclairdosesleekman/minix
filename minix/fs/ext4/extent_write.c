@@ -171,7 +171,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	u16_t root_entries, root_max, depth, leaf_entries, leaf_max;
 	u16_t child_hi;
 	unsigned int leaf_index, i, insert;
-	int r, free_leaf;
+	int free_leaf;
 
 	if (rip->i_sp->s_rd_only)
 		return(EROFS);
@@ -306,7 +306,10 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		}
 		offset = logical - ex.logical;
 		block_to_free = ex.physical + offset;
-		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
+		if (rip->i_blocks < rip->i_sp->s_sectors_in_block ||
+		    (leaf_entries == 1 && ex.length == 1 &&
+		    rip->i_blocks - rip->i_sp->s_sectors_in_block <
+		    rip->i_sp->s_sectors_in_block)) {
 			put_block(bp);
 			return(EIO);
 		}
