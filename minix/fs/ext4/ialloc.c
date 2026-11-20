@@ -80,6 +80,10 @@ struct inode *alloc_inode(struct inode *parent, mode_t bits, uid_t uid,
 	 * not to repeat the code twice.
 	 */
 	wipe_inode(rip);
+	if (sp->s_is_ext4) {
+		rip->i_crtime = clock_time(NULL);
+		rip->i_crtime_nsec = 0;
+	}
 	if ((bits & I_TYPE) == I_REGULAR ||
 	    (bits & I_TYPE) == I_DIRECTORY ||
 	    (bits & I_TYPE) == I_SYMBOLIC_LINK) {
