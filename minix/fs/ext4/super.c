@@ -285,6 +285,78 @@ ext4_store32(unsigned char *p, u32_t value)
 /*===========================================================================*
  *                              write_super                                  *
  *===========================================================================*/
+/*
+ * Regenerate ext4 metadata_csum values for initialized allocation bitmaps
+ * and their group descriptors. Bitmap checksums cover the valid bitmap bits
+ * (rounded up to bytes); descriptor checksums cover the group number and the
+ * complete descriptor with bg_checksum treated as zero.
+ */
+static void
+update_metadata_group_checksums(struct super_block *sp)
+{
+	static const u16_t zero16 = 0;
+	unsigned int i;
+	unsigned char *p;
+	struct group_desc *gd;
+	struct buf *bp;
+	u16_t flags;
+	u32_t group_le, crc;
+	u32_t block_bitmap_bytes, inode_bitmap_bytes;
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+		return;
+
+	for (i = 0; i < sp->s_groups_count; i++) {
+		p = ondisk_group_descs + (size_t)i * sp->s_desc_size;
+		gd = &sp->s_group_desc[i];
+		memcpy(&flags, p + 18, sizeof(flags));
+		flags = (u16_t)conv2(le_CPU, flags);
+
+		/*
+		 * Match the verifier's ext4 bitmap checksum lengths: with bigalloc
+		 * rejected, the full blocks_per_group / 8 and inodes_per_group / 8
+		 * byte ranges are covered, including the unused tail bits in the last
+		 * filesystem group.
+		 */
+		block_bitmap_bytes = sp->s_blocks_per_group / 8;
+		inode_bitmap_bytes = sp->s_inodes_per_group / 8;
+		if (!(flags & EXT4_BG_BLOCK_UNINIT)) {
+			if (block_bitmap_bytes == 0 ||
+			    block_bitmap_bytes > sp->s_block_size)
+				panic("ext4: invalid block bitmap checksum size");
+			bp = get_block(sp->s_dev, gd->block_bitmap, NORMAL);
+			crc = ext4_crc32c(sp->s_csum_seed,
+			    b_data(bp), block_bitmap_bytes);
+			put_block(bp);
+			ext4_store16(p + 24, (u16_t)crc);
+			if (sp->s_desc_size >= 64)
+				ext4_store16(p + 56, (u16_t)(crc >> 16));
+		}
+
+		if (!(flags & EXT4_BG_INODE_UNINIT)) {
+			if (inode_bitmap_bytes == 0 ||
+			    inode_bitmap_bytes > sp->s_block_size)
+				panic("ext4: invalid inode bitmap checksum size");
+			bp = get_block(sp->s_dev, gd->inode_bitmap, NORMAL);
+			crc = ext4_crc32c(sp->s_csum_seed,
+			    b_data(bp), inode_bitmap_bytes);
+			put_block(bp);
+			ext4_store16(p + 26, (u16_t)crc);
+			if (sp->s_desc_size >= 64)
+				ext4_store16(p + 58, (u16_t)(crc >> 16));
+		}
+
+		group_le = (u32_t)conv4(le_CPU, i);
+		crc = ext4_crc32c(sp->s_csum_seed, &group_le,
+		    sizeof(group_le));
+		crc = ext4_crc32c(crc, p, 30);
+		crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
+		if (sp->s_desc_size > 32)
+			crc = ext4_crc32c(crc, p + 32, sp->s_desc_size - 32);
+		ext4_store16(p + 30, (u16_t)crc);
+	}
+}
+
 void
 write_super(struct super_block *sp)
 {
@@ -323,6 +395,7 @@ write_super(struct super_block *sp)
 		}
 
 		update_legacy_group_descriptor_checksums(sp);
+		update_metadata_group_checksums(sp);
 
 		if (opt.block_with_super == 0)
 			gdt_position = ((u64_t)sp->s_first_data_block + 1) *
