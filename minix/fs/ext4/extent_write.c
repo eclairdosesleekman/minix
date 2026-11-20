@@ -484,6 +484,174 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 	return(OK);
 }
 
+/*
+ * Preflight final inode reclamation for extent trees. truncate_inode() walks
+ * logical blocks only up to i_size, so reject depth-one trees with mappings
+ * beyond EOF rather than freeing the inode while leaving those blocks behind.
+ * The existing depth-one writer removes each external leaf when its final
+ * extent is freed.
+ */
+int
+ext4_extent_can_truncate(struct inode *rip)
+{
+	unsigned char *root, *index_entry, *node;
+	struct ext4_extent ex, prior;
+	struct super_block *sp;
+	struct buf *bp;
+	block64_t child, leaf_block, prior_child;
+	u64_t file_blocks, previous_end, next_key, logical_end, owned_blocks;
+	u32_t root_key, previous_key;
+	u16_t root_entries, root_max, depth, leaf_entries, leaf_max;
+	unsigned int i, j, k;
+
+	sp = rip->i_sp;
+	if (!sp->s_is_ext4 || !(rip->i_flags & EXT4_EXTENTS_FL))
+		return(OK);
+
+	root = (unsigned char *)rip->i_block;
+	if (extent_get16(root) != EXT4_EXTENT_MAGIC)
+		return(EIO);
+	depth = extent_get16(root + 6);
+	if (depth == 0)
+		return(OK);
+	if (depth != 1)
+		return(EOPNOTSUPP);
+
+	root_entries = extent_get16(root + 2);
+	root_max = extent_get16(root + 4);
+	if (root_max == 0 ||
+	    root_max > (sizeof(rip->i_block) - 12) / 12 ||
+	    root_entries == 0 || root_entries > root_max ||
+	    sp->s_block_size == 0 || rip->i_size < 0)
+		return(EIO);
+
+	file_blocks = (u64_t)rip->i_size / sp->s_block_size;
+	if ((u64_t)rip->i_size % sp->s_block_size != 0)
+		file_blocks++;
+	if (file_blocks > (u64_t)UINT32_MAX + 1)
+		return(EOPNOTSUPP);
+
+	/* Validate all root keys and external-node pointers before reading them. */
+	previous_key = 0;
+	for (i = 0; i < root_entries; i++) {
+		index_entry = root + 12 + i * 12;
+		root_key = extent_get32(index_entry);
+		child = ((u64_t)extent_get16(index_entry + 8) << 32) |
+		    extent_get32(index_entry + 4);
+		if (child <= sp->s_first_data_block ||
+		    child >= sp->s_blocks_count ||
+		    extent_is_group_metadata(sp, child) ||
+		    (i != 0 && root_key <= previous_key))
+			return(EIO);
+		for (j = 0; j < i; j++) {
+			const unsigned char *prior_index = root + 12 + j * 12;
+			prior_child =
+			    ((u64_t)extent_get16(prior_index + 8) << 32) |
+			    extent_get32(prior_index + 4);
+			if (prior_child == child)
+				return(EIO);
+		}
+		previous_key = root_key;
+	}
+
+	owned_blocks = 0;
+	for (i = 0; i < root_entries; i++) {
+		index_entry = root + 12 + i * 12;
+		root_key = extent_get32(index_entry);
+		leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
+		    extent_get32(index_entry + 4);
+		bp = get_block(rip->i_dev, leaf_block, NORMAL);
+		if (bp == NULL)
+			return(EIO);
+		node = (unsigned char *)b_data(bp);
+
+		if (extent_get16(node) != EXT4_EXTENT_MAGIC ||
+		    extent_get16(node + 6) != 0) {
+			put_block(bp);
+			return(EIO);
+		}
+		leaf_entries = extent_get16(node + 2);
+		leaf_max = extent_get16(node + 4);
+		if (leaf_max == 0 ||
+		    leaf_max > (sp->s_block_size - 12) / 12 ||
+		    leaf_entries == 0 || leaf_entries > leaf_max) {
+			put_block(bp);
+			return(EIO);
+		}
+
+		previous_end = 0;
+		next_key = (u64_t)UINT32_MAX + 1;
+		if (i + 1 < root_entries)
+			next_key = extent_get32(root + 12 + (i + 1) * 12);
+		for (j = 0; j < leaf_entries; j++) {
+			extent_get(node + 12 + j * 12, &ex);
+			logical_end = (u64_t)ex.logical + ex.length;
+			if (ex.length == 0 ||
+			    ex.physical <= sp->s_first_data_block ||
+			    ex.physical >= sp->s_blocks_count ||
+			    ex.length > sp->s_blocks_count - ex.physical ||
+			    extent_overlaps_group_metadata(sp, ex.physical,
+			    ex.length) ||
+			    extent_overlaps_tree_node(root, root_entries,
+			    ex.physical, ex.length) ||
+			    logical_end > ((u64_t)UINT32_MAX + 1) ||
+			    (j != 0 && ex.logical < previous_end) ||
+			    (j == 0 && ex.logical != root_key)) {
+				put_block(bp);
+				return(EIO);
+			}
+			/* This truncate implementation never visits blocks beyond i_size. */
+			if (logical_end > file_blocks) {
+				put_block(bp);
+				return(EOPNOTSUPP);
+			}
+
+			for (k = 0; k < j; k++) {
+				extent_get(node + 12 + k * 12, &prior);
+				if (extent_ranges_overlap(ex.physical, ex.length,
+				    prior.physical, prior.length)) {
+					put_block(bp);
+					return(EIO);
+				}
+			}
+			if (owned_blocks > ~(u64_t)0 - ex.length) {
+				put_block(bp);
+				return(EIO);
+			}
+			owned_blocks += ex.length;
+			previous_end = logical_end;
+		}
+		if (previous_end > next_key) {
+			put_block(bp);
+			return(EIO);
+		}
+		if (owned_blocks == ~(u64_t)0) {
+			put_block(bp);
+			return(EIO);
+		}
+		owned_blocks++; /* One external leaf node. */
+
+		/*
+		 * This also checks physical aliases between the selected leaf and
+		 * siblings, and between every pair of siblings.
+		 */
+		if (i == 0 && extent_depth1_check_siblings(rip, root,
+		    root_entries, 0, node, leaf_entries, FALSE, 0) != OK) {
+			put_block(bp);
+			return(EIO);
+		}
+		put_block(bp);
+	}
+
+	/* i_blocks includes the data blocks and the external leaf nodes. */
+	if (sp->s_sectors_in_block == 0 ||
+	    owned_blocks > ~(u64_t)0 / sp->s_sectors_in_block ||
+	    owned_blocks * sp->s_sectors_in_block > rip->i_blocks)
+		return(EIO);
+
+	return(OK);
+}
+
 static int
 extent_depth1_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
