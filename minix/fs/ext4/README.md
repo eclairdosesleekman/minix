@@ -102,6 +102,14 @@ read-write mode.
   implemented; special inodes without data mappings may still release a
   validated xattr block. Multi-entry depth-two roots, deeper trees, and
   mappings beyond EOF remain unsupported for final unlink.
+- Read-only mounts accept `COMPAT_ORPHAN_FILE` when
+  `RO_COMPAT_ORPHAN_PRESENT` is clear. A clean unmount clears this flag to
+  indicate that the orphan file has no entries requiring recovery, so the
+  server can safely leave the special inode untouched. If
+  `RO_COMPAT_ORPHAN_PRESENT` is set, mounting is rejected because orphan-file
+  recovery is not implemented. Writable orphan-file filesystems remain
+  unsupported because unlink and truncate paths do not maintain the orphan
+  file.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
   is not released. The zero-link inode is kept allocated for later fsck/recovery
   rather than allowing its still-referenced blocks to be reallocated.
@@ -153,8 +161,11 @@ implementation.
   directory entry is removed. Multi-entry depth-two roots and depth-three or
   deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
-  encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
-  are rejected. The filesystem must be clean, with an empty legacy orphan list.
+  encryption, casefold, bigalloc, and unsupported feature flags are rejected.
+  The filesystem must be clean, with an empty legacy orphan list. An orphan-file
+  filesystem is accepted read-only only when `RO_COMPAT_ORPHAN_PRESENT` is
+  clear; writable mounts and filesystems with pending orphan-file recovery
+  entries remain unsupported.
 - Without `huge_file`, inode writes fail with `EFBIG` rather than silently
   truncating an `i_blocks` value that exceeds 32 bits. With `huge_file`, ext4
   can store a 48-bit sector count, or a 48-bit filesystem-block count when
