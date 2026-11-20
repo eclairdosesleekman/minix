@@ -76,6 +76,75 @@ unsigned int get_block_size(dev_t dev)
 
 static unsigned char *ondisk_group_descs;
 
+/*
+ * META_BG puts one primary descriptor block at the start of each meta
+ * group's first block group. The superblock backup, when present, occupies
+ * the first block, so the descriptor block follows it.
+ */
+static int
+ext4_meta_bg_is_power(u32_t group, u32_t base)
+{
+	if (group < base)
+		return(FALSE);
+	while (group % base == 0)
+		group /= base;
+	return(group == 1);
+}
+
+static int
+ext4_meta_bg_group_has_super(struct super_block *sp, u32_t group)
+{
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_SPARSE_SUPER))
+		return(TRUE);
+	if (group <= 1 || ext4_meta_bg_is_power(group, 3) ||
+	    ext4_meta_bg_is_power(group, 5) ||
+	    ext4_meta_bg_is_power(group, 7))
+		return(TRUE);
+	return(FALSE);
+}
+
+static int
+ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
+	block64_t *blockp)
+{
+	u64_t first_group, first_block, block, max_value;
+	unsigned int has_super;
+
+	if (!HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG) ||
+	    index < sp->s_first_meta_bg || index >= sp->s_gdb_count ||
+	    sp->s_desc_per_block == 0 || sp->s_blocks_per_group == 0)
+		return(FALSE);
+
+	first_group = (u64_t)index * sp->s_desc_per_block;
+	if (first_group >= sp->s_groups_count)
+		return(FALSE);
+	max_value = (u64_t)~(u64_t)0;
+	if (first_group >
+	    (max_value - sp->s_first_data_block) / sp->s_blocks_per_group)
+		return(FALSE);
+	first_block = (u64_t)sp->s_first_data_block +
+	    first_group * sp->s_blocks_per_group;
+
+	has_super = ext4_meta_bg_group_has_super(sp, (u32_t)first_group);
+	/*
+	 * ext4's 1 KiB META_BG layout with s_first_data_block == 0 has
+	 * an extra reserved block before the first descriptor block.
+	 */
+	if (sp->s_block_size == 1024 && index == 0 &&
+	    sp->s_first_data_block == 0)
+		has_super++;
+
+	if (first_block > max_value - has_super)
+		return(FALSE);
+	block = first_block + has_super;
+	if (block >= sp->s_blocks_count ||
+	    block > max_value / sp->s_block_size)
+		return(FALSE);
+
+	*blockp = (block64_t)block;
+	return(TRUE);
+}
+
 /*===========================================================================*
  *                              read_super                                   *
  *                              sp: pointer to superblock					 *
@@ -88,7 +157,9 @@ int read_super(register struct super_block *sp)
 	u32_t blocks_hi, reserved_hi, free_hi;
 	u16_t raw_desc_size;
 	u64_t groups64, gdt_position;
-	size_t gd_size, off, chunk;
+	size_t gd_size, classic_gdt_size, off, chunk;
+	unsigned int classic_gdb_count, gdb;
+	block64_t descriptor_block;
 
 	ondisk_superblock = (struct super_block *)mmap(NULL, SUPER_SIZE_D,
 	    PROT_READ|PROT_WRITE, MAP_ANON|MAP_PRIVATE, -1, 0);
@@ -209,6 +280,24 @@ int read_super(register struct super_block *sp)
 	sp->s_gdb_count = (sp->s_groups_count + sp->s_desc_per_block - 1) /
 	    sp->s_desc_per_block;
 
+	/*
+	 * The superblock's s_first_meta_bg is a descriptor-block index: all
+	 * earlier descriptor blocks retain the classic contiguous layout.
+	 * Alternate-superblock selection and SPARSE_SUPER2 need separate
+	 * backup-location handling, so do not guess at those layouts.
+	 */
+	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG)) {
+		if (sp->s_first_meta_bg > sp->s_gdb_count ||
+		    opt.block_with_super != 0 ||
+		    HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2))
+			return(EOPNOTSUPP);
+		classic_gdb_count = sp->s_first_meta_bg;
+	} else {
+		if (sp->s_first_meta_bg != 0)
+			return(EINVAL);
+		classic_gdb_count = sp->s_gdb_count;
+	}
+
 	if (sp->s_gdb_count > ((size_t)-1) / sp->s_block_size ||
 	    sp->s_groups_count > SIZE_MAX / sizeof(*group_descs))
 		return(EINVAL);
@@ -226,14 +315,37 @@ int read_super(register struct super_block *sp)
 		    sp->s_block_size;
 	else
 		gdt_position = ((u64_t)opt.block_with_super + 1) * 1024;
-	for (off = 0; off < gd_size; off += chunk) {
-		chunk = gd_size - off;
+
+	/* Read the descriptor blocks that still use the classic GDT location. */
+	classic_gdt_size = (size_t)classic_gdb_count * sp->s_block_size;
+	for (off = 0; off < classic_gdt_size; off += chunk) {
+		chunk = classic_gdt_size - off;
 		if (chunk > PAGE_SIZE)
 			chunk = PAGE_SIZE;
 		r = bdev_read(dev, gdt_position + off,
 		    (char *)ondisk_group_descs + off, chunk, BDEV_NOFLAGS);
 		if (r != (ssize_t)chunk) {
-			printf("ext4: cannot read group descriptors\\n");
+			printf("ext4: cannot read classic group descriptors\\n");
+			return(EINVAL);
+		}
+	}
+
+	/*
+	 * Read each META_BG primary descriptor block into its logical slot.
+	 * The resulting buffer is still a dense descriptor table, so the
+	 * existing checksum and descriptor decoders work unchanged.
+	 */
+	for (gdb = classic_gdb_count; gdb < sp->s_gdb_count; gdb++) {
+		if (!ext4_meta_bg_descriptor_block(sp, gdb, &descriptor_block))
+			return(EINVAL);
+		r = bdev_read(dev,
+		    (u64_t)descriptor_block * sp->s_block_size,
+		    (char *)ondisk_group_descs +
+		    (size_t)gdb * sp->s_block_size,
+		    sp->s_block_size, BDEV_NOFLAGS);
+		if (r != (ssize_t)sp->s_block_size) {
+			printf("ext4: cannot read META_BG descriptor block %u\\n",
+			    gdb);
 			return(EINVAL);
 		}
 	}
@@ -457,6 +569,7 @@ static void super_copy(
   dest->s_free_blocks_count_lo = conv4(le_CPU, source->s_free_blocks_count_lo);
   dest->s_free_inodes_count = conv4(le_CPU, source->s_free_inodes_count);
   dest->s_first_data_block = conv4(le_CPU, source->s_first_data_block);
+  dest->s_first_meta_bg = conv4(le_CPU, source->s_first_meta_bg);
   dest->s_log_block_size = conv4(le_CPU, source->s_log_block_size);
   dest->s_log_frag_size = conv4(le_CPU, source->s_log_frag_size);
   dest->s_blocks_per_group = conv4(le_CPU, source->s_blocks_per_group);
