@@ -666,8 +666,9 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	block64_t block_bitmap, inode_bitmap, inode_table;
 	block64_t table_blocks;
 	struct ext4_metadata_range *ranges;
+	block64_t previous_end;
 	size_t range_count, n;
-	unsigned int i;
+	unsigned int i, previous_group;
 
 	/* A bitmap has one bit per block/inode (bigalloc is not implemented). */
 	if ((u64_t)sp->s_inodes_per_group > (u64_t)sp->s_block_size * 8 ||
@@ -731,12 +732,21 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	/* flex_bg relocates metadata but reservations must remain disjoint. */
 	qsort(ranges, range_count, sizeof(*ranges),
 	    compare_ext4_metadata_ranges);
+	previous_end = ranges[0].end;
+	previous_group = ranges[0].group;
 	for (n = 1; n < range_count; n++) {
-		if (ranges[n].first < ranges[n - 1].end) {
-			printf("ext4: metadata ranges overlap between groups %u and %u\\n",
-			    ranges[n - 1].group, ranges[n].group);
+		/* Compare with the furthest-reaching prior range, not just
+		 * the immediately preceding (possibly nested) range.
+		 */
+		if (ranges[n].first < previous_end) {
+			printf("ext4: metadata ranges overlap between groups %u and %u\n",
+			    previous_group, ranges[n].group);
 			free(ranges);
 			return(EIO);
+		}
+		if (ranges[n].end > previous_end) {
+			previous_end = ranges[n].end;
+			previous_group = ranges[n].group;
 		}
 	}
 
