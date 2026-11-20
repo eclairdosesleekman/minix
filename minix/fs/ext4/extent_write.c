@@ -1,10 +1,9 @@
 /*
  * Limited ext4 extent-tree updates.
  *
- * The implementation deliberately updates only extent trees stored entirely
- * in the inode (depth zero).  External extent nodes need splitting, checksums,
- * and transaction handling; those operations are rejected rather than being
- * rewritten as ext2 indirect blocks.
+ * This writer supports inline roots and in-place updates to depth-one external
+ * leaf nodes.  It does not allocate/split external nodes or rebalance deeper
+ * trees; operations requiring those changes are rejected.
  */
 
 #include "fs.h"
@@ -158,6 +157,31 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
  * Splitting/rebalancing the tree is deliberately out of scope: operations
  * that need another leaf entry are rejected before either node is changed.
  */
+/*
+ * External extent-node pointers are disk metadata, not ordinary file data.
+ * Reject aliases of the group allocation bitmaps and inode-table ranges
+ * before acquiring a writable buffer.  The scan intentionally covers all
+ * groups because flex_bg may place metadata outside its nominal group.
+ */
+static int
+extent_is_group_metadata(struct super_block *sp, block64_t block)
+{
+	struct group_desc *gd;
+	unsigned int group;
+
+	for (group = 0; group < sp->s_groups_count; group++) {
+		gd = get_group_desc(group);
+		if (gd == NULL)
+			return(TRUE);
+		if (block == gd->block_bitmap ||
+		    block == gd->inode_bitmap ||
+		    (block >= gd->inode_table &&
+		    block - gd->inode_table < sp->s_itb_per_group))
+			return(TRUE);
+	}
+	return(FALSE);
+}
+
 static int
 extent_depth1_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
@@ -203,7 +227,9 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		child_lo = extent_get32(index_entry + 4);
 		child_hi = extent_get16(index_entry + 8);
 		child = ((u64_t)child_hi << 32) | child_lo;
-		if (child == 0 || child >= rip->i_sp->s_blocks_count ||
+		if (child <= rip->i_sp->s_first_data_block ||
+		    child >= rip->i_sp->s_blocks_count ||
+		    extent_is_group_metadata(rip->i_sp, child) ||
 		    (i != 0 && root_key <= previous_end))
 			return(EIO);
 		if (i == 0 || root_key <= logical)
@@ -255,7 +281,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	previous_end = 0;
 	for (i = 0; i < leaf_entries; i++) {
 		extent_get(node + 12 + i * 12, &ex);
-		if (ex.length == 0 || ex.physical == 0 ||
+		if (ex.length == 0 ||
+		    ex.physical <= rip->i_sp->s_first_data_block ||
 		    ex.physical >= rip->i_sp->s_blocks_count ||
 		    ex.length > rip->i_sp->s_blocks_count - ex.physical ||
 		    (u64_t)ex.logical + ex.length >
