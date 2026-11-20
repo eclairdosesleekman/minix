@@ -122,6 +122,7 @@ struct group_desc
     u32_t free_blocks_count;
     u32_t free_inodes_count;
     u32_t used_dirs_count;
+    u16_t flags;              /* ext4 bg_flags (lazy bitmap initialization) */
 };
 
 #define IMAP	0           /* operating on the inode bit map */

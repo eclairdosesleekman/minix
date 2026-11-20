@@ -194,4 +194,9 @@
 #define EXT2_PREALLOC_BLOCKS		8
 
 
+/* ext4 block-group flags in bg_flags. */
+#define EXT4_BG_INODE_UNINIT  0x0001
+#define EXT4_BG_BLOCK_UNINIT  0x0002
+#define EXT4_BG_INODE_ZEROED  0x0004
+
 #endif /* EXT2_CONST_H */
