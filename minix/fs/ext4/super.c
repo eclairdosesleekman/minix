@@ -39,6 +39,8 @@ static int verify_group_descriptor_checksums(struct super_block *sp,
 	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size);
 static int verify_legacy_group_descriptor_checksums(struct super_block *sp,
 	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size);
+static void update_legacy_group_descriptor_checksums(struct super_block *sp,
+	unsigned char *raw, unsigned int ngroups, unsigned int desc_size);
 static int verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	const unsigned char *raw, struct group_desc *groups,
 	unsigned int ngroups, unsigned int desc_size);
@@ -326,6 +328,16 @@ write_super(struct super_block *sp)
 			}
 		}
 
+		/*
+		 * Legacy GDT_CSUM protects the complete group descriptor. Refresh
+		 * its CRC after updating the free counters. metadata_csum uses a
+		 * different CRC32C format and remains read-only in this server.
+		 */
+		if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) &&
+		    !HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+			update_legacy_group_descriptor_checksums(sp,
+			    ondisk_group_descs, sp->s_groups_count, sp->s_desc_size);
+
 		if (opt.block_with_super == 0)
 			gdt_position = ((u64_t)sp->s_first_data_block + 1) *
 			    sp->s_block_size;
@@ -594,6 +606,37 @@ verify_legacy_group_descriptor_checksums(struct super_block *sp,
 }
 
 /*
+ * Regenerate legacy GDT_CSUM checksums after group descriptor counters change.
+ * The checksum covers UUID, little-endian group number, descriptor bytes 0-29,
+ * and (for 64-byte descriptors) bytes 32 through the end. bg_checksum itself
+ * is deliberately omitted, exactly as in the mount-time verifier.
+ */
+static void
+update_legacy_group_descriptor_checksums(struct super_block *sp,
+	unsigned char *raw, unsigned int ngroups, unsigned int desc_size)
+{
+	unsigned int i;
+	u32_t group_le;
+	u16_t crc;
+	unsigned char *p;
+
+	if (desc_size < 32)
+		panic("ext4: invalid descriptor size for legacy checksum update");
+
+	for (i = 0; i < ngroups; i++) {
+		p = raw + (size_t)i * desc_size;
+		group_le = (u32_t)conv4(le_CPU, i);
+		crc = ext4_crc16((u16_t)~0U, sp->s_uuid,
+		    sizeof(sp->s_uuid));
+		crc = ext4_crc16(crc, &group_le, sizeof(group_le));
+		crc = ext4_crc16(crc, p, 30);
+		if (desc_size > 32)
+			crc = ext4_crc16(crc, p + 32, desc_size - 32);
+		ext4_store16(p + 30, crc);
+	}
+}
+
+/*
  * Verify both initialized allocation bitmaps for every block group before
  * the filesystem is made available. Bitmap checksums cover the full bitmap
  * block and use CRC32C(seed, little-endian group number, bitmap bytes).
@@ -837,6 +880,7 @@ static void copy_group_descriptors(struct group_desc *dest_array,
 		gd->free_blocks_count = ext4_read16(p + 12);
 		gd->free_inodes_count = ext4_read16(p + 14);
 		gd->used_dirs_count = ext4_read16(p + 16);
+		gd->flags = ext4_read16(p + 18);
 		if (is64) {
 			gd->block_bitmap |= (u64_t)ext4_read32(p + 32) << 32;
 			gd->inode_bitmap |= (u64_t)ext4_read32(p + 36) << 32;
