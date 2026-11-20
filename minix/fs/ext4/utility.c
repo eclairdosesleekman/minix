@@ -114,8 +114,10 @@ ext4_validate_data_range(struct inode *rip, block64_t first, u64_t length)
 	 * Clip the final partial cluster to the filesystem's block count.
 	 */
 	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC)) {
-		range_first -= range_first % sp->s_cluster_ratio;
-		remainder = range_end % sp->s_cluster_ratio;
+		range_first -= (range_first - sp->s_first_data_block) %
+		    sp->s_cluster_ratio;
+		remainder = (range_end - sp->s_first_data_block) %
+		    sp->s_cluster_ratio;
 		if (remainder != 0) {
 			extension = sp->s_cluster_ratio - remainder;
 			if (extension > sp->s_blocks_count - range_end)
