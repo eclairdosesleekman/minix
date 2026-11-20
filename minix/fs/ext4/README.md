@@ -137,9 +137,12 @@ extent root reaches its four-entry capacity. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
-`i_blocks` field and inode flag consistent. Exercise encoder boundary values
-at 2^32 and 2^48 sectors, and the switch to filesystem-block units above
-2^48 sectors; reject values exceeding the 48-bit filesystem-block limit.
+`i_blocks` field and inode flag consistent. Confirm the extent write path
+accepts an allocation that moves the in-core sector count beyond 2^32 when
+`huge_file` is enabled, while the same increment is rejected without that
+feature. Exercise encoder boundary values at 2^32 and 2^48 sectors, and the
+switch to filesystem-block units above 2^48 sectors; reject values exceeding
+the 48-bit filesystem-block limit before changing the extent tree.
 
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
