@@ -138,13 +138,39 @@ static int rw_chunk(register struct inode *rip, u64_t position, unsigned off,
   if (rip->i_sp->s_is_ext4 &&
       HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
       (rip->i_flags & EXT4_INLINE_DATA_FL)) {
-	if (call != FSC_READ)
-		return(call == FSC_WRITE ? EROFS : EOPNOTSUPP);
-	if (position > rip->i_inline_size ||
-	    chunk > rip->i_inline_size - (size_t)position)
-		return(EIO);
-	return(fsdriver_copyout(data, buf_off,
-	    rip->i_inline_data + (size_t)position, chunk));
+	if (call == FSC_READ) {
+		if (position > rip->i_inline_size ||
+		    chunk > rip->i_inline_size - (size_t)position)
+			return(EIO);
+		return(fsdriver_copyout(data, buf_off,
+		    rip->i_inline_data + (size_t)position, chunk));
+	}
+	if (call == FSC_WRITE) {
+		unsigned char inline_chunk[EXT4_INLINE_DATA_MAX];
+
+		/* Inline symlinks are targets, not writable file contents. */
+		if ((rip->i_mode & I_TYPE) != I_REGULAR)
+			return(EROFS);
+		if (position > rip->i_inline_size ||
+		    chunk > rip->i_inline_size - (size_t)position)
+			return(EFBIG);
+		if (rip->i_size < 0 ||
+		    (u64_t)rip->i_size > rip->i_inline_size)
+			return(EIO);
+
+		/* Fetch user data before changing the cached inode payload. */
+		r = fsdriver_copyin(data, buf_off, inline_chunk, chunk);
+		if (r != OK)
+			return(r);
+		if (position > (u64_t)rip->i_size)
+			memset(rip->i_inline_data + rip->i_size, 0,
+			    (size_t)(position - (u64_t)rip->i_size));
+		memcpy(rip->i_inline_data + (size_t)position,
+		    inline_chunk, chunk);
+		*completed = (int)chunk;
+		return(OK);
+	}
+	return(EOPNOTSUPP);
   }
 
   err_code = OK;
