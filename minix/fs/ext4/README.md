@@ -89,11 +89,12 @@ implementation.
   `large_dir` indexes.
 - **Bounded extent-tree mutation:** the inode root can be promoted to a
   single external leaf, and that single-leaf tree can collapse back when it
-  becomes empty. A full external leaf is not split, internal index levels are
-  not grown, and multi-leaf/deeper trees are not rebalanced. Operations that
-  require those changes, insert before an external leaf's first extent, or
-  remove the first block of an external leaf return `EOPNOTSUPP` or `EFBIG`.
-  The root promotion and collapse paths are not journaled.
+  becomes empty. Its root key is maintained while removing the leaf's first
+  extent. A full external leaf is not split, internal index levels are not
+  grown, and multi-leaf/deeper trees are not rebalanced. Operations that
+  require those changes or insert before an external leaf's first extent
+  return `EOPNOTSUPP` or `EFBIG`. The root promotion and collapse paths are
+  not journaled.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline
