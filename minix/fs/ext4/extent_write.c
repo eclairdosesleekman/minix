@@ -581,11 +581,11 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	struct buf *leaf_bp;
 	struct ext4_extent ex, previous, next;
 	size_t node_size;
-	u16_t entries, max_entries;
+	u16_t entries, max_entries, root_depth, root_index;
 	u64_t logical64, physical;
 	u32_t logical, offset, new_length;
 	unsigned int i, insert;
-	int r;
+	int r, update_root_key;
 
 	if (rip->i_sp->s_rd_only)
 		return(EROFS);
@@ -598,9 +598,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	logical = (u32_t)logical64;
 
 	if ((r = extent_leaf(rip, logical, &root, &node_size, &entries,
-	    &max_entries, &leaf_bp)) != OK)
+	    &max_entries, &leaf_bp, &root_depth, &root_index)) != OK)
 		return(r);
 	(void)node_size;	/* The selected node has already been bounded. */
+	update_root_key = FALSE;
 
 	/* Find the extent containing the requested logical block. */
 	for (i = 0; i < entries; i++) {
@@ -613,7 +614,6 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 
 	if (op & WMAP_FREE) {
 		u64_t block_to_free;
-		int update_root_key = FALSE;
 
 		if (i == entries) {
 			extent_release_leaf(leaf_bp, FALSE);
@@ -633,22 +633,16 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		 */
 		if (leaf_bp != NULL && entries == 1 && ex.length == 1) {
 			extent_release_leaf(leaf_bp, FALSE);
-			return(extent_collapse_single_leaf(rip, block_to_free));
+			return(extent_remove_root_leaf(rip, root_index,
+			    block_to_free));
 		}
 		/*
-		 * A one-leaf depth-one tree has its parent index in the inode,
-		 * so its sole key can be updated when the first extent moves.
-		 * Multi-leaf and deeper trees need general parent traversal.
+		 * In a depth-one tree every leaf has a direct index entry in the
+		 * inode.  The entry corresponding to this leaf can be updated
+		 * without changing any other parent node.
 		 */
 		if (leaf_bp != NULL && i == 0 && offset == 0) {
-			unsigned char *extent_root;
-
-			extent_root = (unsigned char *)rip->i_block;
-			if (extent_get16(extent_root) != EXT4_EXTENT_MAGIC ||
-			    extent_get16(extent_root + 6) != 1 ||
-			    extent_get16(extent_root + 2) != 1 ||
-			    extent_get16(extent_root + 4) !=
-			    (sizeof(rip->i_block) - 12) / 12) {
+			if (root_depth != 1) {
 				extent_release_leaf(leaf_bp, FALSE);
 				return(EOPNOTSUPP);
 			}
@@ -692,11 +686,9 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		}
 
 		extent_put16(root + 2, entries);
-		if (update_root_key) {
-			/* The root has exactly one child, which is this leaf. */
-			extent_put32((unsigned char *)rip->i_block + 12,
+		if (update_root_key)
+			extent_update_root_key(rip, root_index,
 			    extent_get32(root + 12));
-		}
 		free_block(rip->i_sp, block_to_free);
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
 		extent_release_leaf(leaf_bp, TRUE);
