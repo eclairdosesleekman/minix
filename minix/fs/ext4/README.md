@@ -335,8 +335,9 @@ mke2fs -F -t ext4 -b 4096 -C 65536 \
 e2fsck -fn ext4-bigalloc-test.img
 ```
 
-Mount the image read-only. Check ordinary reads, holes, unwritten extents, and
-files with multiple extents. A writable mount must fail. Include malformed
+Mount the image read-only, for example with
+`mount -o ro -t ext4 /dev/c0d0p1 /mnt`. Check ordinary reads, holes, unwritten
+extents, and files with multiple extents. A writable mount must fail. Include malformed
 extent pointers aimed at a block adjacent to (but in the same allocation
 cluster as) a superblock/GDT, bitmap, inode table, or xattr block; each read
 must fail with EIO before exposing the reserved cluster.
