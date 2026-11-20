@@ -820,7 +820,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 	unsigned int area, offset, rec_len, name_len;
 	off_t pos, new_pos, entry_pos, eof;
 	ino_t child;
-	int r = 0, done = FALSE;
+	int r = 0, error = OK, done = FALSE;
 
 	pos = *posp;
 	if (pos < 0 || ((unsigned int)pos & (DIR_ENTRY_ALIGN - 1)) != 0)
@@ -869,7 +869,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 			dp = (struct ext2_disk_dir_desc *)
 			    (areas[area] + offset);
 			if (!ext4_valid_dirent(dp, offset, sizes[area])) {
-				r = EIO;
+				error = EIO;
 				goto out;
 			}
 			rec_len = ext4_dir_rec_len(dp, sizes[area]);
@@ -885,7 +885,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 				if (name_len == 0 || name_len > NAME_MAX ||
 				    name_len > EXT2_NAME_MAX || child == NO_ENTRY ||
 				    child > rip->i_sp->s_inodes_count) {
-					r = EIO;
+					error = EIO;
 					goto out;
 				}
 				r = fsdriver_dentry_add(&fsdentry, child,
@@ -902,6 +902,8 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 	}
 
 out:
+	if (error != OK)
+		return(error);
 	if (r >= 0 && (r = fsdriver_dentry_finish(&fsdentry)) >= 0) {
 		*posp = new_pos;
 		rip->i_update |= ATIME;
@@ -942,9 +944,11 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 
   if ((rip->i_flags & EXT4_INLINE_DATA_FL) &&
       (rip->i_mode & I_TYPE) == I_DIRECTORY) {
-	r = (int)ext4_getdents_inline_dir(rip, data, bytes, posp);
+	ssize_t inline_result;
+
+	inline_result = ext4_getdents_inline_dir(rip, data, bytes, posp);
 	put_inode(rip);
-	return(r);
+	return(inline_result);
   }
 
   block_size = rip->i_sp->s_block_size;
