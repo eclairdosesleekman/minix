@@ -74,8 +74,10 @@ EXTERN struct inode {
     ino_t i_num;               /* inode number on its (minor) device */
     int i_count;                /* # times inode used; 0 means slot is free */
     struct super_block *i_sp;   /* pointer to super block for inode's device */
-    /* Decoded ext4 inline-data payload; read-only and bounded to 256 bytes. */
+    /* Decoded ext4 inline-data payload and validated system.data value. */
     u16_t i_inline_size;
+    u32_t i_inline_value_offset; /* byte offset within the raw inode */
+    u32_t i_inline_value_size;
     unsigned char i_inline_data[EXT4_INLINE_DATA_MAX];
     char i_dirt;                /* CLEAN or DIRTY */
     block64_t i_bsearch;          /* where to start search for new blocks,
