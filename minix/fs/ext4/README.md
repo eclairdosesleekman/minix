@@ -52,6 +52,12 @@ read-write mode.
   filesystem block range and all group block-bitmap, inode-bitmap, and
   inode-table ranges; invalid mappings fail with `EIO` before a block is
   released or the extent root is changed.
+  Physical ranges in the inline root are also checked for overlap, and a
+  newly allocated block is rejected if it is already mapped by that root.
+  The depth-one writer applies the same overlap check within the selected
+  external leaf and rejects speculative allocations that overlap that leaf
+  or any indexed tree node before freeing or inserting them. Cross-leaf data
+  overlap detection is not yet implemented.
 - Depth-one extent trees can be edited in place when the selected external
   leaf already has capacity. The inode index is kept in sync when a leaf's
   first extent changes, and an empty leaf is detached and freed. Operations
@@ -168,7 +174,12 @@ depth-zero extent that points at a group block bitmap, inode bitmap, or
 inode-table block. Confirm overwrite, truncate, and hole-punch operations
 fail with `EIO` before changing the referenced metadata bitmap or table.
 Also test extents ending exactly at the last filesystem block and extents
-whose lengths would run past it. Also create fragmented files
+whose lengths would run past it. Construct inline and depth-one leaf records
+whose logical ranges are distinct but whose physical block ranges overlap;
+confirm write, truncate, and hole-punch attempts fail with `EIO` before
+changing either extent node or releasing a block. Also simulate an allocator returning a block already mapped in the inline root
+or selected depth-one leaf and confirm it is rejected.
+Also create fragmented files
 whose extent roots grow to depth one; overwrite unwritten extents, allocate
 holes within existing leaves, trim extents at both ends, split an extent by
 punching a middle block, and remove all mappings from one leaf. Confirm

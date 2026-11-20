@@ -76,6 +76,35 @@ extent_put(unsigned char *p, u32_t logical, u64_t physical,
 	extent_put32(p + 8, (u32_t)physical);
 }
 
+/*
+ * Test physical block ranges without forming end addresses.  The callers
+ * validate the ranges against s_blocks_count before invoking this helper.
+ */
+static int
+extent_ranges_overlap(block64_t first, u32_t first_len,
+	block64_t second, u32_t second_len)
+{
+	if (first <= second)
+		return(second - first < first_len);
+	return(first - second < second_len);
+}
+
+/* Return TRUE if a candidate physical block is already mapped in this node. */
+static int
+extent_block_is_mapped(const unsigned char *entries, u16_t count,
+	block64_t block)
+{
+	struct ext4_extent ex;
+	unsigned int i;
+
+	for (i = 0; i < count; i++) {
+		extent_get(entries + i * 12, &ex);
+		if (block >= ex.physical && block - ex.physical < ex.length)
+			return(TRUE);
+	}
+	return(FALSE);
+}
+
 /* Validate physical mappings before a write can free or replace them. */
 static int extent_is_group_metadata(struct super_block *sp, block64_t block);
 static int extent_overlaps_group_metadata(struct super_block *sp,
@@ -110,7 +139,8 @@ extent_root(struct inode *rip, unsigned char **rootp, u16_t *entriesp,
 		return(EOPNOTSUPP);
 
 	for (i = 0; i < entries; i++) {
-		struct ext4_extent ex;
+		struct ext4_extent ex, prior;
+		unsigned int j;
 
 		extent_get(root + 12 + i * 12, &ex);
 		/*
@@ -127,6 +157,14 @@ extent_root(struct inode *rip, unsigned char **rootp, u16_t *entriesp,
 		    (u64_t)ex.logical + ex.length > ((u64_t)UINT32_MAX + 1) ||
 		    (i != 0 && ex.logical < previous_end))
 			return(EIO);
+
+		/* Two logical extents must never own the same physical blocks. */
+		for (j = 0; j < i; j++) {
+			extent_get(root + 12 + j * 12, &prior);
+			if (extent_ranges_overlap(ex.physical, ex.length,
+			    prior.physical, prior.length))
+				return(EIO);
+		}
 		previous_end = (u64_t)ex.logical + ex.length;
 	}
 
@@ -355,8 +393,40 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 			put_block(bp);
 			return(EIO);
 		}
+
+		/* Reject duplicate physical mappings within this external leaf. */
+		{
+			struct ext4_extent prior;
+			unsigned int j;
+
+			for (j = 0; j < i; j++) {
+				extent_get(node + 12 + j * 12, &prior);
+				if (extent_ranges_overlap(ex.physical, ex.length,
+				    prior.physical, prior.length)) {
+					put_block(bp);
+					return(EIO);
+				}
+			}
+		}
 		previous_end = (u64_t)ex.logical + ex.length;
 	}
+
+	/*
+	 * new_wblock is allocated before this callback, even when it merely
+	 * replaces an unwritten extent. Never free or insert it if allocator
+	 * metadata points at a block already owned by the selected leaf or its tree.
+	 */
+	if (!(op & WMAP_FREE) &&
+	    (new_wblock <= rip->i_sp->s_first_data_block ||
+	    new_wblock >= rip->i_sp->s_blocks_count ||
+	    new_wblock > (((u64_t)1 << 48) - 1) ||
+	    extent_is_group_metadata(rip->i_sp, new_wblock) ||
+	    extent_overlaps_tree_node(root, root_entries, new_wblock, 1) ||
+	    extent_block_is_mapped(node + 12, leaf_entries, new_wblock))) {
+		put_block(bp);
+		return(EIO);
+	}
+
 	leaf_end = previous_end;
 	next_key = (u64_t)UINT32_MAX + 1;
 	if (leaf_index + 1 < root_entries)
@@ -509,14 +579,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	}
 
 	/* Insert a newly allocated block into a hole in this leaf. */
-	if (new_wblock <= rip->i_sp->s_first_data_block ||
-	    new_wblock >= rip->i_sp->s_blocks_count ||
-	    new_wblock > (((u64_t)1 << 48) - 1) ||
-	    extent_is_group_metadata(rip->i_sp, new_wblock) ||
-	    extent_overlaps_tree_node(root, root_entries, new_wblock, 1)) {
-		put_block(bp);
-		return(EIO);
-	}
+
 	if (!extent_i_blocks_can_add(rip,
 	    rip->i_sp->s_sectors_in_block)) {
 		put_block(bp);
@@ -637,6 +700,20 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if ((r = extent_root(rip, &root, &entries, &max_entries)) != OK)
 		return(r);
 
+	/*
+	 * The allocator may hand us a block even when a damaged bitmap says it
+	 * is free.  Do not write it, or free it after unwritten conversion, if
+	 * it is already referenced by another inline extent in this inode.
+	 */
+	physical = (u64_t)new_wblock;
+	if (!(op & WMAP_FREE) &&
+	    (physical <= rip->i_sp->s_first_data_block ||
+	    physical >= rip->i_sp->s_blocks_count ||
+	    physical > (((u64_t)1 << 48) - 1) ||
+	    extent_is_group_metadata(rip->i_sp, physical) ||
+	    extent_block_is_mapped(root + 12, entries, physical)))
+		return(EIO);
+
 	/* Find the extent containing the requested logical block. */
 	for (i = 0; i < entries; i++) {
 		entry = root + 12 + i * 12;
@@ -739,12 +816,6 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		return(OK);
 	}
 
-	physical = (u64_t)new_wblock;
-	if (physical <= rip->i_sp->s_first_data_block ||
-	    physical >= rip->i_sp->s_blocks_count ||
-	    physical > (((u64_t)1 << 48) - 1) ||
-	    extent_is_group_metadata(rip->i_sp, physical))
-		return(EIO);
 	/*
 	 * The in-core counter is 64 bits.  Do not retain the old ext2
 	 * 32-bit limit here: HUGE_FILE filesystems can store a 48-bit
