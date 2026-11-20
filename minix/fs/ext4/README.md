@@ -63,10 +63,9 @@ read-write mode.
   that require leaf splitting or tree rebalancing are rejected; deeper trees
   remain read-only for mutation.
 - Final unlink of files with depth-one extent trees is supported. Before
-  removing the last directory entry, all leaf mappings are checked for valid
-  physical ranges, non-aliasing, and containment within the file's logical
-  size; the preflight also verifies that `i_blocks` accounts for data and
-  external leaf blocks. Truncation then frees data blocks and detaches/frees
+  removing the last directory entry, all mappings are checked for valid physical ranges, non-aliasing, and
+  containment within the file's logical size; the preflight also verifies
+  that `i_blocks` exactly matches the data and external-node blocks. Truncation then frees data blocks and detaches/frees
   each external leaf. Depth-two and deeper trees, mappings beyond EOF, and
   inodes with external xattr blocks are rejected before the name is removed.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
