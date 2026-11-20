@@ -261,12 +261,18 @@ void put_inode(
 		 * this inode. Special files have no data mapping to truncate.
 		 */
 		truncate_error = truncate_inode(rip, (off_t) 0);
+		/*
+		 * The old ext2 path treats truncate's EINVAL for special files as
+		 * expected because device nodes have no data mapping to truncate.
+		 */
+		if (truncate_error == EINVAL &&
+		    ((rip->i_mode & I_TYPE) == I_CHAR_SPECIAL ||
+		    (rip->i_mode & I_TYPE) == I_BLOCK_SPECIAL))
+			truncate_error = OK;
 		if (truncate_error == OK && rip->i_sp != NULL &&
 		    rip->i_sp->s_is_ext4)
 			truncate_error = ext4_release_xattr_block(rip);
-		if (truncate_error != OK &&
-		    (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL &&
-		    (rip->i_mode & I_TYPE) != I_BLOCK_SPECIAL) {
+		if (truncate_error != OK) {
 			printf("ext4: keeping unlinked inode %llu allocated after "
 			    "truncate error %d\n",
 			    (unsigned long long)rip->i_num, truncate_error);
