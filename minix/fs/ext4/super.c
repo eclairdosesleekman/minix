@@ -631,6 +631,28 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	return(OK);
 }
 
+struct ext4_metadata_range {
+	block64_t first;
+	block64_t end; /* exclusive */
+	unsigned int group;
+};
+
+static int compare_ext4_metadata_ranges(const void *left, const void *right)
+{
+	const struct ext4_metadata_range *a = left;
+	const struct ext4_metadata_range *b = right;
+
+	if (a->first < b->first)
+		return(-1);
+	if (a->first > b->first)
+		return(1);
+	if (a->end < b->end)
+		return(-1);
+	if (a->end > b->end)
+		return(1);
+	return(0);
+}
+
 /*
  * Validate the metadata block pointers decoded from every group descriptor.
  * flex_bg permits these blocks to live outside their nominal block group, so
@@ -643,7 +665,10 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 {
 	block64_t block_bitmap, inode_bitmap, inode_table;
 	block64_t table_blocks;
-	unsigned int i;
+	struct ext4_metadata_range *ranges;
+	block64_t previous_end;
+	size_t range_count, n;
+	unsigned int i, previous_group;
 
 	/* A bitmap has one bit per block/inode (bigalloc is not implemented). */
 	if ((u64_t)sp->s_inodes_per_group > (u64_t)sp->s_block_size * 8 ||
@@ -652,6 +677,13 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	    sp->s_itb_per_group == 0)
 		return(EINVAL);
 
+	if ((size_t)ngroups > SIZE_MAX / (3 * sizeof(*ranges)))
+		return(EFBIG);
+	ranges = malloc((size_t)ngroups * 3 * sizeof(*ranges));
+	if (ranges == NULL)
+		return(ENOMEM);
+
+	range_count = 0;
 	table_blocks = sp->s_itb_per_group;
 	for (i = 0; i < ngroups; i++) {
 		block_bitmap = groups[i].block_bitmap;
@@ -674,6 +706,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		    table_blocks > sp->s_blocks_count - inode_table) {
 			printf("ext4: invalid metadata block range in group %u\n",
 			    i);
+			free(ranges);
 			return(EIO);
 		}
 
@@ -683,10 +716,43 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		    (inode_bitmap >= inode_table &&
 		    inode_bitmap - inode_table < table_blocks)) {
 			printf("ext4: group %u bitmap overlaps its inode table\n", i);
+			free(ranges);
 			return(EIO);
+		}
+
+		ranges[range_count].first = block_bitmap;
+		ranges[range_count].end = block_bitmap + 1;
+		ranges[range_count++].group = i;
+		ranges[range_count].first = inode_bitmap;
+		ranges[range_count].end = inode_bitmap + 1;
+		ranges[range_count++].group = i;
+		ranges[range_count].first = inode_table;
+		ranges[range_count].end = inode_table + table_blocks;
+		ranges[range_count++].group = i;
+	}
+
+	/* flex_bg relocates metadata but reservations must remain disjoint. */
+	qsort(ranges, range_count, sizeof(*ranges),
+	    compare_ext4_metadata_ranges);
+	previous_end = ranges[0].end;
+	previous_group = ranges[0].group;
+	for (n = 1; n < range_count; n++) {
+		/* Compare with the furthest-reaching prior range, not just
+		 * the immediately preceding (possibly nested) range.
+		 */
+		if (ranges[n].first < previous_end) {
+			printf("ext4: metadata ranges overlap between groups %u and %u\n",
+			    previous_group, ranges[n].group);
+			free(ranges);
+			return(EIO);
+		}
+		if (ranges[n].end > previous_end) {
+			previous_end = ranges[n].end;
+			previous_group = ranges[n].group;
 		}
 	}
 
+	free(ranges);
 	return(OK);
 }
 

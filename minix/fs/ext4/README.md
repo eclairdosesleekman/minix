@@ -11,8 +11,9 @@ read-write mode.
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock. Group descriptor bitmap and inode-table
-  pointers are range-checked before any per-group metadata blocks are read;
-  `flex_bg` placement outside the nominal group is preserved.
+  pointers are range-checked before any per-group metadata blocks are read.
+  Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
+  placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
 - Read-only support for the `huge_file` feature, including the 48-bit `i_blocks` counter and the per-inode `HUGE_FILE` block-unit flag.
 - Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
@@ -138,6 +139,9 @@ with and without `metadata_csum`, corrupt block-bitmap, inode-bitmap, and
 inode-table pointers to lie outside the filesystem. When checksums are enabled,
 recompute the group-descriptor checksum so the range validator is reached.
 Confirm invalid ranges are rejected before any pointed-to block is read.
+Also construct descriptors whose pointers are individually in range but alias
+another group's bitmap or inode-table extent; confirm the mount rejects these
+cross-group overlaps without rejecting a valid `flex_bg` layout.
 Use `e2fsck -fn` on the unmounted image after each test.
 
 The large-file read path should be tested with files larger than 2 TiB on
