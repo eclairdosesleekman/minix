@@ -231,10 +231,11 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 }
 
 /*
- * Update a depth-one extent tree in place.  The inode contains the index
- * entries; each referenced external block contains a depth-zero leaf.
- * Splitting/rebalancing the tree is deliberately out of scope: operations
- * that need another leaf entry are rejected before either node is changed.
+ * Update the depth-zero leaves referenced by a depth-one index node. For
+ * ordinary depth-one trees the index is in the inode; for the supported
+ * single-root depth-two case it is an external block. The caller supplies
+ * the index buffer and its physical block number so alias checks and index
+ * persistence work for both layouts.
  */
 /*
  * External extent-node pointers are disk metadata, not ordinary file data.
@@ -642,6 +643,7 @@ extent_depth1_split_leaf(struct inode *rip, unsigned char *root,
 	if (new_block <= sp->s_first_data_block ||
 	    new_block >= sp->s_blocks_count ||
 	    new_block > (((u64_t)1 << 48) - 1) ||
+	    new_block > (((u64_t)~0 >> 1) / sp->s_block_size) ||
 	    extent_is_group_metadata(sp, new_block) ||
 	    new_block == root_block ||
 	    extent_overlaps_tree_node(root, root_entries, new_block, 1) ||
@@ -1911,7 +1913,7 @@ extent_depth2_preflight_single_root(struct inode *rip,
 	struct ext4_extent ex, prior;
 	const unsigned char *root_index, *leaf_index;
 	block64_t parent_block, leaf_block, xattr_block;
-	u64_t owned_blocks, previous_end, next_key, file_blocks;
+	u64_t owned_blocks, previous_end, next_key, file_blocks = 0;
 	u32_t root_key, leaf_key;
 	u16_t root_entries, root_max, parent_entries, parent_max;
 	u16_t leaf_entries, leaf_max;
