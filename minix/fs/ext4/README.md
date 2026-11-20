@@ -31,10 +31,14 @@ read-write mode.
   metadata_csum algorithm is used. Unknown checksum types and non-Linux
   metadata checksum formats are rejected. An invalid inode checksum is
   reported as `EIO` and the inode is not cached.
-- Legacy `gdt_csum` group-descriptor checksums are verified on read-only
-  mounts using ext4's CRC16 algorithm. Both 32-byte descriptors and the
-  64-byte descriptors used with `64bit` are covered; when `metadata_csum` is
-  also present, its CRC32C format takes precedence.
+- Legacy `gdt_csum` group-descriptor checksums are verified using ext4's
+  CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used
+  with `64bit` are covered; when `metadata_csum` is also present, its CRC32C
+  format takes precedence. Writable legacy-`gdt_csum` mounts regenerate
+  descriptor CRC16 values whenever free counters change. They are limited to
+  filesystems where every group has initialized block and inode bitmaps;
+  groups carrying `BLOCK_UNINIT` or `INODE_UNINIT` remain read-only because
+  lazy bitmap initialization is not implemented.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -118,9 +122,12 @@ implementation.
   at mount time. Writable mounts reject `metadata_csum` because allocation,
   inode and directory mutation paths do not update checksums. Legacy
   `gdt_csum` without `metadata_csum` is accepted for read-only mounts after
-  every group descriptor's CRC16 is verified. The legacy format does not use
-  the `metadata_csum` bitmap checksum fields. Writable mounts reject legacy
-  `gdt_csum` until descriptor checksum updates are implemented.
+  every group descriptor's CRC16 is verified. Writable mounts regenerate
+  descriptor CRC16 values after allocation counters change, but are allowed
+  only when every group's block and inode bitmaps are initialized. A group
+  with `BLOCK_UNINIT` or `INODE_UNINIT` is rejected for writable mounts
+  because lazy bitmap initialization is not implemented. The legacy format
+  does not use the `metadata_csum` bitmap checksum fields.
 - **No HTree mutation:** a filesystem-wide `dir_index` feature bit does
   not by itself prevent a writable mount. Lookup still linearly scans indexed
   directories, but `search_dir()` rejects `ENTER` and `DELETE` for an
@@ -286,8 +293,12 @@ feature enabled and `metadata_csum` disabled, using both 32-byte descriptors
 and 64-byte descriptors with `64bit`. Confirm valid images mount read-only,
 then flip bits independently in the UUID, group number, descriptor payload,
 and stored checksum and confirm mount fails before group metadata is used.
-Confirm a writable mount is rejected without modifying descriptor checksums
-or allocation counters.
+Confirm writable mounts recalculate descriptor checksums after block and
+inode allocation/free operations on images with fully initialized group
+bitmaps. Create a second image containing at least one group with
+`BLOCK_UNINIT` or `INODE_UNINIT`; confirm it remains read-only for this
+server. Confirm writable mounts are still rejected when `metadata_csum` is
+enabled.
 
 For metadata checksum coverage, create a disposable Linux ext4 filesystem
 with `metadata_csum` enabled, mount it read-only, and exercise directories,
