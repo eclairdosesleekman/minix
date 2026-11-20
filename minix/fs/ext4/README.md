@@ -47,7 +47,11 @@ read-write mode.
 - 64-bit physical block allocation and release.
 - Inline (depth-zero) extent roots can be inserted into, coalesced, and split
   while allocating, writing, and truncating files. Writes into unwritten
-  inline extents convert the affected block to an initialized extent.
+  inline extents convert the affected block to an initialized extent. Before
+  any inline-root mutation, every physical extent is checked against the
+  filesystem block range and all group block-bitmap, inode-bitmap, and
+  inode-table ranges; invalid mappings fail with `EIO` before a block is
+  released or the extent root is changed.
 - Depth-one extent trees can be edited in place when the selected external
   leaf already has capacity. The inode index is kept in sync when a leaf's
   first extent changes, and an empty leaf is detached and freed. Operations
@@ -158,7 +162,13 @@ clean unmount.
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
 and long symlinks. Include files with unwritten extents and files whose inline
-extent root reaches its four-entry capacity. Also create fragmented files
+extent root reaches its four-entry capacity. For the write-side
+metadata guard, use a disposable image with a deliberately corrupted
+depth-zero extent that points at a group block bitmap, inode bitmap, or
+inode-table block. Confirm overwrite, truncate, and hole-punch operations
+fail with `EIO` before changing the referenced metadata bitmap or table.
+Also test extents ending exactly at the last filesystem block and extents
+whose lengths would run past it. Also create fragmented files
 whose extent roots grow to depth one; overwrite unwritten extents, allocate
 holes within existing leaves, trim extents at both ends, split an extent by
 punching a middle block, and remove all mappings from one leaf. Confirm

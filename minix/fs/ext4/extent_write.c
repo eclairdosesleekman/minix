@@ -76,6 +76,11 @@ extent_put(unsigned char *p, u32_t logical, u64_t physical,
 	extent_put32(p + 8, (u32_t)physical);
 }
 
+/* Validate physical mappings before a write can free or replace them. */
+static int extent_is_group_metadata(struct super_block *sp, block64_t block);
+static int extent_overlaps_group_metadata(struct super_block *sp,
+	block64_t first, u32_t length);
+
 /*
  * Return the inode's inline extent root.  Depth-one trees are handled by the
  * separate in-place leaf updater; this helper accepts only depth zero.
@@ -108,8 +113,17 @@ extent_root(struct inode *rip, unsigned char **rootp, u16_t *entriesp,
 		struct ext4_extent ex;
 
 		extent_get(root + 12 + i * 12, &ex);
-		if (ex.length == 0 || ex.physical == 0 ||
-		    ex.physical + ex.length > rip->i_sp->s_blocks_count ||
+		/*
+		 * Do not let a damaged inline extent alias filesystem metadata.
+		 * WMAP_FREE releases every block in the extent, so accepting a
+		 * bitmap or inode-table block here would corrupt the filesystem.
+		 */
+		if (ex.length == 0 ||
+		    ex.physical <= rip->i_sp->s_first_data_block ||
+		    ex.physical >= rip->i_sp->s_blocks_count ||
+		    ex.length > rip->i_sp->s_blocks_count - ex.physical ||
+		    extent_overlaps_group_metadata(rip->i_sp, ex.physical,
+		    ex.length) ||
 		    (u64_t)ex.logical + ex.length > ((u64_t)UINT32_MAX + 1) ||
 		    (i != 0 && ex.logical < previous_end))
 			return(EIO);
@@ -726,8 +740,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	}
 
 	physical = (u64_t)new_wblock;
-	if (physical == 0 || physical >= rip->i_sp->s_blocks_count ||
-	    physical > (((u64_t)1 << 48) - 1))
+	if (physical <= rip->i_sp->s_first_data_block ||
+	    physical >= rip->i_sp->s_blocks_count ||
+	    physical > (((u64_t)1 << 48) - 1) ||
+	    extent_is_group_metadata(rip->i_sp, physical))
 		return(EIO);
 	/*
 	 * The in-core counter is 64 bits.  Do not retain the old ext2
