@@ -518,9 +518,9 @@ ext4_extent_can_truncate(struct inode *rip)
 		/*
 		 * A legacy indirect tree needs a separate ownership walk to prove
 		 * that its xattr block does not alias file data or indirect nodes.
-		 * Empty/special inodes have no such mapping to collide with.
+		 * Special files have no data mapping to collide with.
 		 */
-		if (xattr_block != 0 && rip->i_blocks != 0 &&
+		if (xattr_block != 0 &&
 		    (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL &&
 		    (rip->i_mode & I_TYPE) != I_BLOCK_SPECIAL)
 			return(EOPNOTSUPP);
