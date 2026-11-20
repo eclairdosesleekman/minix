@@ -924,7 +924,7 @@ update_legacy_group_descriptor_checksums(struct super_block *sp,
 /*
  * Verify both initialized allocation bitmaps for every block group before
  * the filesystem is made available. Bitmap checksums cover the defined bitmap
- * bytes and use CRC32C(seed, little-endian group number, bitmap bytes).
+ * bytes and use CRC32C(seed, bitmap bytes).
  *
  * Uninitialized bitmaps are intentionally skipped: the on-disk block is
  * not authoritative until ext4 initializes it from group metadata.
