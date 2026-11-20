@@ -272,10 +272,10 @@ implementation.
   deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, MMP, encryption,
   casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.
-  META_BG is supported only for read-only primary-superblock mounts with the
-  traditional sparse_super layout (or with a superblock in every group);
-  SPARSE_SUPER2 and alternate-superblock
-  META_BG layouts remain unsupported.
+  META_BG is supported only for read-only primary-superblock mounts with
+  the traditional `sparse_super` layout (or a superblock in every group).
+  Combining `META_BG` with `sparse_super2`, nonzero reserved-GDT expansion
+  blocks, or alternate-superblock selection remains unsupported.
   The filesystem must be clean, with an empty legacy orphan list. An orphan-file
   filesystem is accepted read-only only when `RO_COMPAT_ORPHAN_PRESENT` is
   clear; writable mounts and filesystems with pending orphan-file recovery
