@@ -435,9 +435,9 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 	    (u64_t)addresses2 * addresses)
 		return(NO_BLOCK);
 
-	excess = block_pos - EXT2_NDIR_BLOCKS - addresses;
 	block = rip->i_block[EXT2_DIND_BLOCK];
 	if (block_pos >= EXT2_NDIR_BLOCKS + addresses + addresses2) {
+		excess = block_pos - EXT2_NDIR_BLOCKS - addresses - addresses2;
 		block = rip->i_block[EXT2_TIND_BLOCK];
 		if (block == NO_BLOCK)
 			return(NO_BLOCK);
@@ -454,7 +454,9 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 		if (!ext4_validate_data_range(rip, block, 1))
 			goto corrupt;
 		excess %= addresses2;
-	} else if (block == NO_BLOCK) {
+	} else {
+		excess = block_pos - EXT2_NDIR_BLOCKS - addresses;
+		if (block == NO_BLOCK)
 		return(NO_BLOCK);
 	}
 
