@@ -108,7 +108,7 @@ ext4_update_inode_csum(struct super_block *sp, ino_t ino,
 		return(EOPNOTSUPP);
 
 	inum = (u32_t)conv4(le_CPU, (u32_t)ino);
-	generation = ext4_csum_read32(raw + 100);
+	generation = (u32_t)conv4(le_CPU, ext4_csum_read32(raw + 100));
 	seed = ext4_crc32c(sp->s_csum_seed, &inum, sizeof(inum));
 	seed = ext4_crc32c(seed, &generation, sizeof(generation));
 
