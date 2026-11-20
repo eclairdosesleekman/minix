@@ -599,8 +599,9 @@ extent_promote_root(struct inode *rip, unsigned char *root, u16_t entries,
 
 /*
  * Split one depth-zero leaf when an edit needs more records than it can hold.
- * The new leaf receives the upper half, and a new inode-root index entry is
- * inserted immediately after the old one.  Deeper index-node splitting is
+ * The new leaf receives the upper half, and a sorted entry is inserted in the
+ * current depth-one index node (which may be in the inode or an external
+ * depth-two parent). Splitting a full index node into another tree level is
  * intentionally left to a later change.
  */
 static int
@@ -613,7 +614,7 @@ extent_depth1_split_leaf(struct inode *rip, unsigned char *root,
 {
 	struct super_block *sp = rip->i_sp;
 	struct buf *new_bp, *old_bp;
-	unsigned char *node, *new_node, *index_entry, *new_index;
+	unsigned char *node, *new_node, *new_index;
 	block64_t new_block, xattr_block;
 	u16_t root_entries, leaf_entries, split_entries, right_entries;
 	u32_t split_key;
@@ -966,8 +967,9 @@ extent_depth1_compact(struct inode *rip, unsigned char *root,
  * Preflight final inode reclamation for extent trees. truncate_inode() walks
  * logical blocks only up to i_size, so reject depth-one trees with mappings
  * beyond EOF rather than freeing the inode while leaving those blocks behind.
- * The existing depth-one writer removes each external leaf when its final
- * extent is freed.
+ * The depth-one leaf writer removes each external leaf when its final
+ * extent is freed; the depth-two wrapper also reclaims its index block when
+ * the final child leaf disappears.
  */
 static int extent_depth2_preflight_single_root(struct inode *,
 	block64_t *, int);
