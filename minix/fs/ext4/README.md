@@ -18,8 +18,11 @@ read-write mode.
 - Read-only support for ext4 `meta_bg` group-descriptor placement. The
   descriptor table is assembled in logical order from the classic contiguous
   prefix and the primary descriptor blocks in later meta-block groups; group
-  selection follows the standard `sparse_super` backup-superblock rules, and
-  descriptor checksums are verified only after all blocks have been gathered.
+  selection follows the standard `sparse_super` rules (or places a superblock
+  in every group when `sparse_super` is clear). Descriptor checksums are
+  verified only after all blocks have been gathered. Primary and redundant
+  descriptor blocks in the first, second, and last groups of each meta group
+  are excluded from file-data mappings and group bitmap/inode-table ranges.
   Writable mounts remain rejected because the writer still persists a classic
   contiguous descriptor table. `sparse_super2` combined with `meta_bg` and
   alternate-superblock selection are rejected rather than guessing descriptor
@@ -262,7 +265,8 @@ implementation.
 - Existing restrictions still apply: recovery, MMP, encryption,
   casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.
   META_BG is supported only for read-only primary-superblock mounts with the
-  classic sparse_super backup layout; SPARSE_SUPER2 and alternate-superblock
+  traditional sparse_super layout (or with a superblock in every group);
+  SPARSE_SUPER2 and alternate-superblock
   META_BG layouts remain unsupported.
   The filesystem must be clean, with an empty legacy orphan list. An orphan-file
   filesystem is accepted read-only only when `RO_COMPAT_ORPHAN_PRESENT` is
