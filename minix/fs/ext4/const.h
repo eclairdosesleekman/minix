@@ -140,6 +140,14 @@
 #define INCOMPAT_CSUM_SEED         0x2000
 #define INCOMPAT_LARGEDIR          0x4000
 #define INCOMPAT_INLINE_DATA       0x8000
+
+/* Linux ext4 inline-data inode and inode-body xattr layout. */
+#define EXT4_INLINE_DATA_FL        0x10000000
+#define EXT4_EA_INODE_FL           0x00200000
+#define EXT4_INLINE_DATA_MIN       60U
+#define EXT4_INLINE_DATA_MAX       256U
+#define EXT4_XATTR_INDEX_SYSTEM    7U
+#define EXT4_XATTR_ENTRY_SIZE      16U
 #define INCOMPAT_ENCRYPT           0x10000
 #define INCOMPAT_CASEFOLD          0x20000
 
@@ -147,7 +155,8 @@
 /* LARGEDIR is read-only: directory blocks are scanned linearly. */
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
-                                     INCOMPAT_CSUM_SEED | INCOMPAT_LARGEDIR)
+                                     INCOMPAT_CSUM_SEED | INCOMPAT_LARGEDIR | \
+                                     INCOMPAT_INLINE_DATA)
 #define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \
                                       RO_COMPAT_LARGE_FILE | \
                                       RO_COMPAT_BTREE_DIR | \
