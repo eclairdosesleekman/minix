@@ -37,6 +37,8 @@ static off_t super_block_offset;
 
 static int verify_group_descriptor_checksums(struct super_block *sp,
 	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size);
+static int verify_legacy_group_descriptor_checksums(struct super_block *sp,
+	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size);
 static int verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	const unsigned char *raw, struct group_desc *groups,
 	unsigned int ngroups, unsigned int desc_size);
@@ -233,10 +235,15 @@ int read_super(register struct super_block *sp)
 			return(EINVAL);
 		}
 	}
-	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
-	    !verify_group_descriptor_checksums(sp, ondisk_group_descs,
-	    sp->s_groups_count, sp->s_desc_size))
-		return(EINVAL);
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+		if (!verify_group_descriptor_checksums(sp, ondisk_group_descs,
+		    sp->s_groups_count, sp->s_desc_size))
+			return(EINVAL);
+	} else if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM)) {
+		if (!verify_legacy_group_descriptor_checksums(sp,
+		    ondisk_group_descs, sp->s_groups_count, sp->s_desc_size))
+			return(EINVAL);
+	}
 	copy_group_descriptors(group_descs, ondisk_group_descs,
 	    sp->s_groups_count, sp->s_desc_size, is64);
 	r = verify_group_descriptor_block_ranges(sp, group_descs,
@@ -527,6 +534,63 @@ static u32_t ext4_read32(const unsigned char *p)
 	u32_t v;
 	memcpy(&v, p, sizeof(v));
 	return((u32_t)conv4(le_CPU, v));
+}
+
+/*
+ * Legacy GDT_CSUM uses the reflected CRC-16/ARC polynomial (0x8005),
+ * seeded with 0xffff. This is separate from metadata_csum's CRC32C.
+ */
+static u16_t
+ext4_crc16(u16_t crc, const void *data, size_t len)
+{
+	const unsigned char *p = data;
+	unsigned int bit;
+
+	while (len-- != 0) {
+		crc ^= *p++;
+		for (bit = 0; bit < 8; bit++) {
+			if (crc & 1)
+				crc = (u16_t)((crc >> 1) ^ 0xa001U);
+			else
+				crc = (u16_t)(crc >> 1);
+		}
+	}
+	return(crc);
+}
+
+/*
+ * Legacy GDT_CSUM covers the UUID, little-endian group number, and complete
+ * group descriptor with bg_checksum omitted. In 64-bit filesystems, include
+ * the high descriptor fields after byte 32 as well.
+ */
+static int
+verify_legacy_group_descriptor_checksums(struct super_block *sp,
+	const unsigned char *raw, unsigned int ngroups, unsigned int desc_size)
+{
+	unsigned int i;
+	u32_t group_le;
+	u16_t crc, stored;
+	const unsigned char *p;
+
+	if (desc_size < 32)
+		return(FALSE);
+	for (i = 0; i < ngroups; i++) {
+		p = raw + (size_t)i * desc_size;
+		group_le = (u32_t)conv4(le_CPU, i);
+		crc = ext4_crc16((u16_t)~0U, sp->s_uuid,
+		    sizeof(sp->s_uuid));
+		crc = ext4_crc16(crc, &group_le, sizeof(group_le));
+		crc = ext4_crc16(crc, p, 30);
+		if (desc_size > 32)
+			crc = ext4_crc16(crc, p + 32, desc_size - 32);
+		stored = ext4_read16(p + 30);
+		if (stored != crc) {
+			printf("ext4: legacy group descriptor checksum mismatch in group %u\\n",
+			    i);
+			return(FALSE);
+		}
+	}
+	return(TRUE);
 }
 
 /*

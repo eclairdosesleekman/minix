@@ -65,10 +65,14 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 
-	/* Older gdt_csum is understood only when metadata_csum supersedes it. */
-	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) &&
+	/*
+	 * Legacy GDT_CSUM descriptors are verified at mount, but their CRC16
+	 * fields are not regenerated when allocation counters change.
+	 */
+	if (!readonly &&
+	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) &&
 	    !HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
-		printf("ext4: legacy gdt_csum without metadata_csum is unsupported\\n");
+		printf("ext4: read-write mounts require ^gdt_csum until descriptor checksum updates are implemented\\n");
 		goto bad_mount;
 	}
 	if (sp->s_feature_compat & COMPAT_ORPHAN_FILE) {
