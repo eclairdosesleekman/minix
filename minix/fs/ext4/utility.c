@@ -90,8 +90,8 @@ ext4_validate_data_range(struct inode *rip, block64_t first, u64_t length)
 {
 	struct super_block *sp = rip->i_sp;
 	struct group_desc *gd;
-	block64_t end, xattr_block;
-	u64_t max_block;
+	block64_t end, xattr_block, range_first, range_end;
+	u64_t max_block, remainder, extension;
 	unsigned int group;
 
 	if (length == 0 || first <= sp->s_first_data_block ||
@@ -104,20 +104,45 @@ ext4_validate_data_range(struct inode *rip, block64_t first, u64_t length)
 	if (first > max_block || length - 1 > max_block - first)
 		return(FALSE);
 	end = first + length;
+	range_first = first;
+	range_end = end;
 
-	/* Primary and backup super/GDT blocks are reserved filesystem metadata. */
-	if (ext4_reserved_metadata_overlaps(sp, first, end))
+	/*
+	 * BIGALLOC reserves entire allocation clusters. A malformed extent
+	 * must not point at a different block in a cluster that contains a
+	 * superblock/GDT copy, group bitmap, inode table, or external xattr.
+	 * Clip the final partial cluster to the filesystem's block count.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC)) {
+		range_first -= range_first % sp->s_cluster_ratio;
+		remainder = range_end % sp->s_cluster_ratio;
+		if (remainder != 0) {
+			extension = sp->s_cluster_ratio - remainder;
+			if (extension > sp->s_blocks_count - range_end)
+				range_end = sp->s_blocks_count;
+			else
+				range_end += extension;
+		}
+		/* The cluster containing the primary superblock is never data. */
+		if (range_first <= sp->s_first_data_block)
+			return(FALSE);
+	}
+
+	/* Primary and backup super/GDT clusters are reserved filesystem metadata. */
+	if (ext4_reserved_metadata_overlaps(sp, range_first, range_end))
 		return(FALSE);
 
 	for (group = 0; group < sp->s_groups_count; group++) {
 		gd = &sp->s_group_desc[group];
-		if ((gd->block_bitmap >= first && gd->block_bitmap < end) ||
-		    (gd->inode_bitmap >= first && gd->inode_bitmap < end))
+		if ((gd->block_bitmap >= range_first &&
+		    gd->block_bitmap < range_end) ||
+		    (gd->inode_bitmap >= range_first &&
+		    gd->inode_bitmap < range_end))
 			return(FALSE);
-		if (gd->inode_table <= first) {
-			if (first - gd->inode_table < sp->s_itb_per_group)
+		if (gd->inode_table <= range_first) {
+			if (range_first - gd->inode_table < sp->s_itb_per_group)
 				return(FALSE);
-		} else if (gd->inode_table < end) {
+		} else if (gd->inode_table < range_end) {
 			return(FALSE);
 		}
 	}
@@ -127,8 +152,8 @@ ext4_validate_data_range(struct inode *rip, block64_t first, u64_t length)
 		if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT))
 			xattr_block |= (block64_t)(u16_t)conv2(le_CPU,
 			    rip->osd2.linux2.i_pad1) << 32;
-		if (xattr_block != 0 && xattr_block >= first &&
-		    xattr_block < end)
+		if (xattr_block != 0 && xattr_block >= range_first &&
+		    xattr_block < range_end)
 			return(FALSE);
 	}
 
