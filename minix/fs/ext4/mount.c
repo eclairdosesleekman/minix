@@ -77,6 +77,16 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: largedir currently requires a read-only mount\\n");
 		goto bad_mount;
 	}
+
+	/*
+	 * META_BG descriptor blocks are read from multiple block groups. The
+	 * current writer persists a contiguous legacy GDT, so never allow a
+	 * META_BG filesystem to be mounted read-write.
+	 */
+	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG)) {
+		printf("ext4: meta_bg currently requires a read-only mount\\n");
+		goto bad_mount;
+	}
 	/*
 	 * Inline-data payloads store up to 60 bytes in i_block and any
 	 * remainder in the inode-body system.data xattr. Bounded regular-file
