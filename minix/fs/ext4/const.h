@@ -169,6 +169,7 @@
                                       RO_COMPAT_EXTRA_ISIZE | \
                                       RO_COMPAT_HUGE_FILE | \
                                       RO_COMPAT_QUOTA | \
+                                      RO_COMPAT_BIGALLOC | \
                                       RO_COMPAT_METADATA_CSUM | \
                                       RO_COMPAT_READONLY | \
                                       RO_COMPAT_PROJECT | \
