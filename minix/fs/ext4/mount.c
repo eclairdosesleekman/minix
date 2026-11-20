@@ -66,14 +66,25 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	}
 
 	/*
-	 * Legacy GDT_CSUM descriptors are verified at mount, but their CRC16
-	 * fields are not regenerated when allocation counters change.
+	 * Legacy GDT_CSUM descriptors can be updated, but this server does not
+	 * implement lazy initialization of block or inode bitmaps. Refuse
+	 * writable mounts if any group still relies on either uninitialized
+	 * bitmap flag; a group with only INODE_ZEROED is safe.
 	 */
 	if (!readonly &&
 	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) &&
 	    !HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
-		printf("ext4: read-write mounts require ^gdt_csum until descriptor checksum updates are implemented\\n");
-		goto bad_mount;
+		u32_t i;
+
+		for (i = 0; i < sp->s_groups_count; i++) {
+			u16_t group_flags = sp->s_group_desc[i].flags;
+
+			if (group_flags & (EXT4_BG_BLOCK_UNINIT |
+			    EXT4_BG_INODE_UNINIT)) {
+				printf("ext4: read-write gdt_csum requires initialized group bitmaps\\n");
+				goto bad_mount;
+			}
+		}
 	}
 	if (sp->s_feature_compat & COMPAT_ORPHAN_FILE) {
 		printf("ext4: orphan-file feature is not supported\\n");
