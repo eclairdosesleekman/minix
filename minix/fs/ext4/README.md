@@ -32,8 +32,11 @@ read-write mode.
   metadata_csum algorithm is used. Unknown checksum types and non-Linux
   metadata checksum formats are rejected. An invalid inode checksum is
   reported as `EIO` and the inode is not cached. Inode checksums are also
-  regenerated on inode writeback; other metadata checksum mutation paths are
-  not yet complete, so writable mounts still reject `metadata_csum`.
+  regenerated on inode writeback; initialized block/inode bitmap checksums
+  and group-descriptor checksums are regenerated when allocation counters are
+  committed by `write_super()`. Directory, extent-node, and external-xattr
+  checksum mutation paths remain incomplete, so writable mounts still reject
+  `metadata_csum`.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
