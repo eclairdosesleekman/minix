@@ -255,6 +255,10 @@ ext4_dx_hash_name(struct super_block *sp, const char *name, int len,
 
 	if (version > 5 || len < 0)
 		return(EOPNOTSUPP);
+#if defined(__CHAR_UNSIGNED__)
+	if (version <= 2)
+		version += 3;
+#endif
 	state[0] = 0x67452301U;
 	state[1] = 0xefcdab89U;
 	state[2] = 0x98badcfeU;
@@ -360,8 +364,8 @@ ext4_dx_load_frame(struct inode *rip, u32_t logical, int root,
 	u64_t directory_blocks, offset;
 	unsigned int limit_offset, max_limit, i;
 	u32_t previous_hash = 0;
-	int r;
-
+	if (rip->i_size <= 0 || sp->s_block_size == 0)
+		return(EIO);
 	directory_blocks = ((u64_t)rip->i_size + sp->s_block_size - 1) /
 	    sp->s_block_size;
 	if (logical >= directory_blocks)
@@ -427,7 +431,6 @@ ext4_dx_load_frame(struct inode *rip, u32_t logical, int root,
 		previous_hash = hash;
 	}
 	frame->at = 0;
-	(void)r;
 	return(OK);
 }
 
