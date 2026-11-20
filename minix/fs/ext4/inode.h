@@ -20,9 +20,14 @@ EXTERN struct inode {
     u16_t  i_mode;         /* File mode */
     u32_t  i_uid;          /* Full 32-bit owner UID (decoded from ext4) */
     off_t  i_size;         /* Size in bytes */
-    u32_t  i_atime;        /* Access time */
-    u32_t  i_ctime;        /* Creation time */
-    u32_t  i_mtime;        /* Modification time */
+    time_t i_atime;        /* Access time (ext4 34-bit seconds) */
+    time_t i_ctime;        /* Inode change time (ext4 34-bit seconds) */
+    time_t i_mtime;        /* Modification time (ext4 34-bit seconds) */
+    long   i_atime_nsec;   /* ext4 atime nanoseconds */
+    long   i_ctime_nsec;   /* ext4 ctime nanoseconds */
+    long   i_mtime_nsec;   /* ext4 mtime nanoseconds */
+    time_t i_crtime;       /* ext4 inode creation time */
+    long   i_crtime_nsec;  /* ext4 creation-time nanoseconds */
     u32_t  i_dtime;        /* Deletion Time */
     u32_t  i_gid;          /* Full 32-bit group ID (decoded from ext4) */
     u16_t  i_links_count;  /* Links count */
