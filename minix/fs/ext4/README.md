@@ -182,7 +182,8 @@ for read-write testing:
 ```sh
 truncate -s 128M ext4-inline-test.img
 mke2fs -F -t ext4 -b 4096 -I 256 \
-  -O extent,inline_data,^has_journal,^metadata_csum ext4-inline-test.img
+  -O extent,inline_data,^has_journal,^metadata_csum,^dir_index,\
+^orphan_file ext4-inline-test.img
 e2fsck -fn ext4-inline-test.img
 ```
 
