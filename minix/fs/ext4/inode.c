@@ -567,7 +567,8 @@ ext4_encode_one_time(time_t seconds, long nanoseconds, int has_extra,
 	if (seconds < (time_t)-2147483648LL ||
 	    seconds > (time_t)15032385535LL)
 		return(EOVERFLOW);
-	epoch = seconds < 0 ? 0 : (u32_t)(((u64_t)seconds >> 32) & 3U);
+	epoch = seconds < 0 ? 0 :
+	    (u32_t)(((u64_t)seconds + 0x80000000ULL) >> 32);
 	low_seconds = seconds - (time_t)((u64_t)epoch << 32);
 	if (low_seconds < (time_t)-2147483648LL ||
 	    low_seconds > (time_t)2147483647LL)
