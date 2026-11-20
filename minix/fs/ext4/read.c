@@ -135,7 +135,9 @@ static int rw_chunk(register struct inode *rip, u64_t position, unsigned off,
 
   *completed = 0;
 
-  if (rip->i_flags & EXT4_INLINE_DATA_FL) {
+  if (rip->i_sp->s_is_ext4 &&
+      HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
+      (rip->i_flags & EXT4_INLINE_DATA_FL)) {
 	if (call != FSC_READ)
 		return(call == FSC_WRITE ? EROFS : EOPNOTSUPP);
 	if (position > rip->i_inline_size ||
