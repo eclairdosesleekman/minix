@@ -639,6 +639,95 @@ ext4_dx_lookup(struct inode *rip, const char *name, int name_len, ino_t *numb,
 #undef EXT4_DX_ROUND
 
 
+
+/* Search a validated, independent inline-directory dirent area. */
+static int
+ext4_inline_dir_scan_area(struct inode *rip, const unsigned char *area,
+	unsigned int area_size, const char *name, unsigned int name_len,
+	ino_t *numb, int flag)
+{
+	const struct ext2_disk_dir_desc *dp;
+	unsigned int offset = 0, rec_len;
+	ino_t ino;
+
+	while (offset < area_size) {
+		dp = (const struct ext2_disk_dir_desc *)(area + offset);
+		if (!ext4_valid_dirent(dp, offset, area_size))
+			return(EIO);
+		rec_len = ext4_dir_rec_len(dp, area_size);
+		if (dp->d_ino != 0) {
+			ino = (ino_t)conv4(le_CPU, dp->d_ino);
+			if (ino == NO_ENTRY || ino > rip->i_sp->s_inodes_count ||
+			    dp->d_name_len == 0 ||
+			    dp->d_name_len > EXT2_NAME_MAX)
+				return(EIO);
+			if (flag == IS_EMPTY)
+				return(ENOTEMPTY);
+			if (dp->d_name_len == name_len &&
+			    memcmp(dp->d_name, name, name_len) == 0) {
+				if (numb != NULL)
+					*numb = ino;
+				return(OK);
+			}
+		}
+		offset += rec_len;
+	}
+	return(offset == area_size ? ENOENT : EIO);
+}
+
+
+/* Inline directories synthesize "." and ".."; the stored dirent areas
+ * begin after the four-byte parent inode and are kept independently.
+ */
+static int
+ext4_inline_dir_search(struct inode *rip, const char *name, ino_t *numb,
+	int flag)
+{
+	int r;
+	unsigned int extra_size;
+
+	if (!(rip->i_flags & EXT4_INLINE_DATA_FL) ||
+	    !HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA))
+		return(EIO);
+	if (rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_MAX ||
+	    rip->i_inline_dir_parent == NO_ENTRY ||
+	    rip->i_inline_dir_parent > rip->i_sp->s_inodes_count)
+		return(EIO);
+
+	if (flag == ENTER || flag == DELETE)
+		return(EOPNOTSUPP);
+	if (flag != LOOK_UP && flag != IS_EMPTY)
+		return(EINVAL);
+
+	if (flag == LOOK_UP) {
+		if (strcmp(name, ".") == 0) {
+			if (numb != NULL)
+				*numb = rip->i_num;
+			return(OK);
+		}
+		if (strcmp(name, "..") == 0) {
+			if (numb != NULL)
+				*numb = rip->i_inline_dir_parent;
+			return(OK);
+		}
+	}
+
+	r = ext4_inline_dir_scan_area(rip, rip->i_inline_data + 4,
+	    EXT4_INLINE_DATA_MIN - 4, name, (unsigned int)strlen(name),
+	    numb, flag);
+	if (r != ENOENT)
+		return(r);
+
+	extra_size = rip->i_inline_size - EXT4_INLINE_DATA_MIN;
+	if (extra_size != 0)
+		return(ext4_inline_dir_scan_area(rip,
+		    rip->i_inline_data + EXT4_INLINE_DATA_MIN, extra_size,
+		    name, (unsigned int)strlen(name), numb, flag));
+	return(ENOENT);
+}
+
+
 int search_dir(register struct inode *ldir_ptr, const char *string,
 			   ino_t *numb, int flag, int ftype)
 {
@@ -681,6 +770,9 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 
   if ((string_len = strlen(string)) > EXT2_NAME_MAX)
 	return(ENAMETOOLONG);
+
+  if (ldir_ptr->i_flags & EXT4_INLINE_DATA_FL)
+	return(ext4_inline_dir_search(ldir_ptr, string, numb, flag));
 
   if (flag == LOOK_UP && (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
       strcmp(string, ".") != 0 && strcmp(string, "..") != 0) {
