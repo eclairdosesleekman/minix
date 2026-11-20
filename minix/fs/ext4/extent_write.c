@@ -276,6 +276,115 @@ extent_overlaps_tree_node(const unsigned char *root,
 	return(FALSE);
 }
 
+/*
+ * Validate every sibling leaf against the leaf being modified. A physical
+ * range duplicated in another leaf must not be freed by this operation.
+ * Also check a speculative allocation against sibling data before it can be
+ * inserted or discarded during unwritten-extent conversion.
+ */
+static int
+extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
+	u16_t root_entries, unsigned int selected,
+	const unsigned char *selected_node, u16_t selected_entries,
+	int check_candidate, block64_t candidate)
+{
+	struct ext4_extent ex, selected_ex, prior;
+	struct buf *bp;
+	const unsigned char *index_entry, *node;
+	block64_t leaf_block;
+	u64_t previous_end, next_key;
+	u32_t root_key;
+	u16_t leaf_entries, leaf_max;
+	unsigned int i, j, k;
+
+	for (i = 0; i < root_entries; i++) {
+		if (i == selected)
+			continue;
+
+		index_entry = root + 12 + i * 12;
+		root_key = extent_get32(index_entry);
+		leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
+		    extent_get32(index_entry + 4);
+		bp = get_block(rip->i_dev, leaf_block, NORMAL);
+		if (bp == NULL)
+			return(EIO);
+		node = (const unsigned char *)b_data(bp);
+
+		if (extent_get16(node) != EXT4_EXTENT_MAGIC ||
+		    extent_get16(node + 6) != 0) {
+			put_block(bp);
+			return(EIO);
+		}
+		leaf_entries = extent_get16(node + 2);
+		leaf_max = extent_get16(node + 4);
+		if (leaf_max == 0 ||
+		    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
+		    leaf_entries == 0 || leaf_entries > leaf_max) {
+			put_block(bp);
+			return(EIO);
+		}
+
+		previous_end = 0;
+		next_key = (u64_t)UINT32_MAX + 1;
+		if (i + 1 < root_entries)
+			next_key = extent_get32(root + 12 + (i + 1) * 12);
+
+		for (j = 0; j < leaf_entries; j++) {
+			extent_get(node + 12 + j * 12, &ex);
+			if (ex.length == 0 ||
+			    ex.physical <= rip->i_sp->s_first_data_block ||
+			    ex.physical >= rip->i_sp->s_blocks_count ||
+			    ex.length > rip->i_sp->s_blocks_count - ex.physical ||
+			    extent_overlaps_group_metadata(rip->i_sp, ex.physical,
+			    ex.length) ||
+			    extent_overlaps_tree_node(root, root_entries, ex.physical,
+			    ex.length) ||
+			    (u64_t)ex.logical + ex.length >
+			    ((u64_t)UINT32_MAX + 1) ||
+			    (j != 0 && ex.logical < previous_end) ||
+			    (j == 0 && ex.logical != root_key)) {
+				put_block(bp);
+				return(EIO);
+			}
+
+			/* Reject overlaps within this sibling leaf as well. */
+			for (k = 0; k < j; k++) {
+				extent_get(node + 12 + k * 12, &prior);
+				if (extent_ranges_overlap(ex.physical, ex.length,
+				    prior.physical, prior.length)) {
+					put_block(bp);
+					return(EIO);
+				}
+			}
+
+			/* The selected and sibling leaves must own disjoint blocks. */
+			for (k = 0; k < selected_entries; k++) {
+				extent_get(selected_node + 12 + k * 12, &selected_ex);
+				if (extent_ranges_overlap(ex.physical, ex.length,
+				    selected_ex.physical, selected_ex.length)) {
+					put_block(bp);
+					return(EIO);
+				}
+			}
+
+			if (check_candidate && candidate >= ex.physical &&
+			    candidate - ex.physical < ex.length) {
+				put_block(bp);
+				return(EIO);
+			}
+			previous_end = (u64_t)ex.logical + ex.length;
+		}
+
+		if (previous_end > next_key) {
+			put_block(bp);
+			return(EIO);
+		}
+		put_block(bp);
+	}
+
+	return(OK);
+}
+
 static int
 extent_depth1_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
@@ -423,6 +532,13 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	    extent_is_group_metadata(rip->i_sp, new_wblock) ||
 	    extent_overlaps_tree_node(root, root_entries, new_wblock, 1) ||
 	    extent_block_is_mapped(node + 12, leaf_entries, new_wblock))) {
+		put_block(bp);
+		return(EIO);
+	}
+
+	/* Verify cross-leaf physical ownership before any mutation or free. */
+	if (extent_depth1_check_siblings(rip, root, root_entries, leaf_index,
+	    node, leaf_entries, !(op & WMAP_FREE), new_wblock) != OK) {
 		put_block(bp);
 		return(EIO);
 	}
