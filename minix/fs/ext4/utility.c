@@ -81,6 +81,76 @@ ext4_inode_csum_seed(struct inode *rip)
 }
 
 /*
+ * Recompute the Linux ext4 inode checksum before an inode is written.
+ * Keep the low/high-field layout exactly symmetric with verification above.
+ */
+static void
+ext4_csum_write16(unsigned char *p, u16_t value)
+{
+	value = (u16_t)conv2(le_CPU, value);
+	memcpy(p, &value, sizeof(value));
+}
+
+int
+ext4_update_inode_csum(struct super_block *sp, ino_t ino,
+	unsigned char *raw, size_t inode_size)
+{
+	static const u16_t zero16 = 0;
+	u32_t inum, generation, seed, crc;
+	u16_t extra_isize;
+	size_t offset;
+	int have_hi = FALSE;
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+		return(OK);
+	if (sp->s_creator_os != EXT4_OS_LINUX || ino > UINT32_MAX ||
+	    inode_size < 128)
+		return(EOPNOTSUPP);
+
+	inum = (u32_t)conv4(le_CPU, (u32_t)ino);
+	generation = (u32_t)conv4(le_CPU, ext4_csum_read32(raw + 100));
+	seed = ext4_crc32c(sp->s_csum_seed, &inum, sizeof(inum));
+	seed = ext4_crc32c(seed, &generation, sizeof(generation));
+
+	if (inode_size > 128) {
+		if (inode_size < 130)
+			return(EIO);
+		extra_isize = ext4_csum_read16(raw + 128);
+		if (extra_isize > inode_size - 128)
+			return(EIO);
+		if (extra_isize >= 4 && inode_size >= 132)
+			have_hi = TRUE;
+	}
+
+	/* Clear both checksum fields before calculating the checksum. */
+	ext4_csum_write16(raw + 124, 0);
+	if (have_hi)
+		ext4_csum_write16(raw + 130, 0);
+
+	crc = ext4_crc32c(seed, raw, 124);
+	crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
+	crc = ext4_crc32c(crc, raw + 126, 2);
+	offset = 128;
+	if (inode_size > 128) {
+		crc = ext4_crc32c(crc, raw + 128, 2);
+		offset = 130;
+		if (have_hi) {
+			crc = ext4_crc32c(crc, &zero16, sizeof(zero16));
+			offset = 132;
+		}
+		if (offset < inode_size)
+			crc = ext4_crc32c(crc, raw + offset,
+			    inode_size - offset);
+	}
+
+	ext4_csum_write16(raw + 124, (u16_t)crc);
+	if (have_hi)
+		ext4_csum_write16(raw + 130, (u16_t)(crc >> 16));
+
+	return(OK);
+}
+
+/*
  * Verify the Linux ext4 inode checksum. The checksum-low field is at
  * offset 124; checksum-high is at offset 130 when i_extra_isize includes it.
  */
