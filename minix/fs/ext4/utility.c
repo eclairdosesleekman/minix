@@ -205,44 +205,54 @@ ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 	unsigned int block_size, count_offset, tail_offset, count, limit;
 	u32_t seed, crc, stored, zero32 = 0;
 
-	if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM))
-		return(TRUE);
-
 	block_size = rip->i_sp->s_block_size;
 	if (block_size < 32)
 		return(FALSE);
-	seed = ext4_inode_csum_seed(rip);
 	first = (const struct ext2_disk_dir_desc *)data;
 
-	/* HTree root: "." is 12 bytes and ".." spans the remainder. */
+	/*
+	 * Validate the HTree root even without metadata_csum. The depth field
+	 * limits how many internal index levels a linear read-only directory
+	 * walk may encounter: two normally, or three with large_dir.
+	 */
 	if ((rip->i_flags & EXT2_INDEX_FL) && logical_block == 0) {
 		if (ext4_dir_rec_len(first, block_size) != 12)
 			return(FALSE);
 		second = (const struct ext2_disk_dir_desc *)(data + 12);
 		if (ext4_dir_rec_len(second, block_size) != block_size - 12 ||
-		    ext4_csum_read32(data + 24) != 0 || data[29] != 8)
+		    ext4_csum_read32(data + 24) != 0 || data[29] != 8 ||
+		    data[30] > (HAS_INCOMPAT_FEATURE(rip->i_sp,
+		    INCOMPAT_LARGEDIR) ? 3 : 2))
 			return(FALSE);
+		if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM))
+			return(TRUE);
+		seed = ext4_inode_csum_seed(rip);
 		count_offset = 32;
-	} else if ((rip->i_flags & EXT2_INDEX_FL) &&
+	} else {
+		if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM))
+			return(TRUE);
+		seed = ext4_inode_csum_seed(rip);
+		if ((rip->i_flags & EXT2_INDEX_FL) &&
 	    ext4_csum_read32(data) == 0 && data[6] == 0 &&
 	    ext4_dir_rec_len(first, block_size) == block_size &&
 	    ext4_csum_read16(data + 8) != 0 &&
 	    ext4_csum_read16(data + 10) != 0 &&
 	    ext4_csum_read16(data + 10) <= ext4_csum_read16(data + 8) &&
 	    ext4_csum_read16(data + 8) <= (block_size - 16) / 8) {
-		/* Internal htree node: fake full-block dirent precedes dx entries. */
-		count_offset = 8;
-	} else {
-		/* Directory leaf block checksum tail (12 bytes). */
-		tail_offset = block_size - 12;
-		tail = data + tail_offset;
-		if (ext4_csum_read32(tail) != 0 ||
-		    ext4_csum_read16(tail + 4) != 12 ||
-		    tail[6] != 0 || tail[7] != 0xde)
-			return(FALSE);
-		stored = ext4_csum_read32(tail + 8);
-		crc = ext4_crc32c(seed, data, tail_offset);
-		return(stored == crc);
+			/* Internal htree node: fake full-block dirent precedes dx entries. */
+			count_offset = 8;
+		} else {
+			/* Directory leaf block checksum tail (12 bytes). */
+			tail_offset = block_size - 12;
+			tail = data + tail_offset;
+			if (ext4_csum_read32(tail) != 0 ||
+			    ext4_csum_read16(tail + 4) != 12 ||
+			    tail[6] != 0 || tail[7] != 0xde)
+				return(FALSE);
+			stored = ext4_csum_read32(tail + 8);
+			crc = ext4_crc32c(seed, data, tail_offset);
+			return(stored == crc);
+		}
 	}
 
 	if (count_offset + 4 > block_size)
