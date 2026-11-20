@@ -391,7 +391,7 @@ static void icopy(
 	dip->i_dtime   = conv4(norm,rip->i_dtime);
 	dip->i_gid     = conv2(norm,rip->i_gid);
 	dip->i_links_count  = conv2(norm,rip->i_links_count);
-	dip->i_blocks	= conv4(norm,rip->i_blocks);
+	dip->i_blocks	= conv4(norm, (u32_t)rip->i_blocks);
 	dip->i_flags	= conv4(norm,rip->i_flags);
 	/* Minix doesn't touch osd1 and osd2 either, so just copy. */
 	memcpy(&dip->osd1, &rip->osd1, sizeof(dip->osd1));
