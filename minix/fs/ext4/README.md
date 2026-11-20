@@ -70,8 +70,10 @@ read-write mode.
   external xattr block has a valid header and reference count without aliasing
   file data or extent nodes. Truncation frees data blocks and external leaves;
   final inode reclamation decrements a shared xattr block reference or frees
-  the block when its last reference is released. Depth-two and deeper trees
-  and mappings beyond EOF remain unsupported for final unlink.
+  the block when its last reference is released. Legacy indirect-mapped files
+  with external xattr blocks remain conservatively rejected because their
+  block-ownership walk is not implemented. Depth-two and deeper trees and
+  mappings beyond EOF remain unsupported for final unlink.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
   is not released. The zero-link inode is kept allocated for later fsck/recovery
   rather than allowing its still-referenced blocks to be reallocated.
