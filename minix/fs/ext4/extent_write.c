@@ -505,7 +505,19 @@ ext4_extent_can_truncate(struct inode *rip)
 	unsigned int i, j, k;
 
 	sp = rip->i_sp;
-	if (!sp->s_is_ext4 || !(rip->i_flags & EXT4_EXTENTS_FL))
+	if (!sp->s_is_ext4)
+		return(OK);
+
+	/*
+	 * External xattr blocks have independent reference counts and checksum
+	 * handling. Until their unlink path updates both, never drop the inode
+	 * pointer and leak (or incorrectly release) an external xattr block.
+	 */
+	if (rip->i_file_acl != 0 ||
+	    (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT) &&
+	    conv2(le_CPU, rip->osd2.linux2.i_pad1) != 0))
+		return(EOPNOTSUPP);
+	if (!(rip->i_flags & EXT4_EXTENTS_FL))
 		return(OK);
 
 	root = (unsigned char *)rip->i_block;
