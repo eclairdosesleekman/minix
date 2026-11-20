@@ -135,6 +135,17 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	}
 
 	/*
+	 * The block allocator and all metadata writers operate in block units.
+	 * BIGALLOC bitmaps instead reserve whole clusters, so permit file-data
+	 * reads only; ext4_validate_data_range() expands read ranges to clusters
+	 * before checking them against filesystem metadata.
+	 */
+	if (!readonly && HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC)) {
+		printf("ext4: bigalloc cluster allocation requires a read-only mount\\n");
+		goto bad_mount;
+	}
+
+	/*
 	 * RO_COMPAT_READONLY explicitly marks an image that must never be
 	 * mounted writable. Quota and project-quota metadata can be read
 	 * without applying quota accounting, but every mutation path would

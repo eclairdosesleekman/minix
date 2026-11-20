@@ -311,6 +311,10 @@ int read_super(register struct super_block *sp)
 	sp->s_is_ext4 = TRUE;
 	if (sp->s_magic != SUPER_MAGIC || sp->s_log_block_size > 6)
 		return(EINVAL);
+	/* BIGALLOC uses extent records; legacy indirect maps cannot describe it. */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC) &&
+	    !HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EXTENTS))
+		return(EINVAL);
 
 	sp->s_block_size = 1024U << sp->s_log_block_size;
 	if (sp->s_block_size < PAGE_SIZE ||
@@ -319,6 +323,35 @@ int read_super(register struct super_block *sp)
 	    SUPER_SIZE_D > sp->s_block_size)
 		return(EINVAL);
 	sp->s_sectors_in_block = sp->s_block_size / 512;
+
+	/*
+	 * The ext4 superblock names these fields s_log_cluster_size and
+	 * s_clusters_per_group. They occupy the legacy fragment-size fields
+	 * in the on-disk structure. With BIGALLOC, each bitmap bit accounts
+	 * for a power-of-two run of filesystem blocks; without it, the ratio
+	 * is one and the bitmap remains block-granular.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC)) {
+		u32_t cluster_log;
+
+		cluster_log = sp->s_log_frag_size;
+		if (cluster_log < sp->s_log_block_size ||
+		    cluster_log - sp->s_log_block_size >= 32)
+			return(EINVAL);
+		sp->s_cluster_ratio =
+		    (u32_t)1 << (cluster_log - sp->s_log_block_size);
+		sp->s_clusters_per_group = sp->s_frags_per_group;
+		if (sp->s_clusters_per_group == 0 ||
+		    (sp->s_clusters_per_group & 7) != 0 ||
+		    (u64_t)sp->s_clusters_per_group >
+		    (u64_t)sp->s_block_size * 8 ||
+		    (u64_t)sp->s_clusters_per_group * sp->s_cluster_ratio !=
+		    sp->s_blocks_per_group)
+			return(EINVAL);
+	} else {
+		sp->s_cluster_ratio = 1;
+		sp->s_clusters_per_group = sp->s_blocks_per_group;
+	}
 
 	/* ext4 superblock high block counts (offsets 0x150, 0x154, 0x158). */
 	memcpy(&blocks_hi, (char *)ondisk_superblock + 0x150, 4);
@@ -890,8 +923,8 @@ update_legacy_group_descriptor_checksums(struct super_block *sp,
 
 /*
  * Verify both initialized allocation bitmaps for every block group before
- * the filesystem is made available. Bitmap checksums cover the full bitmap
- * block and use CRC32C(seed, little-endian group number, bitmap bytes).
+ * the filesystem is made available. Bitmap checksums cover the defined bitmap
+ * bytes and use CRC32C(seed, bitmap bytes).
  *
  * Uninitialized bitmaps are intentionally skipped: the on-disk block is
  * not authoritative until ext4 initializes it from group metadata.
@@ -922,9 +955,9 @@ verify_one_group_bitmap(dev_t dev, struct super_block *sp,
 		return(EINVAL);
 
 	/*
-	 * Linux ext4 hashes only the bitmap's defined bytes. With bigalloc
-	 * disabled, block bitmap size is blocks_per_group / 8; inode bitmap
-	 * size is inodes_per_group / 8.
+	 * Linux ext4 hashes only the bitmap's defined bytes. The block bitmap
+	 * uses clusters_per_group / 8 bytes (equal to blocks_per_group / 8
+	 * without bigalloc); the inode bitmap uses inodes_per_group / 8.
 	 */
 	crc = ext4_crc32c(sp->s_checksum_seed, bitmap, bitmap_bytes);
 
@@ -964,7 +997,7 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 		if (!(flags & EXT4_BG_BLOCK_UNINIT)) {
 			r = verify_one_group_bitmap(dev, sp,
 			    groups[i].block_bitmap, desc, 24, 56,
-			    desc_size, sp->s_blocks_per_group / 8, bitmap);
+			    desc_size, sp->s_clusters_per_group / 8, bitmap);
 			if (r != OK) {
 				printf("ext4: block bitmap checksum mismatch in group %u\n",
 				    i);
@@ -1029,10 +1062,9 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	size_t range_count, n;
 	unsigned int i, previous_group;
 
-	/* A bitmap has one bit per block/inode (bigalloc is not implemented). */
+	/* A block bitmap bit represents one block or one BIGALLOC cluster. */
 	if ((u64_t)sp->s_inodes_per_group > (u64_t)sp->s_block_size * 8 ||
-	    (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC) &&
-	    (u64_t)sp->s_blocks_per_group > (u64_t)sp->s_block_size * 8) ||
+	    (u64_t)sp->s_clusters_per_group > (u64_t)sp->s_block_size * 8 ||
 	    sp->s_itb_per_group == 0)
 		return(EINVAL);
 

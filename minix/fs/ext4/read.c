@@ -20,6 +20,55 @@ static int rw_chunk(struct inode *rip, u64_t position, unsigned off,
 	size_t chunk, unsigned left, int call, struct fsdriver_data *data,
 	unsigned buf_off, unsigned int block_size, int *completed);
 
+/* Return the first filesystem block in the bigalloc cluster containing block. */
+static block64_t
+ext4_cluster_start(struct super_block *sp, block64_t block)
+{
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
+		return(block);
+	return(sp->s_first_data_block +
+	    ((block - sp->s_first_data_block) / sp->s_cluster_ratio) *
+	    sp->s_cluster_ratio);
+}
+
+/* Test whether a file-data extent's allocation clusters include a metadata block. */
+static int
+ext4_data_clusters_contain_block(struct super_block *sp, block64_t first,
+	u64_t length, block64_t block)
+{
+	block64_t cluster_first, cluster_end, block_cluster;
+	u64_t end, relative_end, clusters;
+
+	if (length == 0 || first <= sp->s_first_data_block ||
+	    first >= sp->s_blocks_count ||
+	    length > sp->s_blocks_count - first ||
+	    block <= sp->s_first_data_block || block >= sp->s_blocks_count)
+		return(FALSE);
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
+		return(block >= first && block - first < length);
+
+	end = first + length;
+	cluster_first = ext4_cluster_start(sp, first);
+	relative_end = end - sp->s_first_data_block;
+	clusters = relative_end / sp->s_cluster_ratio;
+	if (relative_end % sp->s_cluster_ratio != 0)
+		clusters++;
+	cluster_end = sp->s_first_data_block +
+	    clusters * sp->s_cluster_ratio;
+	if (cluster_end > sp->s_blocks_count)
+		cluster_end = sp->s_blocks_count;
+	block_cluster = ext4_cluster_start(sp, block);
+	return(block_cluster >= cluster_first && block_cluster < cluster_end);
+}
+
+/* Metadata tree nodes may not occupy the same allocation cluster. */
+static int
+ext4_metadata_blocks_share_cluster(struct super_block *sp, block64_t a,
+	block64_t b)
+{
+	return(ext4_cluster_start(sp, a) == ext4_cluster_start(sp, b));
+}
+
 /*===========================================================================*
  *				fs_readwrite				     *
  *===========================================================================*/
@@ -313,8 +362,8 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 				    !ext4_validate_data_range(rip, physical, length))
 					goto corrupt;
 				for (j = 0; j < visited_count; j++) {
-					if (visited[j] >= physical &&
-					    visited[j] - physical < length)
+					if (ext4_data_clusters_contain_block(
+					    rip->i_sp, physical, length, visited[j]))
 						goto corrupt;
 				}
 				previous_end = logical_end;
@@ -377,7 +426,8 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 			    visited_count >= EXT4_EXTENT_MAX_DEPTH)
 				goto corrupt;
 			for (i = 0; i < visited_count; i++) {
-				if (visited[i] == child)
+				if (ext4_metadata_blocks_share_cluster(rip->i_sp,
+				    visited[i], child))
 					goto corrupt;
 			}
 			visited[visited_count++] = child;
@@ -416,7 +466,8 @@ ext4_indirect_add_node(struct inode *rip, block64_t block,
 	    *visited_count >= EXT2_N_BLOCKS)
 		return(FALSE);
 	for (i = 0; i < *visited_count; i++) {
-		if (visited[i] == block)
+		if (ext4_metadata_blocks_share_cluster(rip->i_sp,
+		    visited[i], block))
 			return(FALSE);
 	}
 	visited[(*visited_count)++] = block;
@@ -432,7 +483,8 @@ ext4_indirect_data_valid(struct inode *rip, block64_t block,
 	if (!ext4_validate_data_range(rip, block, 1))
 		return(FALSE);
 	for (i = 0; i < visited_count; i++) {
-		if (visited[i] == block)
+		if (ext4_data_clusters_contain_block(rip->i_sp, block, 1,
+		    visited[i]))
 			return(FALSE);
 	}
 	return(TRUE);
