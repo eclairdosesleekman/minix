@@ -329,17 +329,18 @@ ext4_encode_inode_blocks(struct inode *rip, u64_t *disk_blocks)
 	u64_t blocks;
 
 	blocks = rip->i_blocks;
-	rip->i_flags &= ~EXT4_HUGE_FILE_FL;
 
 	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_HUGE_FILE)) {
 		if (blocks > 0xffffffffULL)
 			return(EFBIG);
+		rip->i_flags &= ~EXT4_HUGE_FILE_FL;
 		*disk_blocks = blocks;
 		return(OK);
 	}
 
 	/* The 48-bit field can first represent 512-byte sectors directly. */
 	if (blocks <= 0xffffffffffffULL) {
+		rip->i_flags &= ~EXT4_HUGE_FILE_FL;
 		*disk_blocks = blocks;
 		return(OK);
 	}
