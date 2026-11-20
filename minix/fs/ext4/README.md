@@ -18,9 +18,9 @@ read-write mode.
 - Read-only support for `COMPAT_SPARSE_SUPER2`. The two backup group
   numbers are decoded from `s_backup_bgs`, validated against the filesystem
   group count, and used instead of the traditional sparse-super power-of-3/5/7
-  rule (as in Linux ext4). The primary GDT and the selected groups' backup
-  superblock/GDT/reserved-GDT ranges are excluded from file and extent mappings
-  and from group bitmap/inode-table placements. Writable mounts remain
+  rule (as in Linux ext4). The primary GDT, traditional sparse-super backup groups, and the selected
+  sparse_super2 groups' backup superblock/GDT/reserved-GDT ranges are excluded
+  from file and extent mappings and from group bitmap/inode-table placements. Writable mounts remain
   unsupported because backup copies are not updated.
 - Read-only support for ext4 `meta_bg` group-descriptor placement. The
   descriptor table is assembled in logical order from the classic contiguous
@@ -481,7 +481,7 @@ with `-O sparse_super2,^meta_bg`. Test both populated backup-group fields,
 one field set with the other zero, and both fields zero. Confirm the listed
 groups alone contain backup superblock/GDT regions, that both sparse_super2
 and sparse_super with sparse_super2 set use the listed-group rule, and that
-invalid, duplicate, out-of-range, and group-zero backup values fail mount.
+duplicate and out-of-range backup values fail mount; zero means that the\ncorresponding backup-group slot is unused.
 Construct extents and group bitmap/inode-table pointers that alias the primary
 GDT, each listed backup superblock/GDT copy, and reserved-GDT blocks; each must
 be rejected. Writable mounts must fail before marking the volume unclean.
