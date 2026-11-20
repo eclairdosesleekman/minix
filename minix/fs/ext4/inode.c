@@ -23,7 +23,7 @@
 #include <minix/vfsif.h>
 
 static void icopy(struct inode *rip, d_inode *dip, int direction, int
-	norm);
+	norm, u64_t ext4_i_blocks);
 static void addhash_inode(struct inode *node);
 static void unhash_inode(struct inode *node);
 
