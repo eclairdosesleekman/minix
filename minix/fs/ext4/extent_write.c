@@ -1115,7 +1115,9 @@ ext4_indirect_can_truncate(struct inode *rip, block64_t xattr_block)
 	single_end = EXT2_NDIR_BLOCKS + ppb;
 	double_end = single_end + ppb * ppb;
 	triple_end = double_end + ppb * ppb * ppb;
-	if (file_blocks > triple_end || file_blocks > (u64_t)LONG_MAX)
+	/* truncate_inode() visits each logical block, including sparse holes. */
+	if (file_blocks > EXT4_INDIRECT_PREFLIGHT_MAX_BLOCKS ||
+	    file_blocks > triple_end || file_blocks > (u64_t)LONG_MAX)
 		return(EOPNOTSUPP);
 
 	memset(&walk, 0, sizeof(walk));
