@@ -78,6 +78,22 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 	/*
+	 * Inline-data files store up to 60 bytes in i_block and the remainder
+	 * in the inode-body system.data xattr. Only bounded regular-file and
+	 * symlink reads are implemented; inline directories and all writes
+	 * remain unsupported, so this incompat feature is read-only.
+	 */
+	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_INLINE_DATA)) {
+		printf("ext4: inline_data currently requires a read-only mount\\n");
+		goto bad_mount;
+	}
+	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_INLINE_DATA) &&
+	    sp->s_creator_os != EXT4_OS_LINUX) {
+		printf("ext4: inline_data requires a Linux-created filesystem\\n");
+		goto bad_mount;
+	}
+
+	/*
 	 * ORPHAN_PRESENT means the orphan file can contain inodes that must be
 	 * recovered before the filesystem is used. This server has no orphan
 	 * file scanner/recovery path, so reject the volume even read-only.

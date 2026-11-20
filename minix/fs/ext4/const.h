@@ -151,10 +151,15 @@
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
                                      INCOMPAT_EA_INODE | INCOMPAT_CSUM_SEED | \
-                                     INCOMPAT_LARGEDIR)
+                                     INCOMPAT_LARGEDIR | INCOMPAT_INLINE_DATA)
 
-/* Linux ext4 inode flag for an inode storing a large xattr value. */
+/* Linux ext4 inode flags and inline-data bounds. */
 #define EXT4_EA_INODE_FL           0x00200000
+#define EXT4_INLINE_DATA_FL        0x10000000
+#define EXT4_INLINE_DATA_MAX       256U
+#define EXT4_INLINE_DATA_MIN       60U
+#define EXT4_XATTR_INDEX_SYSTEM    7U
+#define EXT4_XATTR_ENTRY_SIZE      16U
 #define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \
                                       RO_COMPAT_LARGE_FILE | \
                                       RO_COMPAT_BTREE_DIR | \

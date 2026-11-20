@@ -53,6 +53,14 @@ read-write mode.
   either feature because quota accounting is not implemented.
 - Images carrying `RO_COMPAT_READONLY` are accepted read-only and explicitly
   rejected for writable mounts.
+- `INCOMPAT_INLINE_DATA` filesystems can be mounted read-only. Regular files
+  and symlinks carrying `EXT4_INLINE_DATA_FL` are readable when their complete
+  payload fits in the inode plus the inode-body `system.data` xattr (up to the
+  bounded in-core inline buffer). The xattr header, entry table, value bounds,
+  and the inode checksum (when enabled) are validated before exposing bytes.
+  Inline directories, external xattr-inode payloads, `FSC_PEEK` page mapping, and all
+  inline-data writes remain unsupported; an inline directory inode returns
+  `EOPNOTSUPP`.
 - `INCOMPAT_EA_INODE` filesystems can be mounted read-only. Their ordinary
   files and directories remain readable; large xattr-value inodes are private
   to xattr entries and are rejected if a directory attempts to name one.
@@ -94,11 +102,13 @@ read-write mode.
 - Read-write support for filesystems without a journal. On filesystems
   advertising `dir_index`, unindexed directories remain writable; lookup in
   indexed directories follows the HTree for hash versions 0 through 5,
-  including collision continuation. SipHash indexes use the linear lookup
-  compatibility path. Entry insertion and deletion in directories carrying
-  `EXT2_INDEX_FL` are rejected with `EOPNOTSUPP` because index maintenance
-  and rebalancing are not implemented. The block and inode bitmaps, group free
-  counters, inode table, superblock counters, and data blocks are updated.
+  including collision continuation. Existing indexed leaves can be updated
+  in-place for supported hash versions when room is available; a full target
+  leaf and rename operations in indexed parent directories return
+  `EOPNOTSUPP` rather than changing an index without rebalancing. SipHash
+  indexes retain linear lookup/delete compatibility and reject insertion.
+  The block and inode bitmaps, group free counters, inode table, superblock
+  counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
 - Inline (depth-zero) extent roots can be inserted into, coalesced, and split
   while allocating, writing, and truncating files. Writes into unwritten
@@ -239,8 +249,8 @@ implementation.
   `i_blocks` accounting, and rejects mappings beyond EOF before the final
   directory entry is removed. Multi-entry depth-two roots and depth-three or
   deeper trees remain unsupported for final unlink.
-- Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
-  encryption, casefold, bigalloc, and unsupported feature flags are rejected.
+- Existing restrictions still apply: recovery, meta_bg, MMP, encryption,
+  casefold, bigalloc, inline directories, and unsupported feature flags are rejected.
   The filesystem must be clean, with an empty legacy orphan list. An orphan-file
   filesystem is accepted read-only only when `RO_COMPAT_ORPHAN_PRESENT` is
   clear; writable mounts and filesystems with pending orphan-file recovery
