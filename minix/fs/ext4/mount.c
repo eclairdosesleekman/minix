@@ -87,6 +87,16 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: meta_bg currently requires a read-only mount\\n");
 		goto bad_mount;
 	}
+
+	/*
+	 * Sparse-super2 places backup superblocks and GDT copies in the two
+	 * groups listed in s_backup_bgs. The current writer updates only the
+	 * primary GDT/superblock, so these filesystems are read-only.
+	 */
+	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2)) {
+		printf("ext4: sparse_super2 currently requires a read-only mount\\n");
+		goto bad_mount;
+	}
 	/*
 	 * Inline-data payloads store up to 60 bytes in i_block and any
 	 * remainder in the inode-body system.data xattr. Bounded regular-file
