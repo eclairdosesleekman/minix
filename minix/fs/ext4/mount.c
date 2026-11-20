@@ -72,6 +72,24 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		    unsupported);
 		goto bad_mount;
 	}
+
+	/*
+	 * RO_COMPAT_READONLY explicitly marks an image that must never be
+	 * mounted writable. Quota and project-quota metadata can be read
+	 * without applying quota accounting, but every mutation path would
+	 * need to update those records; keep those filesystems read-only.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_READONLY) && !readonly) {
+		printf("ext4: read-only image feature forbids writable mounts\\n");
+		goto bad_mount;
+	}
+	if (!readonly &&
+	    (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_QUOTA) ||
+	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_PROJECT))) {
+		printf("ext4: quota/project-quota filesystems require read-only mounts\\n");
+		goto bad_mount;
+	}
+
 	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
 	    sp->s_creator_os != EXT4_OS_LINUX) {
 		printf("ext4: metadata checksums require a Linux-created filesystem\\n");
