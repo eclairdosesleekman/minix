@@ -1,10 +1,10 @@
 /*
- * Limited ext4 extent-tree updates.
+ * Bounded ext4 extent-tree updates.
  *
- * The implementation deliberately updates only extent trees stored entirely
- * in the inode (depth zero).  External extent nodes need splitting, checksums,
- * and transaction handling; those operations are rejected rather than being
- * rewritten as ext2 indirect blocks.
+ * Inline roots and existing external leaves are edited in place.  Allocating
+ * or splitting nodes, rebalancing the tree, and changing ancestor index keys
+ * remain unsupported; those operations are rejected rather than treating
+ * extents as ext2 indirect blocks.
  */
 
 #include "fs.h"
