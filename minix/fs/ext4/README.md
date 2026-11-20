@@ -56,11 +56,14 @@ read-write mode.
   directories. The block and inode bitmaps, group free counters, inode table,
   superblock counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
-- Inline extent roots and existing external extent-tree leaves can be updated
-  in place while allocating, writing, and truncating files. External-leaf
-  updates are bounded: they must preserve the leaf's first logical-block key
-  and fit in the existing leaf. Writes into unwritten extents convert the
-  affected block to an initialized extent.
+- Inline extent roots are promoted to one external leaf when an
+  operation needs more than the root's four extent slots. The external leaf
+  is allocated and accounted as filesystem metadata; its extent mappings are
+  preserved during promotion. A one-leaf tree collapses back to an empty
+  inline root when its final one-block extent is removed. Existing external
+  leaves can be edited in place when the operation fits their slots and
+  preserves the leaf's first logical-block key. Writes into unwritten extents
+  convert the affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
 
@@ -84,12 +87,13 @@ implementation.
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level
   `large_dir` indexes.
-- **Bounded extent-tree mutation:** an external leaf can be edited only when
-  the operation fits in its existing slots and does not change its first
-  logical-block key. Operations that need a new node, split/rebalance a node,
-  insert before a leaf's first extent, or remove the first block of a leaf
-  return `EOPNOTSUPP` or `EFBIG`. These limits avoid changing parent index
-  entries without a complete tree-rebalancing implementation.
+- **Bounded extent-tree mutation:** the inode root can be promoted to a
+  single external leaf, and that single-leaf tree can collapse back when it
+  becomes empty. A full external leaf is not split, internal index levels are
+  not grown, and multi-leaf/deeper trees are not rebalanced. Operations that
+  require those changes, insert before an external leaf's first extent, or
+  remove the first block of an external leaf return `EOPNOTSUPP` or `EFBIG`.
+  The root promotion and collapse paths are not journaled.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline
@@ -156,15 +160,17 @@ mke2fs -F -t ext4 -b 4096 \
 Attach the images to MINIX, then test creating, writing, overwriting, appending,
 sparse extension, truncating, renaming, linking, unlinking, directory creation,
 and long symlinks. Include files with unwritten extents and files whose
-inline extent root reaches its four-entry capacity. To exercise external-leaf
-updates, first populate a disposable image on Linux with a fragmented file
-containing more than four extents, then attach that image to MINIX; this server
-does not yet create or split external extent nodes. On that file, exercise
-writes into holes within a leaf, unwritten-extent conversion, and tail
-truncation while keeping the first extent of each leaf intact. Operations that
-require changing a leaf's first logical-block key or splitting a full leaf
-must fail without damaging the filesystem. Unmount cleanly and run
-`e2fsck -fn`. For the 64 KiB image, exercise
+inline extent root reaches its four-entry capacity. Create a second
+disposable file with enough fragmentation to force more than four extents;
+the first extent-root overflow should allocate and populate one external leaf.
+Also attach a Linux-created file with more than four extents to exercise the
+existing external-leaf path. On both files, exercise writes into holes within
+a leaf, unwritten-extent conversion, and tail truncation while keeping the
+first extent of an external leaf intact. Truncate the promoted file to zero
+and confirm its single external leaf is released and the inode root collapses
+back to depth zero. Operations that require splitting a full external leaf,
+growing an internal index, or changing an external leaf's first key must fail
+without damaging the filesystem. Unmount cleanly and run `e2fsck -fn`. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
@@ -283,6 +289,7 @@ larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
 The 64 KiB directory-record, `huge_file`, `metadata_csum`, bounded
-external-extent-leaf update, and writable legacy `gdt_csum` changes have not
-yet been compiled or runtime-tested in a MINIX build environment. Treat this
+external-extent-leaf update, extent-root promotion/collapse, and writable
+legacy `gdt_csum` changes have not yet been compiled or runtime-tested in a
+MINIX build environment. Treat this
 as a review candidate and test it on disposable images only.
