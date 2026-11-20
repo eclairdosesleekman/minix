@@ -43,13 +43,15 @@ read-write mode.
   on the HTree depth. The root's depth field is checked against the ext4
   limit (two levels normally, three with `large_dir`), even without
   `metadata_csum`.
-- Read-only inline-data support for regular files and symlinks. The first 60
-  payload bytes are read from `i_block`; an optional remainder is copied from
-  the inode-body `system.data` xattr. The xattr header, entry table,
-  terminator, value bounds, creator OS, inode size, and inode checksum (when
-  enabled) are validated before the payload is exposed. Payloads are bounded
-  to 256 bytes; inline directories, EA-inode-backed values, page mapping, and
-  inline-data writes remain unsupported.
+- Inline-data support for regular files and symlinks. The first 60 payload
+  bytes are stored in `i_block`; an optional remainder is stored in the
+  inode-body `system.data` xattr. The xattr header, entry table, terminator,
+  value bounds, creator OS, inode size, and inode checksum (when enabled) are
+  validated before the payload is exposed. Regular-file writes and truncation
+  update the existing inline payload in place, but cannot grow the on-disk
+  `system.data` value or exceed the capacity already present in the inode.
+  Inline directories, EA-inode-backed values, and VM page mapping remain
+  unsupported.
 - Read-write support for filesystems without a journal and without indexed
   directories. The block and inode bitmaps, group free counters, inode table,
   superblock counters, and data blocks are updated.
@@ -91,9 +93,9 @@ implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline
-  directories, inline-data writes, encryption, casefold, bigalloc, orphan_file,
-  and unsupported feature flags are rejected. The filesystem must be clean,
-  with an empty legacy orphan list.
+  directories, inline-data xattr growth, encryption, casefold, bigalloc,
+  orphan_file, and unsupported feature flags are rejected. The filesystem
+  must be clean, with an empty legacy orphan list.
 - Without `huge_file`, inode writes fail with `EFBIG` rather than silently
   truncating an `i_blocks` value that exceeds 32 bits. With `huge_file`, ext4
   can store a 48-bit sector count, or a 48-bit filesystem-block count when
@@ -174,23 +176,28 @@ switch to filesystem-block units above 2^48 sectors; reject values exceeding
 the 48-bit filesystem-block limit before changing the extent tree.
 
 For inline-data coverage, create a disposable Linux ext4 image with
-the `inline_data` feature enabled and no journal:
+the `inline_data` feature enabled, no journal, and metadata checksums disabled
+for read-write testing:
 
 ```sh
 truncate -s 128M ext4-inline-test.img
 mke2fs -F -t ext4 -b 4096 -I 256 \
-  -O extent,inline_data,^has_journal ext4-inline-test.img
+  -O extent,inline_data,^has_journal,^metadata_csum ext4-inline-test.img
 e2fsck -fn ext4-inline-test.img
 ```
 
 Populate it on Linux with short and 60-byte-boundary regular files, files
 whose payload extends into the `system.data` xattr, empty inline files, and
 inline symlinks. Confirm reads return exact contents at offsets spanning the
-60-byte boundary and at EOF. Corrupt the inode-body xattr header, entry
+60-byte boundary and at EOF. On a read-write mount, overwrite bytes in short
+files and in existing `system.data` payloads, extend a file only up to its
+already allocated inline payload capacity, and shrink/extend it with
+truncate. Writes or truncates beyond the current inline capacity must fail
+without changing the inode. Corrupt the inode-body xattr header, entry
 terminator, duplicate `system.data` entry, value offset/size, or inode size
-independently and confirm the inode is rejected with `EIO`. Inline
-directories, payloads larger than the in-core 256-byte bound, external
-xattr-inode values, and page mapping must remain unsupported. Run
+independently and confirm the inode is rejected with `EIO`. Inline directories, payloads larger than the in-core 256-byte bound, external
+xattr-inode values, growth requiring a larger `system.data` xattr value, and
+page mapping must remain unsupported. Run
 `e2fsck -fn` on the unmounted image after testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
