@@ -73,9 +73,10 @@ implementation.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
   encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
   are rejected. The filesystem must be clean, with an empty legacy orphan list.
-- When `huge_file` is absent, inode writes fail with `EFBIG` rather than
-  silently truncating an `i_blocks` value that exceeds 32 bits. With
-  `huge_file`, the 48-bit block counter is the maximum representable size.
+- Without `huge_file`, inode writes fail with `EFBIG` rather than silently
+  truncating an `i_blocks` value that exceeds 32 bits. With `huge_file`, ext4
+  can store a 48-bit sector count, or a 48-bit filesystem-block count when
+  the inode's `HUGE_FILE` flag is set.
 - The `metadata_csum` and `metadata_csum_seed` features are supported only
   for read-only mounts.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
