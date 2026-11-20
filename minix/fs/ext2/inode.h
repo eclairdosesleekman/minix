@@ -26,7 +26,7 @@ EXTERN struct inode {
     u32_t  i_dtime;        /* Deletion Time */
     u16_t  i_gid;          /* Low 16 bits of Group Id */
     u16_t  i_links_count;  /* Links count */
-    u32_t  i_blocks;       /* 512-byte blocks count */
+    u64_t  i_blocks;       /* In-core 512-byte sector count (ext4: 64-bit) */
     u32_t  i_flags;        /* File flags */
     union {
         struct {
