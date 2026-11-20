@@ -124,8 +124,8 @@ metadata checksums, but with the `huge_file` feature enabled:
 
 ```sh
 truncate -s 512M ext4-huge-file-test.img
-mke2fs -F -t ext4 -b 4096 \\
-  -O extent,64bit,huge_file,^has_journal,^dir_index,\\
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,64bit,huge_file,^has_journal,^dir_index,\
 ^metadata_csum,^gdt_csum,^orphan_file ext4-huge-file-test.img
 ```
 
