@@ -351,7 +351,7 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		}
 		leaf_entries = extent_get16(node + 2);
 		leaf_max = extent_get16(node + 4);
-		if (leaf_max < 2 ||
+		if (leaf_max < 4 ||
 		    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
 		    leaf_entries == 0 || leaf_entries > leaf_max ||
 		    (xattr_block != 0 &&
@@ -441,7 +441,7 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		}
 		leaf_entries = extent_get16(node + 2);
 		leaf_max = extent_get16(node + 4);
-		if (leaf_max < 2 ||
+		if (leaf_max < 4 ||
 		    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
 		    leaf_entries == 0 || leaf_entries > leaf_max ||
 		    (xattr_block != 0 &&
@@ -476,7 +476,7 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 			}
 			other_entries = extent_get16(other_node + 2);
 			other_max = extent_get16(other_node + 4);
-			if (other_max == 0 ||
+			if (other_max < 4 ||
 			    other_max > (rip->i_sp->s_block_size - 12) / 12 ||
 			    other_entries == 0 || other_entries > other_max) {
 				put_block(other_bp);
@@ -599,7 +599,7 @@ extent_depth1_split_leaf(struct inode *rip, unsigned char *root,
 	old_bp = *bpp;
 	node = *nodep;
 
-	if (root_entries >= root_max || leaf_entries < 2 ||
+	if (root_entries >= root_max || leaf_entries < 4 || leaf_max < 4 ||
 	    leaf_entries > leaf_max || sp->s_sectors_in_block == 0)
 		return(EFBIG);
 	if (!extent_i_blocks_can_add(rip, sp->s_sectors_in_block))
@@ -1120,7 +1120,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	}
 	leaf_entries = extent_get16(node + 2);
 	leaf_max = extent_get16(node + 4);
-	if (leaf_max < 2 ||
+	if (leaf_max < 4 ||
 	    leaf_max > (rip->i_sp->s_block_size - 12) / 12 ||
 	    leaf_entries == 0 || leaf_entries > leaf_max) {
 		put_block(bp);
