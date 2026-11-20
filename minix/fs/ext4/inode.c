@@ -706,20 +706,21 @@ int rw_inode(
 
   /* Refuse to interpret an inode whose metadata checksum is invalid. */
   if (rw_flag == READING &&
-      HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
-	if (!ext4_verify_inode_csum(sp, rip->i_num,
-	    (const unsigned char *)dip, EXT2_INODE_SIZE(sp))) {
-		put_block(bp);
-		return(EIO);
-	}
+      HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+      !ext4_verify_inode_csum(sp, rip->i_num,
+      (const unsigned char *)dip, EXT2_INODE_SIZE(sp))) {
+	put_block(bp);
+	return(EIO);
+  }
 
-	/*
-	 * i_file_acl is a 48-bit block pointer on 64-bit ext4 filesystems.
-	 * The high 16 bits alias the legacy Linux i_pad1 field at inode
-	 * offset 0x76. Validate a referenced external xattr block before
-	 * accepting the inode; inline xattrs remain covered by the inode
-	 * checksum above.
-	 */
+  /*
+   * Linux ext4 stores i_file_acl as a 48-bit block pointer when 64bit is
+   * enabled. Validate every nonzero pointer, even without metadata_csum:
+   * the external xattr header still has structural invariants that protect
+   * later xattr reference-count and release operations.
+   */
+  if (rw_flag == READING && sp->s_is_ext4 &&
+      sp->s_creator_os == EXT4_OS_LINUX) {
 	xattr_block = (block64_t)(u32_t)conv4(le_CPU, dip->i_file_acl);
 	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT)) {
 		xattr_block_hi = (u16_t)conv2(le_CPU,
@@ -727,7 +728,7 @@ int rw_inode(
 		xattr_block |= (block64_t)xattr_block_hi << 32;
 	}
 	if (xattr_block != 0 &&
-	    !ext4_verify_xattr_block_csum(sp, rip->i_dev, xattr_block)) {
+	    !ext4_validate_xattr_block(sp, rip->i_dev, xattr_block)) {
 		printf("ext4: invalid xattr block for inode %llu\n",
 		    (unsigned long long)rip->i_num);
 		put_block(bp);

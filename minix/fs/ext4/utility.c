@@ -137,14 +137,14 @@ ext4_verify_inode_csum(struct super_block *sp, ino_t ino,
 }
 
 /*
- * Verify an external ext4 xattr block. Linux computes h_checksum over the
- * little-endian 64-bit block number followed by the complete block, with the
- * checksum field (offset 16) treated as zero. The checksum is independent of
- * the referencing inode, so blocks shared by multiple inodes use the same
- * calculation.
+ * Validate an external ext4 xattr block. The fixed header is present even
+ * when metadata_csum is disabled, so always check its magic, reference count,
+ * single-block size, and reserved words. When metadata_csum is enabled,
+ * Linux additionally computes h_checksum over the little-endian 64-bit block
+ * number followed by the entire block with h_checksum treated as zero.
  */
 int
-ext4_verify_xattr_block_csum(struct super_block *sp, dev_t dev,
+ext4_validate_xattr_block(struct super_block *sp, dev_t dev,
     block64_t block)
 {
 	struct buf *bp;
@@ -153,10 +153,7 @@ ext4_verify_xattr_block_csum(struct super_block *sp, dev_t dev,
 	u32_t block_lo, block_hi, magic, refcount, blocks;
 	u32_t stored, crc, zero32 = 0;
 
-	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
-		return(TRUE);
-	if (sp->s_creator_os != EXT4_OS_LINUX ||
-	    sp->s_block_size < 20 ||
+	if (sp->s_creator_os != EXT4_OS_LINUX || sp->s_block_size < 32 ||
 	    block <= sp->s_first_data_block ||
 	    block >= sp->s_blocks_count ||
 	    block > (((u64_t)~0 >> 1) / sp->s_block_size))
@@ -171,9 +168,17 @@ ext4_verify_xattr_block_csum(struct super_block *sp, dev_t dev,
 	refcount = ext4_csum_read32(data + 4);
 	blocks = ext4_csum_read32(data + 8);
 	if (magic != EXT4_XATTR_MAGIC || refcount == 0 ||
-	    refcount > EXT4_XATTR_REFCOUNT_MAX || blocks != 1) {
+	    refcount > EXT4_XATTR_REFCOUNT_MAX || blocks != 1 ||
+	    ext4_csum_read32(data + 20) != 0 ||
+	    ext4_csum_read32(data + 24) != 0 ||
+	    ext4_csum_read32(data + 28) != 0) {
 		put_block(bp);
 		return(FALSE);
+	}
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+		put_block(bp);
+		return(TRUE);
 	}
 
 	block_lo = (u32_t)conv4(le_CPU, (u32_t)block);
