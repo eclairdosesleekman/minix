@@ -631,6 +631,28 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	return(OK);
 }
 
+struct ext4_metadata_range {
+	block64_t first;
+	block64_t end; /* exclusive */
+	unsigned int group;
+};
+
+static int compare_ext4_metadata_ranges(const void *left, const void *right)
+{
+	const struct ext4_metadata_range *a = left;
+	const struct ext4_metadata_range *b = right;
+
+	if (a->first < b->first)
+		return(-1);
+	if (a->first > b->first)
+		return(1);
+	if (a->end < b->end)
+		return(-1);
+	if (a->end > b->end)
+		return(1);
+	return(0);
+}
+
 /*
  * Validate the metadata block pointers decoded from every group descriptor.
  * flex_bg permits these blocks to live outside their nominal block group, so
@@ -643,6 +665,8 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 {
 	block64_t block_bitmap, inode_bitmap, inode_table;
 	block64_t table_blocks;
+	struct ext4_metadata_range *ranges;
+	size_t range_count, n;
 	unsigned int i;
 
 	/* A bitmap has one bit per block/inode (bigalloc is not implemented). */
@@ -652,6 +676,13 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	    sp->s_itb_per_group == 0)
 		return(EINVAL);
 
+	if ((size_t)ngroups > SIZE_MAX / (3 * sizeof(*ranges)))
+		return(EFBIG);
+	ranges = malloc((size_t)ngroups * 3 * sizeof(*ranges));
+	if (ranges == NULL)
+		return(ENOMEM);
+
+	range_count = 0;
 	table_blocks = sp->s_itb_per_group;
 	for (i = 0; i < ngroups; i++) {
 		block_bitmap = groups[i].block_bitmap;
@@ -685,8 +716,31 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 			printf("ext4: group %u bitmap overlaps its inode table\n", i);
 			return(EIO);
 		}
+
+		ranges[range_count].first = block_bitmap;
+		ranges[range_count].end = block_bitmap + 1;
+		ranges[range_count++].group = i;
+		ranges[range_count].first = inode_bitmap;
+		ranges[range_count].end = inode_bitmap + 1;
+		ranges[range_count++].group = i;
+		ranges[range_count].first = inode_table;
+		ranges[range_count].end = inode_table + table_blocks;
+		ranges[range_count++].group = i;
 	}
 
+	/* flex_bg relocates metadata but reservations must remain disjoint. */
+	qsort(ranges, range_count, sizeof(*ranges),
+	    compare_ext4_metadata_ranges);
+	for (n = 1; n < range_count; n++) {
+		if (ranges[n].first < ranges[n - 1].end) {
+			printf("ext4: metadata ranges overlap between groups %u and %u\\n",
+			    ranges[n - 1].group, ranges[n].group);
+			free(ranges);
+			return(EIO);
+		}
+	}
+
+	free(ranges);
 	return(OK);
 }
 
