@@ -77,9 +77,9 @@ unsigned int get_block_size(dev_t dev)
 static unsigned char *ondisk_group_descs;
 
 /*
- * META_BG puts one primary descriptor block at the start of each meta
- * group's first block group. The superblock backup, when present, occupies
- * the first block, so the descriptor block follows it.
+ * META_BG places a primary descriptor block in the first group of each
+ * meta group and backup copies in its second and last groups. A backup
+ * superblock, when present in one of those groups, precedes the descriptor.
  */
 static int
 ext4_meta_bg_is_power(u32_t group, u32_t base)
@@ -104,10 +104,10 @@ ext4_meta_bg_group_has_super(struct super_block *sp, u32_t group)
 }
 
 static int
-ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
-	block64_t *blockp)
+ext4_meta_bg_group_descriptor_block(struct super_block *sp,
+	unsigned int index, u32_t group, block64_t *blockp)
 {
-	u64_t first_group, first_block, block, max_value;
+	u64_t first_group, last_group, first_block, block, max_value;
 	unsigned int has_super;
 
 	if (!HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG) ||
@@ -116,21 +116,25 @@ ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
 		return(FALSE);
 
 	first_group = (u64_t)index * sp->s_desc_per_block;
-	if (first_group >= sp->s_groups_count)
+	last_group = first_group + sp->s_desc_per_block - 1;
+	if (group >= sp->s_groups_count ||
+	    ((u64_t)group != first_group &&
+	    (u64_t)group != first_group + 1 &&
+	    (u64_t)group != last_group))
 		return(FALSE);
 	max_value = (u64_t)~(u64_t)0;
-	if (first_group >
+	if ((u64_t)group >
 	    (max_value - sp->s_first_data_block) / sp->s_blocks_per_group)
 		return(FALSE);
 	first_block = (u64_t)sp->s_first_data_block +
-	    first_group * sp->s_blocks_per_group;
+	    (u64_t)group * sp->s_blocks_per_group;
 
-	has_super = ext4_meta_bg_group_has_super(sp, (u32_t)first_group);
+	has_super = ext4_meta_bg_group_has_super(sp, group);
 	/*
 	 * ext4's 1 KiB META_BG layout with s_first_data_block == 0 has
 	 * an extra reserved block before the first descriptor block.
 	 */
-	if (sp->s_block_size == 1024 && index == 0 &&
+	if (sp->s_block_size == 1024 && index == 0 && group == 0 &&
 	    sp->s_first_data_block == 0)
 		has_super++;
 
@@ -143,6 +147,75 @@ ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
 
 	*blockp = (block64_t)block;
 	return(TRUE);
+}
+
+static int
+ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
+	block64_t *blockp)
+{
+	u64_t first_group;
+
+	if (index >= sp->s_gdb_count || sp->s_desc_per_block == 0)
+		return(FALSE);
+	first_group = (u64_t)index * sp->s_desc_per_block;
+	if (first_group >= sp->s_groups_count)
+		return(FALSE);
+	return(ext4_meta_bg_group_descriptor_block(sp, index,
+	    (u32_t)first_group, blockp));
+}
+
+/*
+ * Test a physical half-open range against every primary and backup META_BG
+ * descriptor block touched by the range. Iteration is over meta groups, not
+ * individual filesystem blocks, so large extents remain bounded.
+ */
+int
+ext4_meta_bg_overlaps_descriptor_blocks(struct super_block *sp,
+	block64_t first, block64_t end)
+{
+	u64_t first_group, last_group, first_index, last_index;
+	u64_t index, meta_first, candidates[3];
+	unsigned int i;
+	block64_t descriptor;
+
+	if (!HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG) || first >= end ||
+	    sp->s_desc_per_block == 0 || sp->s_blocks_per_group == 0 ||
+	    first < sp->s_first_data_block || end <= sp->s_first_data_block)
+		return(FALSE);
+
+	first_group = (first - sp->s_first_data_block) /
+	    sp->s_blocks_per_group;
+	last_group = (end - 1 - sp->s_first_data_block) /
+	    sp->s_blocks_per_group;
+	if (first_group >= sp->s_groups_count)
+		return(FALSE);
+	if (last_group >= sp->s_groups_count)
+		last_group = sp->s_groups_count - 1;
+
+	first_index = first_group / sp->s_desc_per_block;
+	if (first_index < sp->s_first_meta_bg)
+		first_index = sp->s_first_meta_bg;
+	last_index = last_group / sp->s_desc_per_block;
+	if (first_index > last_index)
+		return(FALSE);
+
+	for (index = first_index; index <= last_index &&
+	    index < sp->s_gdb_count; index++) {
+		meta_first = index * sp->s_desc_per_block;
+		candidates[0] = meta_first;
+		candidates[1] = meta_first + 1;
+		candidates[2] = meta_first + sp->s_desc_per_block - 1;
+		for (i = 0; i < 3; i++) {
+			if (candidates[i] >= sp->s_groups_count)
+				continue;
+			if (ext4_meta_bg_group_descriptor_block(sp,
+			    (unsigned int)index, (u32_t)candidates[i],
+			    &descriptor) && descriptor >= first &&
+			    descriptor < end)
+				return(TRUE);
+		}
+	}
+	return(FALSE);
 }
 
 /*===========================================================================*
@@ -293,8 +366,6 @@ int read_super(register struct super_block *sp)
 			return(EOPNOTSUPP);
 		classic_gdb_count = sp->s_first_meta_bg;
 	} else {
-		if (sp->s_first_meta_bg != 0)
-			return(EINVAL);
 		classic_gdb_count = sp->s_gdb_count;
 	}
 
