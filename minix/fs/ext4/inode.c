@@ -684,6 +684,15 @@ int rw_inode(
 		return(r);
 	}
   }
+  if (rw_flag == WRITING && sp->s_is_ext4 &&
+      HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+	r = ext4_update_inode_csum(sp, rip->i_num,
+	    (unsigned char *)dip, EXT2_INODE_SIZE(sp));
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
+  }
   if (rw_flag == READING && sp->s_is_ext4) {
 	r = ext4_decode_inline_data(rip, (const unsigned char *)dip,
 	    EXT2_INODE_SIZE(sp));
