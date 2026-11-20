@@ -528,6 +528,29 @@ int truncate_inode(register struct inode *rip, off_t newsize)
   if (newsize > rip->i_sp->s_max_size)	/* don't let inode grow too big */
 	return(EFBIG);
 
+  /*
+   * Inline-data inodes own no data blocks.  Keep their existing xattr value
+   * allocation and zero bytes on both shrink and extension; growing beyond
+   * that on-disk capacity requires rewriting the xattr layout and is refused.
+   */
+  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	if (rip->i_blocks != 0 || newsize < 0 || rip->i_size < 0 ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_MAX)
+		return(EIO);
+	if ((u64_t)newsize > rip->i_inline_size)
+		return(EFBIG);
+	if (newsize > rip->i_size)
+		memset(rip->i_inline_data + rip->i_size, 0,
+		    (size_t)(newsize - rip->i_size));
+	else if (newsize < rip->i_size)
+		memset(rip->i_inline_data + newsize, 0,
+		    (size_t)(rip->i_size - newsize));
+	rip->i_size = newsize;
+	rip->i_update |= CTIME | MTIME;
+	rip->i_dirt = IN_DIRTY;
+	return(OK);
+  }
+
   /* Free the actual space if truncating. */
   if (newsize < rip->i_size) {
 	if ((r = freesp_inode(rip, newsize, rip->i_size)) != OK)
@@ -583,6 +606,17 @@ static int freesp_inode(register struct inode *rip, off_t start, off_t end)
 	end = rip->i_size;
   if(end <= start)		/* end is uninclusive, so start<end */
 	return(EINVAL);
+
+  if (rip->i_sp->s_is_ext4 && (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	if (rip->i_blocks != 0 || start < 0 || end < 0 ||
+	    (u64_t)end > rip->i_inline_size ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_MAX)
+		return(EIO);
+	memset(rip->i_inline_data + start, 0, (size_t)(end - start));
+	rip->i_update |= CTIME | MTIME;
+	rip->i_dirt = IN_DIRTY;
+	return(OK);
+  }
 
   /* If freeing doesn't cross a block boundary, then we may only zero
    * a range of the block.
