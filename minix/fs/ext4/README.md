@@ -21,8 +21,8 @@ read-write mode.
   (`st_birthtim`); `utimes` preserves requested subsecond values when the
   corresponding extra field exists. Linux inode creation times are initialized
   for new inodes when the creation-time fields fit. Older 128-byte/short-extra
-  inodes retain seconds-only timestamps,
-  and malformed extra sizes or nanosecond encodings are rejected.
+  inodes retain seconds-only timestamps. Malformed extra sizes or nanosecond
+  encodings are rejected.
 - Full 32-bit owner and group IDs on Linux-created ext4 filesystems. The
   lower 16 bits come from `i_uid`/`i_gid` and the upper 16 bits are decoded
   from the Linux `osd2` fields. Updates write both halves without disturbing
