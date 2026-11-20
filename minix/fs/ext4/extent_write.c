@@ -1576,6 +1576,56 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 				extent_put16(root + 6, 0);
 			free_block(rip->i_sp, leaf_block);
 			rip->i_blocks -= rip->i_sp->s_sectors_in_block;
+
+			/*
+			 * Removing an empty leaf can leave one small leaf or two
+			 * newly adjacent leaves. Re-read a surviving leaf and run
+			 * the same optional compaction/demotion pass.
+			 */
+			if (root_entries != 0) {
+				struct buf *keep_bp;
+				unsigned char *keep_node;
+				u16_t keep_entries, keep_max;
+				block64_t keep_block;
+
+				if (leaf_index >= root_entries)
+					leaf_index = root_entries - 1;
+				index_entry = root + 12 + leaf_index * 12;
+				keep_block =
+				    ((u64_t)extent_get16(index_entry + 8) << 32) |
+				    extent_get32(index_entry + 4);
+				if (keep_block > rip->i_sp->s_first_data_block &&
+				    keep_block < rip->i_sp->s_blocks_count &&
+				    keep_block != extent_inode_xattr_block(rip) &&
+				    !extent_is_group_metadata(rip->i_sp, keep_block) &&
+				    (keep_bp = get_block(rip->i_dev, keep_block,
+				    NORMAL)) != NULL) {
+					keep_node = (unsigned char *)b_data(keep_bp);
+					keep_entries = extent_get16(keep_node + 2);
+					keep_max = extent_get16(keep_node + 4);
+					if (extent_get16(keep_node) == EXT4_EXTENT_MAGIC &&
+					    extent_get16(keep_node + 6) == 0 &&
+					    keep_max >= 4 &&
+					    keep_max <= (rip->i_sp->s_block_size - 12) / 12 &&
+					    keep_entries != 0 && keep_entries <= keep_max) {
+						bp = keep_bp;
+						node = keep_node;
+						leaf_entries = keep_entries;
+						leaf_max = keep_max;
+						leaf_block = keep_block;
+						r = extent_depth1_compact(rip, root,
+						    &root_entries, root_max, &leaf_index,
+						    &bp, &node, &leaf_entries, leaf_max,
+						    &index_entry, &leaf_block);
+						if (r == OK && bp != NULL)
+							put_block(bp);
+						else if (bp != NULL)
+							put_block(bp);
+					} else {
+						put_block(keep_bp);
+					}
+				}
+			}
 		}
 		rip->i_dirt = IN_DIRTY;
 		return(OK);
