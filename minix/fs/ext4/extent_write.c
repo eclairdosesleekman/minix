@@ -740,8 +740,10 @@ extent_validate_xattr_block(struct inode *rip, block64_t block)
 
 	if (block == 0)
 		return(OK);
-	if (block <= sp->s_first_data_block ||
+	if (sp->s_block_size == 0 ||
+	    block <= sp->s_first_data_block ||
 	    block >= sp->s_blocks_count ||
+	    block > (((u64_t)~0 >> 1) / sp->s_block_size) ||
 	    extent_is_group_metadata(sp, block))
 		return(EIO);
 
@@ -790,8 +792,10 @@ ext4_release_xattr_block(struct inode *rip)
 	/* Writable metadata_csum is not supported by the mount path. */
 	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
 		return(EOPNOTSUPP);
-	if (block <= sp->s_first_data_block ||
+	if (sp->s_block_size == 0 ||
+	    block <= sp->s_first_data_block ||
 	    block >= sp->s_blocks_count ||
+	    block > (((u64_t)~0 >> 1) / sp->s_block_size) ||
 	    extent_is_group_metadata(sp, block))
 		return(EIO);
 
