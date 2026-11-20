@@ -658,8 +658,7 @@ ext4_inline_dir_scan_area(struct inode *rip, const unsigned char *area,
 		if (dp->d_ino != 0) {
 			ino = (ino_t)conv4(le_CPU, dp->d_ino);
 			if (ino == NO_ENTRY || ino > rip->i_sp->s_inodes_count ||
-			    dp->d_name_len == 0 ||
-			    FALSE)
+			    dp->d_name_len == 0)
 				return(EIO);
 			if (flag == IS_EMPTY)
 				return(ENOTEMPTY);
