@@ -15,6 +15,13 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Linux extended inode timestamps are decoded and stored using ext4's
+  34-bit seconds and nanosecond fields when present in `i_extra_isize`.
+  `stat` reports atime/mtime/ctime nanoseconds and the inode creation time
+  (`st_birthtim`); `utimes` preserves requested subsecond values when the
+  corresponding extra field exists. Creation times are initialized for new
+  inodes. Older 128-byte/short-extra inodes retain seconds-only timestamps,
+  and malformed extra sizes or nanosecond encodings are rejected.
 - Full 32-bit owner and group IDs on Linux-created ext4 filesystems. The
   lower 16 bits come from `i_uid`/`i_gid` and the upper 16 bits are decoded
   from the Linux `osd2` fields. Updates write both halves without disturbing
@@ -160,6 +167,12 @@ implementation.
   paths do not update user/group/project quota records. The
   `RO_COMPAT_READONLY` flag always requires a read-only mount, independent of
   the caller's requested mount mode.
+- **Extended timestamp field requirements:** 64-bit seconds and nanoseconds
+  require the relevant Linux inode extra field to fit within `i_extra_isize`.
+  When an older inode lacks an atime/mtime extra field, `utimes` retains the
+  seconds value and rounds subsecond precision down. Explicit dates outside
+  the signed 32-bit range are rejected when the matching extended field is
+  absent; ext4's `dtime` remains the legacy 32-bit field.
 - **Read-only metadata checksums:** `metadata_csum` superblock, group
   descriptor, initialized bitmap, inode, directory, external extent-node, and
   external xattr-block checksums are verified. All initialized block and inode bitmaps are scanned
