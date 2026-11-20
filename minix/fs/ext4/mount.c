@@ -108,6 +108,20 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: large_dir is supported only on read-only mounts\\n");
 		goto bad_mount;
 	}
+	/*
+	 * Inline regular files and symlinks are decoded from i_block and the
+	 * inode-body system.data xattr. Inline-directory records and inline-data
+	 * writes/page mapping are not implemented, so the feature is read-only.
+	 */
+	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_INLINE_DATA)) {
+		printf("ext4: inline_data is supported only on read-only mounts\\n");
+		goto bad_mount;
+	}
+	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_INLINE_DATA) &&
+	    sp->s_creator_os != EXT4_OS_LINUX) {
+		printf("ext4: inline_data requires a Linux-created filesystem\\n");
+		goto bad_mount;
+	}
 
 	/* Metadata checksums are verified on reads but not rewritten by this
 	 * server's metadata mutation paths, so such volumes must stay read-only.

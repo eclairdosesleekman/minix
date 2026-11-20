@@ -189,7 +189,12 @@ ssize_t fs_rdlink(ino_t ino_nr, struct fsdriver_data *data, size_t bytes)
   if( (rip = get_inode(fs_dev, ino_nr)) == NULL)
 	  return(EINVAL);
 
-  if (rip->i_size >= MAX_FAST_SYMLINK_LENGTH) {
+  if (rip->i_sp->s_is_ext4 &&
+      HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
+      (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	link_text = (char *)rip->i_inline_data;
+	r = OK;
+  } else if (rip->i_size >= MAX_FAST_SYMLINK_LENGTH) {
   /* normal symlink */
        	if(!(bp = get_block_map(rip, 0))) {
 		r = EIO;

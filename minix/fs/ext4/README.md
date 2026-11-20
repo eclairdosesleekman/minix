@@ -43,6 +43,13 @@ read-write mode.
   on the HTree depth. The root's depth field is checked against the ext4
   limit (two levels normally, three with `large_dir`), even without
   `metadata_csum`.
+- Read-only inline-data support for regular files and symlinks. The first 60
+  payload bytes are read from `i_block`; an optional remainder is copied from
+  the inode-body `system.data` xattr. The xattr header, entry table,
+  terminator, value bounds, creator OS, inode size, and inode checksum (when
+  enabled) are validated before the payload is exposed. Payloads are bounded
+  to 256 bytes; inline directories, EA-inode-backed values, page mapping, and
+  inline-data writes remain unsupported.
 - Read-write support for filesystems without a journal and without indexed
   directories. The block and inode bitmaps, group free counters, inode table,
   superblock counters, and data blocks are updated.
@@ -83,9 +90,10 @@ implementation.
   entries without a complete tree-rebalancing implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
-- Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
-  encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
-  are rejected. The filesystem must be clean, with an empty legacy orphan list.
+- Existing restrictions still apply: recovery, meta_bg, MMP, inline
+  directories, inline-data writes, encryption, casefold, bigalloc, orphan_file,
+  and unsupported feature flags are rejected. The filesystem must be clean,
+  with an empty legacy orphan list.
 - Without `huge_file`, inode writes fail with `EFBIG` rather than silently
   truncating an `i_blocks` value that exceeds 32 bits. With `huge_file`, ext4
   can store a 48-bit sector count, or a 48-bit filesystem-block count when
@@ -164,6 +172,26 @@ accepts an allocation that moves the in-core sector count beyond 2^32 when
 feature. Exercise encoder boundary values at 2^32 and 2^48 sectors, and the
 switch to filesystem-block units above 2^48 sectors; reject values exceeding
 the 48-bit filesystem-block limit before changing the extent tree.
+
+For inline-data coverage, create a disposable Linux ext4 image with
+the `inline_data` feature enabled and no journal:
+
+```sh
+truncate -s 128M ext4-inline-test.img
+mke2fs -F -t ext4 -b 4096 -I 256 \
+  -O extent,inline_data,^has_journal ext4-inline-test.img
+e2fsck -fn ext4-inline-test.img
+```
+
+Populate it on Linux with short and 60-byte-boundary regular files, files
+whose payload extends into the `system.data` xattr, empty inline files, and
+inline symlinks. Confirm reads return exact contents at offsets spanning the
+60-byte boundary and at EOF. Corrupt the inode-body xattr header, entry
+terminator, duplicate `system.data` entry, value offset/size, or inode size
+independently and confirm the inode is rejected with `EIO`. Inline
+directories, payloads larger than the in-core 256-byte bound, external
+xattr-inode values, and page mapping must remain unsupported. Run
+`e2fsck -fn` on the unmounted image after testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
 `metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:
