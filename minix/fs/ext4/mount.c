@@ -99,6 +99,15 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: read-write mounts require ^dir_index\\n");
 		goto bad_mount;
 	}
+	/*
+	 * large_dir permits deeper HTree indexes.  Lookup and readdir can
+	 * enumerate these directories by scanning logical blocks, but the
+	 * server does not update HTree indexes when a directory is modified.
+	 */
+	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_LARGEDIR)) {
+		printf("ext4: large_dir is supported only on read-only mounts\\n");
+		goto bad_mount;
+	}
 
 	/* Metadata checksums are verified on reads but not rewritten by this
 	 * server's metadata mutation paths, so such volumes must stay read-only.
