@@ -15,6 +15,12 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Full 32-bit owner and group IDs on Linux-created ext4 filesystems. The
+  lower 16 bits come from `i_uid`/`i_gid` and the upper 16 bits are decoded
+  from the Linux `osd2` fields. Updates write both halves without disturbing
+  the adjacent high block-count and xattr-block fields. Filesystems created by
+  other OSes retain their OS-specific `osd2` layout; writes that would need
+  wider IDs are rejected instead of silently truncating them.
 - Read-write support for the `huge_file` feature. The in-core `i_blocks`
   counter is 64-bit; writes serialize the 48-bit on-disk counter in 512-byte
   units when possible, then switch to filesystem-block units and set
