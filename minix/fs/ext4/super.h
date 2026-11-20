@@ -107,6 +107,8 @@ EXTERN struct super_block {
     int     s_igsearch; /* all groups below this one have no free inodes */
     u32_t   s_dirs_counter;
     u32_t   s_csum_seed;          /* CRC32C seed for metadata_csum */
+	u16_t   s_reserved_gdt_blocks;
+	u32_t   s_backup_bgs[2];     /* sparse_super2 backup groups */
 
 } *superblock, *ondisk_superblock;
 
@@ -129,7 +131,7 @@ struct group_desc
 #define BMAP	1           /* operating on the block bit map */
 #define IMAPD	2           /* operating on the inode bit map, inode is dir */
 
-int ext4_meta_bg_overlaps_descriptor_blocks(struct super_block *sp,
+int ext4_reserved_metadata_overlaps(struct super_block *sp,
 	block64_t first, block64_t end);
 
 #endif /* EXT4_SUPER_H */
