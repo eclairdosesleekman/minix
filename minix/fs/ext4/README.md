@@ -17,10 +17,11 @@ read-write mode.
 - 64-bit regular-file sizes using the inode size-high field.
 - Read-only support for `COMPAT_SPARSE_SUPER2`. The two backup group
   numbers are decoded from `s_backup_bgs`, validated against the filesystem
-  group count, and used instead of the traditional sparse-super power-of-3/5/7
-  rule (as in Linux ext4). The primary GDT, traditional sparse-super backup groups, and the selected
-  sparse_super2 groups' backup superblock/GDT/reserved-GDT ranges are excluded
-  from file and extent mappings and from group bitmap/inode-table placements. Writable mounts remain
+  group count, and used instead of the traditional sparse-super
+  power-of-3/5/7 rule (as in Linux ext4). The primary GDT, traditional
+  sparse-super backup groups, and the selected sparse_super2 groups' backup
+  superblock/GDT/reserved-GDT ranges are excluded from file and extent mappings
+  and from group bitmap/inode-table placements. Writable mounts remain
   unsupported because backup copies are not updated.
 - Read-only support for ext4 `meta_bg` group-descriptor placement. The
   descriptor table is assembled in logical order from the classic contiguous
@@ -478,13 +479,14 @@ another group's bitmap or inode-table extent; confirm the mount rejects these
 cross-group overlaps without rejecting a valid `flex_bg` layout.
 For read-only `sparse_super2` coverage, create disposable ext4 images
 with `-O sparse_super2,^meta_bg`. Test both populated backup-group fields,
-one field set with the other zero, and both fields zero. Confirm the listed
-groups alone contain backup superblock/GDT regions, that both sparse_super2
-and sparse_super with sparse_super2 set use the listed-group rule, and that
-duplicate and out-of-range backup values fail mount; zero means that the\ncorresponding backup-group slot is unused.
-Construct extents and group bitmap/inode-table pointers that alias the primary
-GDT, each listed backup superblock/GDT copy, and reserved-GDT blocks; each must
-be rejected. Writable mounts must fail before marking the volume unclean.
+one field set with the other zero, and both fields zero. Confirm only the
+listed groups carry backup superblock/GDT regions (or none when both are zero),
+and that `sparse_super2` takes precedence when `sparse_super` is also set.
+Duplicate and out-of-range backup values must fail mount; zero denotes an
+unused backup-group slot. Construct extents and group bitmap/inode-table
+pointers that alias the primary GDT, each listed backup superblock/GDT copy,
+and reserved-GDT blocks; each must be rejected. Writable mounts must fail
+before marking the volume unclean.
 
 For read-only `meta_bg` coverage, create disposable ext4 images with
 `meta_bg` enabled, both with and without `sparse_super`, and with
