@@ -72,8 +72,9 @@ read-write mode.
   final inode reclamation decrements a shared xattr block reference or frees
   the block when its last reference is released. Legacy indirect-mapped files
   with external xattr blocks remain conservatively rejected because their
-  block-ownership walk is not implemented. Depth-two and deeper trees and
-  mappings beyond EOF remain unsupported for final unlink.
+  block-ownership walk is not implemented; special inodes without data
+  mappings may still release a validated xattr block. Depth-two and deeper
+  trees and mappings beyond EOF remain unsupported for final unlink.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
   is not released. The zero-link inode is kept allocated for later fsck/recovery
   rather than allowing its still-referenced blocks to be reallocated.
