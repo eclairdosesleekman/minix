@@ -131,10 +131,15 @@ read-write mode.
   the block when its last reference is released. A depth-two tree with a
   single inode-root index entry is also preflighted and reclaimed, provided
   every mapping lies within EOF and the full data/node `i_blocks` accounting
-  matches. Legacy indirect-mapped files with external xattr blocks remain
-  conservatively rejected because their block-ownership walk is not
-  implemented; special inodes without data mappings may still release a
-  validated xattr block. Multi-entry depth-two roots, deeper trees, and
+  matches. Legacy indirect-mapped files can be finally unlinked after a
+  complete direct/single/double/triple-indirect ownership preflight. The walk
+  validates data and pointer blocks against filesystem metadata and the
+  external xattr block, rejects duplicate physical ownership and mappings
+  beyond EOF, and requires exact `i_blocks` accounting (external xattr blocks
+  are counted separately). The preflight is bounded to 1,048,576 owned blocks;
+  larger legacy trees remain unsupported. Fast symlinks and special inodes
+  without data mappings retain their inline/device payloads while a separately
+  validated xattr block can still be released. Multi-entry depth-two roots, deeper trees, and
   mappings beyond EOF remain unsupported for final unlink.
 - Read-only mounts accept `COMPAT_ORPHAN_FILE` when
   `RO_COMPAT_ORPHAN_PRESENT` is clear. A clean unmount clears this flag to
