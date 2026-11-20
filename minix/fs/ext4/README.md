@@ -70,8 +70,13 @@ read-write mode.
   extents are coalesced as part of the merge. When one remaining leaf fits in
   the inode root, the tree is demoted back to an inline root and its external
   metadata block is freed. Empty leaves are detached and freed, and the
-  surviving neighbors are reconsidered for merging/demotion. A full depth-one
-  root is not promoted to depth two; trees deeper than one external level
+  surviving neighbors are reconsidered for merging/demotion. A depth-two tree
+  with exactly one inode-root index entry is also writable: its external
+  depth-one index node can direct the same leaf insertion, splitting,
+  unwritten conversion, removal, and compaction operations. The root key is
+  propagated when the first child changes; the external index node is copied
+  back into the inode when its entries fit, or freed when emptied. Depth-two
+  trees with multiple inode-root entries and trees deeper than depth two
   remain read-only for mutation.
 - Final unlink of ext4 extent-backed files is supported for inline roots
   and validated depth-one trees. Before removing the last directory entry,
@@ -81,11 +86,14 @@ read-write mode.
   external xattr block has a valid header and reference count without aliasing
   file data or extent nodes. Truncation frees data blocks and external leaves;
   final inode reclamation decrements a shared xattr block reference or frees
-  the block when its last reference is released. Legacy indirect-mapped files
-  with external xattr blocks remain conservatively rejected because their
-  block-ownership walk is not implemented; special inodes without data
-  mappings may still release a validated xattr block. Depth-two and deeper
-  trees and mappings beyond EOF remain unsupported for final unlink.
+  the block when its last reference is released. A depth-two tree with a
+  single inode-root index entry is also preflighted and reclaimed, provided
+  every mapping lies within EOF and the full data/node `i_blocks` accounting
+  matches. Legacy indirect-mapped files with external xattr blocks remain
+  conservatively rejected because their block-ownership walk is not
+  implemented; special inodes without data mappings may still release a
+  validated xattr block. Multi-entry depth-two roots, deeper trees, and
+  mappings beyond EOF remain unsupported for final unlink.
 - If truncation fails unexpectedly during inode reclamation, the inode bitmap
   is not released. The zero-link inode is kept allocated for later fsck/recovery
   rather than allowing its still-referenced blocks to be reallocated.
@@ -116,14 +124,20 @@ implementation.
   directories to linear form are not implemented.
 - **Limited external extent-tree mutation:** inline roots can grow into
   depth-one trees, and depth-one leaves can be allocated, split, merged, and
-  compacted while the inode root has capacity. When all root index slots are
-  occupied, edits that need another leaf are rejected; depth-two and deeper
-  trees remain read-only for mutation. No external index-node splitting or
-  full multi-level tree rebalancing is implemented.
+  compacted while the inode root has capacity. A depth-two tree with a single
+  inode-root index entry can also mutate its depth-zero leaves through the
+  existing external depth-one index node. The tree collapses back to depth
+  one when the child index entries fit in the inode root. Multiple inode-root
+  entries at depth two, depth-three and deeper trees, and splitting a full
+  external index node into a higher level remain unsupported. Operations that
+  require those changes fail without changing the tree.
 - Final unlink is supported for inline and validated depth-one extent trees,
-  including inodes with a valid external xattr block. External trees deeper
-  than one level and depth-one trees with mappings beyond EOF are rejected
-  before the final directory entry is removed.
+  including inodes with a valid external xattr block, and for depth-two trees
+  with exactly one inode-root index entry. The depth-two preflight validates
+  the external index and every leaf, checks physical aliases and exact
+  `i_blocks` accounting, and rejects mappings beyond EOF before the final
+  directory entry is removed. Multi-entry depth-two roots and depth-three or
+  deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline data,
   encryption, casefold, bigalloc, orphan_file, and unsupported feature flags
   are rejected. The filesystem must be clean, with an empty legacy orphan list.
@@ -214,7 +228,14 @@ Also create a fragmented file with more than four non-coalescing extents;
 confirm the inline root is promoted to depth one and that the new leaf is
 counted in `i_blocks`. Grow the file with enough isolated extents to
 fill a leaf, then trigger additional insertions, unwritten-extent conversions,
-and middle-block removals that require leaf splitting. Confirm both resulting
+and middle-block removals that require leaf splitting. Construct a depth-two
+tree with a single inode-root index entry, and exercise hole writes,
+unwritten-extent conversion, extent removal, leaf splitting/merging, and
+depth-two-to-depth-one collapse. Confirm the external index block is counted
+in and removed from `i_blocks` correctly. Final unlink must pass the
+depth-two preflight and reclaim all remaining leaves and the external index
+block. A depth-two tree with multiple inode-root entries must reject writes
+and final unlink without mutation. Confirm both resulting
 leaves remain readable and writable, their root keys are ordered, and
 `i_blocks` includes every external leaf. Then remove extents so adjacent
 leaves fit together; verify the right-hand leaf is freed, the remaining
@@ -224,7 +245,9 @@ tree to four or fewer extents and confirm it is demoted to an inline root and
 its metadata block is freed. Also remove an entire leaf and verify the
 surviving neighboring leaves are reconsidered for merging/demotion. Fill all
 inode-root index slots and verify a
-further split request fails without changing either leaf or the index. Unlink files
+further split request fails without changing either leaf or the index. For the
+depth-two single-root case, also verify that an external parent index with no
+free slots rejects a split without changing the parent or selected leaf. Unlink files
 with one and multiple external leaves and confirm all data and leaf blocks are
 freed; then check free-block/free-inode counts with `e2fsck -fn`. Construct a
 depth-one file with a mapping beyond EOF and confirm final unlink fails before
@@ -237,8 +260,9 @@ cases when rename replaces an existing destination; the rename must preflight
 before changing either name. Also test an xattr pointer that aliases a data
 extent, an extent leaf, or group metadata. Inject an extent-node read/write
 failure during final reclamation and confirm the inode bitmap is not released. Confirm depth-one leaf splits succeed when a root index slot is available;
-requests that would require depth-two index-node creation fail without
-changing the extent tree. Depth-two and deeper trees must remain readable but
+requests that would require splitting an external index node into
+another tree level fail without changing the extent tree. Multi-root
+depth-two trees and depth-three or deeper trees must remain readable but
 reject mutation and final unlink. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.

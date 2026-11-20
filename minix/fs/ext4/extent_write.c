@@ -1,9 +1,10 @@
 /*
  * Limited ext4 extent-tree updates.
  *
- * This writer supports inline-root promotion, depth-one leaf allocation and
- * splitting, and in-place depth-one updates.  It does not split depth-one root
- * indexes or rebalance depth-two and deeper trees.
+ * This writer supports inline-root promotion, depth-one leaf allocation,
+ * splitting and compaction, plus a guarded depth-two layout whose inode root
+ * has one external depth-one index node. It does not split full external
+ * index nodes, support multi-entry depth-two roots, or mutate deeper trees.
  */
 
 #include "fs.h"
@@ -231,10 +232,11 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 }
 
 /*
- * Update a depth-one extent tree in place.  The inode contains the index
- * entries; each referenced external block contains a depth-zero leaf.
- * Splitting/rebalancing the tree is deliberately out of scope: operations
- * that need another leaf entry are rejected before either node is changed.
+ * Update the depth-zero leaves referenced by a depth-one index node. For
+ * ordinary depth-one trees the index is in the inode; for the supported
+ * single-root depth-two case it is an external block. The caller supplies
+ * the index buffer and its physical block number so alias checks and index
+ * persistence work for both layouts.
  */
 /*
  * External extent-node pointers are disk metadata, not ordinary file data.
@@ -313,7 +315,7 @@ static int
 extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 	u16_t root_entries, unsigned int selected,
 	const unsigned char *selected_node, u16_t selected_entries,
-	int check_candidate, block64_t candidate)
+	int check_candidate, block64_t candidate, block64_t root_block)
 {
 	struct ext4_extent ex, selected_ex, prior;
 	struct buf *bp;
@@ -331,7 +333,7 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 	index_entry = root + 12 + selected * 12;
 	leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
 	    extent_get32(index_entry + 4);
-	if (leaf_block == xattr_block ||
+	if (leaf_block == root_block || leaf_block == xattr_block ||
 	    (xattr_block != 0 && extent_block_is_mapped(selected_node + 12,
 	    selected_entries, xattr_block)))
 		return(EIO);
@@ -344,8 +346,20 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		root_key = extent_get32(index_entry);
 		leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
 		    extent_get32(index_entry + 4);
-		if (leaf_block == xattr_block)
+		if (leaf_block == root_block || leaf_block == xattr_block)
 			return(EIO);
+		{
+			unsigned int prior_i;
+			for (prior_i = 0; prior_i < i; prior_i++) {
+				const unsigned char *prior_index =
+				    root + 12 + prior_i * 12;
+				block64_t prior_leaf =
+				    ((u64_t)extent_get16(prior_index + 8) << 32) |
+				    extent_get32(prior_index + 4);
+				if (prior_leaf == leaf_block)
+					return(EIO);
+			}
+		}
 		bp = get_block(rip->i_dev, leaf_block, NORMAL);
 		if (bp == NULL)
 			return(EIO);
@@ -382,6 +396,9 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 			    ex.length) ||
 			    extent_overlaps_tree_node(root, root_entries, ex.physical,
 			    ex.length) ||
+			    (root_block != NO_BLOCK &&
+			    extent_ranges_overlap(ex.physical, ex.length,
+			    root_block, 1)) ||
 			    (u64_t)ex.logical + ex.length >
 			    ((u64_t)UINT32_MAX + 1) ||
 			    (j != 0 && ex.logical < previous_end) ||
@@ -437,6 +454,8 @@ extent_depth1_check_siblings(struct inode *rip, const unsigned char *root,
 		index_entry = root + 12 + i * 12;
 		leaf_block = ((u64_t)extent_get16(index_entry + 8) << 32) |
 		    extent_get32(index_entry + 4);
+		if (leaf_block == root_block || leaf_block == xattr_block)
+			return(EIO);
 		bp = get_block(rip->i_dev, leaf_block, NORMAL);
 		if (bp == NULL)
 			return(EIO);
@@ -580,8 +599,9 @@ extent_promote_root(struct inode *rip, unsigned char *root, u16_t entries,
 
 /*
  * Split one depth-zero leaf when an edit needs more records than it can hold.
- * The new leaf receives the upper half, and a new inode-root index entry is
- * inserted immediately after the old one.  Deeper index-node splitting is
+ * The new leaf receives the upper half, and a sorted entry is inserted in the
+ * current depth-one index node (which may be in the inode or an external
+ * depth-two parent). Splitting a full index node into another tree level is
  * intentionally left to a later change.
  */
 static int
@@ -589,11 +609,12 @@ extent_depth1_split_leaf(struct inode *rip, unsigned char *root,
 	u16_t *root_entriesp, u16_t root_max, unsigned int *leaf_indexp,
 	u32_t logical, struct buf **bpp, unsigned char **nodep,
 	u16_t *leaf_entriesp, u16_t leaf_max,
-	unsigned char **index_entryp, block64_t *leaf_blockp)
+	unsigned char **index_entryp, block64_t *leaf_blockp,
+	block64_t root_block)
 {
 	struct super_block *sp = rip->i_sp;
 	struct buf *new_bp, *old_bp;
-	unsigned char *node, *new_node, *index_entry, *new_index;
+	unsigned char *node, *new_node, *new_index;
 	block64_t new_block, xattr_block;
 	u16_t root_entries, leaf_entries, split_entries, right_entries;
 	u32_t split_key;
@@ -624,7 +645,9 @@ extent_depth1_split_leaf(struct inode *rip, unsigned char *root,
 	if (new_block <= sp->s_first_data_block ||
 	    new_block >= sp->s_blocks_count ||
 	    new_block > (((u64_t)1 << 48) - 1) ||
+	    new_block > (((u64_t)~0 >> 1) / sp->s_block_size) ||
 	    extent_is_group_metadata(sp, new_block) ||
+	    new_block == root_block ||
 	    extent_overlaps_tree_node(root, root_entries, new_block, 1) ||
 	    new_block == xattr_block ||
 	    extent_block_is_mapped(node + 12, leaf_entries, new_block)) {
@@ -633,7 +656,7 @@ extent_depth1_split_leaf(struct inode *rip, unsigned char *root,
 	}
 
 	r = extent_depth1_check_siblings(rip, root, root_entries, leaf_index,
-	    node, leaf_entries, TRUE, new_block);
+	    node, leaf_entries, TRUE, new_block, root_block);
 	if (r != OK) {
 		free_block(sp, new_block);
 		return(EIO);
@@ -883,7 +906,8 @@ static int
 extent_depth1_compact(struct inode *rip, unsigned char *root,
 	u16_t *root_entriesp, u16_t root_max, unsigned int *selectedp,
 	struct buf **bpp, unsigned char **nodep, u16_t *entriesp,
-	u16_t leaf_max, unsigned char **index_entryp, block64_t *leaf_blockp)
+	u16_t leaf_max, unsigned char **index_entryp, block64_t *leaf_blockp,
+	int allow_demote)
 {
 	int r;
 
@@ -905,7 +929,7 @@ extent_depth1_compact(struct inode *rip, unsigned char *root,
 			break;
 	}
 
-	if (*root_entriesp == 1 && *selectedp == 0 &&
+	if (allow_demote && *root_entriesp == 1 && *selectedp == 0 &&
 	    *entriesp != 0 && *entriesp <= root_max) {
 		struct super_block *sp = rip->i_sp;
 		u16_t count = *entriesp;
@@ -943,9 +967,13 @@ extent_depth1_compact(struct inode *rip, unsigned char *root,
  * Preflight final inode reclamation for extent trees. truncate_inode() walks
  * logical blocks only up to i_size, so reject depth-one trees with mappings
  * beyond EOF rather than freeing the inode while leaving those blocks behind.
- * The existing depth-one writer removes each external leaf when its final
- * extent is freed.
+ * The depth-one leaf writer removes each external leaf when its final
+ * extent is freed; the depth-two wrapper also reclaims its index block when
+ * the final child leaf disappears.
  */
+static int extent_depth2_preflight_single_root(struct inode *,
+	block64_t *, int);
+
 int
 ext4_extent_can_truncate(struct inode *rip)
 {
@@ -984,7 +1012,12 @@ ext4_extent_can_truncate(struct inode *rip)
 	if (extent_get16(root) != EXT4_EXTENT_MAGIC)
 		return(EIO);
 	depth = extent_get16(root + 6);
-	if (depth > 1)
+	if (depth == 2) {
+		block64_t parent_block;
+		return(extent_depth2_preflight_single_root(rip, &parent_block,
+		    TRUE));
+	}
+	if (depth > 2)
 		return(EOPNOTSUPP);
 
 	root_entries = extent_get16(root + 2);
@@ -1146,7 +1179,7 @@ ext4_extent_can_truncate(struct inode *rip)
 		 * siblings, and between every pair of siblings.
 		 */
 		if (i == 0 && extent_depth1_check_siblings(rip, root,
-		    root_entries, 0, node, leaf_entries, FALSE, 0) != OK) {
+		    root_entries, 0, node, leaf_entries, FALSE, 0, NO_BLOCK) != OK) {
 			put_block(bp);
 			return(EIO);
 		}
@@ -1288,10 +1321,11 @@ ext4_release_xattr_block(struct inode *rip)
 }
 
 static int
-extent_depth1_write_map(struct inode *rip, off_t position,
-	block64_t new_wblock, int op)
+extent_depth1_write_map_root(struct inode *rip, off_t position,
+	block64_t new_wblock, int op, unsigned char *root,
+	int external_root, block64_t root_block)
 {
-	unsigned char *root, *index_entry, *node, *entry;
+	unsigned char *index_entry, *node, *entry;
 	struct ext4_extent ex, previous, next;
 	struct buf *bp;
 	block64_t leaf_block, child, xattr_block;
@@ -1311,7 +1345,6 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	if (logical64 > UINT32_MAX)
 		return(EFBIG);
 	logical = (u32_t)logical64;
-	root = (unsigned char *)rip->i_block;
 
 	if (extent_get16(root) != EXT4_EXTENT_MAGIC)
 		return(EIO);
@@ -1319,7 +1352,10 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	root_max = extent_get16(root + 4);
 	depth = extent_get16(root + 6);
 	if (depth != 1 || root_max == 0 ||
-	    root_max > (sizeof(rip->i_block) - 12) / 12 ||
+	    (!external_root &&
+	    root_max > (sizeof(rip->i_block) - 12) / 12) ||
+	    (external_root &&
+	    root_max > (rip->i_sp->s_block_size - 12) / 12) ||
 	    root_entries == 0 || root_entries > root_max)
 		return(EIO);
 
@@ -1335,6 +1371,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		if (child <= rip->i_sp->s_first_data_block ||
 		    child >= rip->i_sp->s_blocks_count ||
 		    extent_is_group_metadata(rip->i_sp, child) ||
+		    child == root_block ||
 		    (i != 0 && root_key <= previous_end))
 			return(EIO);
 		if (i == 0 || root_key <= logical)
@@ -1398,6 +1435,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		    ex.length) ||
 		    extent_overlaps_tree_node(root, root_entries, ex.physical,
 		    ex.length) ||
+		    (root_block != NO_BLOCK &&
+		    extent_ranges_overlap(ex.physical, ex.length, root_block, 1)) ||
 		    (u64_t)ex.logical + ex.length >
 		    ((u64_t)UINT32_MAX + 1) ||
 		    (i != 0 && ex.logical < previous_end)) {
@@ -1441,6 +1480,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	    new_wblock >= rip->i_sp->s_blocks_count ||
 	    new_wblock > (((u64_t)1 << 48) - 1) ||
 	    extent_is_group_metadata(rip->i_sp, new_wblock) ||
+	    new_wblock == root_block ||
 	    extent_overlaps_tree_node(root, root_entries, new_wblock, 1) ||
 	    new_wblock == xattr_block ||
 	    extent_block_is_mapped(node + 12, leaf_entries, new_wblock))) {
@@ -1450,7 +1490,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 
 	/* Verify cross-leaf physical ownership before any mutation or free. */
 	if (extent_depth1_check_siblings(rip, root, root_entries, leaf_index,
-	    node, leaf_entries, !(op & WMAP_FREE), new_wblock) != OK) {
+	    node, leaf_entries, !(op & WMAP_FREE), new_wblock,
+	    root_block) != OK) {
 		put_block(bp);
 		return(EIO);
 	}
@@ -1502,7 +1543,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		    leaf_entries >= leaf_max) {
 			r = extent_depth1_split_leaf(rip, root, &root_entries,
 			    root_max, &leaf_index, logical, &bp, &node,
-			    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+			    &leaf_entries, leaf_max, &index_entry, &leaf_block,
+			    root_block);
 			if (r != OK) {
 				put_block(bp);
 				return(r);
@@ -1551,7 +1593,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		if (!free_leaf) {
 			r = extent_depth1_compact(rip, root, &root_entries,
 			    root_max, &leaf_index, &bp, &node, &leaf_entries,
-			    leaf_max, &index_entry, &leaf_block);
+			    leaf_max, &index_entry, &leaf_block, !external_root);
 			if (r != OK) {
 				if (bp != NULL)
 					put_block(bp);
@@ -1572,7 +1614,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 			    (root_entries - leaf_index - 1) * 12);
 			root_entries--;
 			extent_put16(root + 2, root_entries);
-			if (root_entries == 0)
+			if (root_entries == 0 && !external_root)
 				extent_put16(root + 6, 0);
 			free_block(rip->i_sp, leaf_block);
 			rip->i_blocks -= rip->i_sp->s_sectors_in_block;
@@ -1616,7 +1658,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 						r = extent_depth1_compact(rip, root,
 						    &root_entries, root_max, &leaf_index,
 						    &bp, &node, &leaf_entries, leaf_max,
-						    &index_entry, &leaf_block);
+						    &index_entry, &leaf_block, !external_root);
 						if (r == OK && bp != NULL)
 							put_block(bp);
 						else if (bp != NULL)
@@ -1646,7 +1688,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		    leaf_entries > leaf_max - 2)) {
 			r = extent_depth1_split_leaf(rip, root, &root_entries,
 			    root_max, &leaf_index, logical, &bp, &node,
-			    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+			    &leaf_entries, leaf_max, &index_entry, &leaf_block,
+			    root_block);
 			if (r != OK) {
 				put_block(bp);
 				return(r);
@@ -1705,7 +1748,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		extent_put16(node + 2, leaf_entries);
 		r = extent_depth1_compact(rip, root, &root_entries,
 		    root_max, &leaf_index, &bp, &node, &leaf_entries,
-		    leaf_max, &index_entry, &leaf_block);
+		    leaf_max, &index_entry, &leaf_block, !external_root);
 		if (r != OK) {
 			if (bp != NULL)
 				put_block(bp);
@@ -1765,7 +1808,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 			extent_put16(node + 2, leaf_entries);
 			r = extent_depth1_compact(rip, root, &root_entries,
 			    root_max, &leaf_index, &bp, &node, &leaf_entries,
-			    leaf_max, &index_entry, &leaf_block);
+			    leaf_max, &index_entry, &leaf_block, !external_root);
 			if (r != OK) {
 				if (bp != NULL)
 					put_block(bp);
@@ -1795,7 +1838,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 				extent_put32(index_entry, logical);
 			r = extent_depth1_compact(rip, root, &root_entries,
 			    root_max, &leaf_index, &bp, &node, &leaf_entries,
-			    leaf_max, &index_entry, &leaf_block);
+			    leaf_max, &index_entry, &leaf_block, !external_root);
 			if (r != OK) {
 				if (bp != NULL)
 					put_block(bp);
@@ -1814,7 +1857,8 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	if (leaf_entries >= leaf_max) {
 		r = extent_depth1_split_leaf(rip, root, &root_entries,
 		    root_max, &leaf_index, logical, &bp, &node,
-		    &leaf_entries, leaf_max, &index_entry, &leaf_block);
+		    &leaf_entries, leaf_max, &index_entry, &leaf_block,
+		    root_block);
 		if (r != OK) {
 			put_block(bp);
 			return(r);
@@ -1839,7 +1883,7 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 		extent_put32(index_entry, logical);
 	r = extent_depth1_compact(rip, root, &root_entries, root_max,
 	    &leaf_index, &bp, &node, &leaf_entries, leaf_max,
-	    &index_entry, &leaf_block);
+	    &index_entry, &leaf_block, !external_root);
 	if (r != OK) {
 		if (bp != NULL)
 			put_block(bp);
@@ -1853,6 +1897,316 @@ extent_depth1_write_map(struct inode *rip, off_t position,
 	rip->i_dirt = IN_DIRTY;
 	return(OK);
 }
+
+
+
+/*
+ * Validate the currently supported depth-two layout before modifying it.
+ * The inode root must have exactly one child index node. This keeps every
+ * leaf covered by the existing depth-one sibling/alias validator while
+ * allowing that index node to contain the full block-sized fanout.
+ */
+static int
+extent_depth2_preflight_single_root(struct inode *rip,
+	block64_t *parent_blockp, int for_truncate)
+{
+	struct super_block *sp = rip->i_sp;
+	unsigned char *root, *parent_node, *leaf_node;
+	struct buf *parent_bp, *leaf_bp, *first_bp;
+	struct ext4_extent ex, prior;
+	const unsigned char *root_index, *leaf_index;
+	block64_t parent_block, leaf_block, xattr_block;
+	u64_t owned_blocks, previous_end, next_key, file_blocks = 0;
+	u32_t root_key, leaf_key;
+	u16_t root_entries, root_max, parent_entries, parent_max;
+	u16_t leaf_entries, leaf_max;
+	unsigned int i, j, k;
+
+	root = (unsigned char *)rip->i_block;
+	if (extent_get16(root) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(root + 6) != 2)
+		return(EIO);
+	root_entries = extent_get16(root + 2);
+	root_max = extent_get16(root + 4);
+	if (root_max == 0 ||
+	    root_max > (sizeof(rip->i_block) - 12) / 12 ||
+	    root_entries == 0 || root_entries > root_max)
+		return(EIO);
+	/* Multiple top-level subtrees need cross-parent alias validation. */
+	if (root_entries != 1)
+		return(EOPNOTSUPP);
+	if (sp->s_block_size <= 12 || sp->s_sectors_in_block == 0)
+		return(EIO);
+	if (for_truncate) {
+		if (rip->i_size < 0)
+			return(EIO);
+		file_blocks = (u64_t)rip->i_size / sp->s_block_size;
+		if ((u64_t)rip->i_size % sp->s_block_size != 0)
+			file_blocks++;
+		if (file_blocks > (u64_t)UINT32_MAX + 1)
+			return(EOPNOTSUPP);
+	}
+
+	xattr_block = extent_inode_xattr_block(rip);
+	if (extent_validate_xattr_block(rip, xattr_block) != OK)
+		return(EIO);
+	root_index = root + 12;
+	root_key = extent_get32(root_index);
+	parent_block = ((u64_t)extent_get16(root_index + 8) << 32) |
+	    extent_get32(root_index + 4);
+	if (parent_block <= sp->s_first_data_block ||
+	    parent_block >= sp->s_blocks_count ||
+	    parent_block > (((u64_t)~0 >> 1) / sp->s_block_size) ||
+	    extent_is_group_metadata(sp, parent_block) ||
+	    parent_block == xattr_block)
+		return(EIO);
+
+	parent_bp = get_block(rip->i_dev, parent_block, NORMAL);
+	if (parent_bp == NULL)
+		return(EIO);
+	parent_node = (unsigned char *)b_data(parent_bp);
+	if (extent_get16(parent_node) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(parent_node + 6) != 1) {
+		put_block(parent_bp);
+		return(EIO);
+	}
+	parent_entries = extent_get16(parent_node + 2);
+	parent_max = extent_get16(parent_node + 4);
+	if (parent_max < 4 ||
+	    parent_max > (sp->s_block_size - 12) / 12 ||
+	    parent_entries == 0 || parent_entries > parent_max) {
+		put_block(parent_bp);
+		return(EIO);
+	}
+
+	owned_blocks = 1; /* The external depth-one index node. */
+	previous_end = 0;
+	for (i = 0; i < parent_entries; i++) {
+		u64_t logical_end;
+
+		leaf_index = parent_node + 12 + i * 12;
+		leaf_key = extent_get32(leaf_index);
+		leaf_block = ((u64_t)extent_get16(leaf_index + 8) << 32) |
+		    extent_get32(leaf_index + 4);
+		if (leaf_block <= sp->s_first_data_block ||
+		    leaf_block >= sp->s_blocks_count ||
+		    leaf_block > (((u64_t)~0 >> 1) / sp->s_block_size) ||
+		    leaf_block == parent_block || leaf_block == xattr_block ||
+		    extent_is_group_metadata(sp, leaf_block) ||
+		    (i != 0 && leaf_key <= extent_get32(
+		    parent_node + 12 + (i - 1) * 12))) {
+			put_block(parent_bp);
+			return(EIO);
+		}
+		for (j = 0; j < i; j++) {
+			const unsigned char *prior_index =
+			    parent_node + 12 + j * 12;
+			block64_t prior_leaf =
+			    ((u64_t)extent_get16(prior_index + 8) << 32) |
+			    extent_get32(prior_index + 4);
+			if (prior_leaf == leaf_block) {
+				put_block(parent_bp);
+				return(EIO);
+			}
+		}
+
+		leaf_bp = get_block(rip->i_dev, leaf_block, NORMAL);
+		if (leaf_bp == NULL) {
+			put_block(parent_bp);
+			return(EIO);
+		}
+		leaf_node = (unsigned char *)b_data(leaf_bp);
+		if (extent_get16(leaf_node) != EXT4_EXTENT_MAGIC ||
+		    extent_get16(leaf_node + 6) != 0) {
+			put_block(leaf_bp);
+			put_block(parent_bp);
+			return(EIO);
+		}
+		leaf_entries = extent_get16(leaf_node + 2);
+		leaf_max = extent_get16(leaf_node + 4);
+		if (leaf_max < 4 ||
+		    leaf_max > (sp->s_block_size - 12) / 12 ||
+		    leaf_entries == 0 || leaf_entries > leaf_max) {
+			put_block(leaf_bp);
+			put_block(parent_bp);
+			return(EIO);
+		}
+		extent_get(leaf_node + 12, &ex);
+		if (ex.logical != leaf_key ||
+		    (i == 0 && leaf_key != root_key)) {
+			put_block(leaf_bp);
+			put_block(parent_bp);
+			return(EIO);
+		}
+
+		previous_end = 0;
+		next_key = (u64_t)UINT32_MAX + 1;
+		if (i + 1 < parent_entries)
+			next_key = extent_get32(parent_node + 12 +
+			    (i + 1) * 12);
+		for (j = 0; j < leaf_entries; j++) {
+			extent_get(leaf_node + 12 + j * 12, &ex);
+			logical_end = (u64_t)ex.logical + ex.length;
+			if (ex.length == 0 ||
+			    ex.physical <= sp->s_first_data_block ||
+			    ex.physical >= sp->s_blocks_count ||
+			    ex.length > sp->s_blocks_count - ex.physical ||
+			    extent_overlaps_group_metadata(sp, ex.physical,
+			    ex.length) ||
+			    extent_overlaps_tree_node(parent_node, parent_entries,
+			    ex.physical, ex.length) ||
+			    extent_ranges_overlap(ex.physical, ex.length,
+			    parent_block, 1) ||
+			    (xattr_block != 0 &&
+			    xattr_block >= ex.physical &&
+			    xattr_block - ex.physical < ex.length) ||
+			    logical_end > ((u64_t)UINT32_MAX + 1) ||
+			    (for_truncate && logical_end > file_blocks) ||
+			    (j != 0 && ex.logical < previous_end) ||
+			    logical_end > next_key) {
+				put_block(leaf_bp);
+				put_block(parent_bp);
+				return(EIO);
+			}
+			for (k = 0; k < j; k++) {
+				extent_get(leaf_node + 12 + k * 12, &prior);
+				if (extent_ranges_overlap(ex.physical, ex.length,
+				    prior.physical, prior.length)) {
+					put_block(leaf_bp);
+					put_block(parent_bp);
+					return(EIO);
+				}
+			}
+			if (owned_blocks > ~(u64_t)0 - ex.length) {
+				put_block(leaf_bp);
+				put_block(parent_bp);
+				return(EIO);
+			}
+			owned_blocks += ex.length;
+			previous_end = logical_end;
+		}
+		if (owned_blocks == ~(u64_t)0) {
+			put_block(leaf_bp);
+			put_block(parent_bp);
+			return(EIO);
+		}
+		owned_blocks++; /* One external depth-zero leaf. */
+		put_block(leaf_bp);
+	}
+
+	/* Catch aliases between distinct leaves, including untouched siblings. */
+	first_bp = get_block(rip->i_dev,
+	    ((u64_t)extent_get16(parent_node + 20) << 32) |
+	    extent_get32(parent_node + 16), NORMAL);
+	if (first_bp == NULL) {
+		put_block(parent_bp);
+		return(EIO);
+	}
+	leaf_node = (unsigned char *)b_data(first_bp);
+	leaf_entries = extent_get16(leaf_node + 2);
+	if (extent_depth1_check_siblings(rip, parent_node, parent_entries, 0,
+	    leaf_node, leaf_entries, FALSE, 0, parent_block) != OK) {
+		put_block(first_bp);
+		put_block(parent_bp);
+		return(EIO);
+	}
+	put_block(first_bp);
+	put_block(parent_bp);
+
+	if (owned_blocks > ~(u64_t)0 / sp->s_sectors_in_block ||
+	    owned_blocks * sp->s_sectors_in_block != rip->i_blocks)
+		return(EIO);
+
+	*parent_blockp = parent_block;
+	return(OK);
+}
+
+/*
+ * Update the leaf set beneath a single depth-two root index. The shared
+ * depth-one writer can then split/merge leaves in the external index node.
+ * If the external index becomes small enough, copy it back into the inode
+ * root and release the now-redundant index block.
+ */
+static int
+extent_depth2_write_map_single(struct inode *rip, off_t position,
+	block64_t new_wblock, int op)
+{
+	unsigned char *root, *parent_node;
+	struct buf *parent_bp;
+	block64_t parent_block;
+	u16_t root_max, parent_entries;
+	int r;
+
+	root = (unsigned char *)rip->i_block;
+	root_max = extent_get16(root + 4);
+	r = extent_depth2_preflight_single_root(rip, &parent_block, FALSE);
+	if (r != OK)
+		return(r);
+
+	parent_bp = get_block(rip->i_dev, parent_block, NORMAL);
+	if (parent_bp == NULL)
+		return(EIO);
+	parent_node = (unsigned char *)b_data(parent_bp);
+	r = extent_depth1_write_map_root(rip, position, new_wblock, op,
+	    parent_node, TRUE, parent_block);
+	if (r != OK) {
+		put_block(parent_bp);
+		return(r);
+	}
+
+	parent_entries = extent_get16(parent_node + 2);
+	if (parent_entries == 0) {
+		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
+			put_block(parent_bp);
+			return(EIO);
+		}
+		memset(root + 12, 0, sizeof(rip->i_block) - 12);
+		extent_put16(root + 2, 0);
+		extent_put16(root + 6, 0);
+		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
+		rip->i_dirt = IN_DIRTY;
+		put_block(parent_bp);
+		free_block(rip->i_sp, parent_block);
+		return(OK);
+	}
+
+	/* The parent index block is no longer needed after demotion. */
+	if (parent_entries <= root_max) {
+		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
+			put_block(parent_bp);
+			return(EIO);
+		}
+		/* Collapse depth two back to depth one in the inode root. */
+		memset(root, 0, sizeof(rip->i_block));
+		extent_put16(root, EXT4_EXTENT_MAGIC);
+		extent_put16(root + 2, parent_entries);
+		extent_put16(root + 4, root_max);
+		extent_put16(root + 6, 1);
+		memcpy(root + 12, parent_node + 12, parent_entries * 12);
+		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
+		rip->i_dirt = IN_DIRTY;
+		put_block(parent_bp);
+		free_block(rip->i_sp, parent_block);
+		return(OK);
+	}
+
+	/* The external index remains attached; persist its modified records. */
+	extent_put32(root + 12, extent_get32(parent_node + 12));
+	lmfs_markdirty(parent_bp);
+	put_block(parent_bp);
+	rip->i_dirt = IN_DIRTY;
+	return(OK);
+}
+
+
+static int
+extent_depth1_write_map(struct inode *rip, off_t position,
+	block64_t new_wblock, int op)
+{
+	return(extent_depth1_write_map_root(rip, position, new_wblock, op,
+	    (unsigned char *)rip->i_block, FALSE, NO_BLOCK));
+}
+
 
 int
 ext4_extent_write_map(struct inode *rip, off_t position,
@@ -1878,13 +2232,21 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	logical = (u32_t)logical64;
 
 	/*
-	 * The inode root may point to depth-one external leaves.  Support
-	 * in-place edits in those leaves; deeper trees still need rebalancing.
+	 * The inode root may point to depth-one leaves or to a single
+	 * depth-one index node containing depth-zero leaves.
 	 */
 	if (extent_get16((unsigned char *)rip->i_block) ==
-	    EXT4_EXTENT_MAGIC &&
-	    extent_get16((unsigned char *)rip->i_block + 6) == 1)
-		return(extent_depth1_write_map(rip, position, new_wblock, op));
+	    EXT4_EXTENT_MAGIC) {
+		u16_t depth = extent_get16((unsigned char *)rip->i_block + 6);
+		if (depth == 1)
+			return(extent_depth1_write_map(rip, position,
+			    new_wblock, op));
+		if (depth == 2)
+			return(extent_depth2_write_map_single(rip, position,
+			    new_wblock, op));
+		if (depth > 2)
+			return(EOPNOTSUPP);
+	}
 
 	if ((r = extent_root(rip, &root, &entries, &max_entries)) != OK)
 		return(r);
