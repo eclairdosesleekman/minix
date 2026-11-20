@@ -428,7 +428,7 @@ ext4_indirect_map(struct inode *rip, u64_t block_pos)
 {
 	struct buf *bp;
 	block64_t block, data_block;
-	block64_t visited[EXT2_N_BLOCKS];
+	block64_t visited[EXT2_N_BLOCKS] = { 0 };
 	unsigned int visited_count = 0;
 	u64_t excess;
 	unsigned int addresses, addresses2;
