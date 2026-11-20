@@ -256,7 +256,7 @@ int read_super(register struct super_block *sp)
 	int r, is64;
 	static struct group_desc *group_descs;
 	u32_t blocks_hi, reserved_hi, free_hi;
-	u16_t raw_desc_size;
+	u16_t raw_desc_size, raw_reserved_gdt_blocks;
 	u64_t groups64, gdt_position;
 	size_t gd_size, classic_gdt_size, off, chunk;
 	unsigned int classic_gdb_count, gdb;
@@ -382,9 +382,11 @@ int read_super(register struct super_block *sp)
 	    sp->s_desc_per_block;
 
 	/* ext4 sparse_super2 stores the two backup-group numbers at 0x24c. */
-	memcpy(&raw_desc_size, (const unsigned char *)ondisk_superblock + 0xCE,
-	    sizeof(raw_desc_size));
-	sp->s_reserved_gdt_blocks = (u16_t)conv2(le_CPU, raw_desc_size);
+	memcpy(&raw_reserved_gdt_blocks,
+	    (const unsigned char *)ondisk_superblock + 0xCE,
+	    sizeof(raw_reserved_gdt_blocks));
+	sp->s_reserved_gdt_blocks =
+	    (u16_t)conv2(le_CPU, raw_reserved_gdt_blocks);
 	sp->s_backup_bgs[0] = ext4_read32(
 	    (const unsigned char *)ondisk_superblock + 0x24C);
 	sp->s_backup_bgs[1] = ext4_read32(
@@ -417,6 +419,8 @@ int read_super(register struct super_block *sp)
 		    HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2))
 			return(EOPNOTSUPP);
 		classic_gdb_count = sp->s_first_meta_bg;
+		if ((u64_t)classic_gdb_count + 1 > sp->s_blocks_per_group)
+			return(EINVAL);
 	} else {
 		classic_gdb_count = sp->s_gdb_count;
 		if ((u64_t)sp->s_gdb_count + sp->s_reserved_gdt_blocks + 1 >
