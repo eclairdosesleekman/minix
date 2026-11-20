@@ -37,7 +37,10 @@ read-write mode.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
-  `..` is skipped in the first directory block.
+  `..` is skipped in the first directory block. The `large_dir` incompat
+  feature is accepted for read-only mounts: internal HTree nodes are skipped
+  as inode-zero dummy directory entries, so lookup and readdir do not depend
+  on the HTree depth.
 - Read-write support for filesystems without a journal and without indexed
   directories. The block and inode bitmaps, group free counters, inode table,
   superblock counters, and data blocks are updated.
@@ -66,8 +69,10 @@ implementation.
   `gdt_csum` without `metadata_csum` is verified for read-only mounts;
   writable mounts reject it because group descriptor checksum updates are
   not implemented.
-- **No indexed directories:** writable mounts reject `dir_index`; htree
-  directory updates are not implemented.
+- **No indexed-directory updates:** writable mounts reject `dir_index`
+  and `large_dir`; htree directory updates are not implemented. Both
+  features can be read on a read-only mount, including multi-level
+  `large_dir` indexes.
 - **Bounded extent-tree mutation:** an external leaf can be edited only when
   the operation fits in its existing slots and does not change its first
   logical-block key. Operations that need a new node, split/rebalance a node,
@@ -199,6 +204,15 @@ Also construct descriptors whose pointers are individually in range but alias
 another group's bitmap or inode-table extent; confirm the mount rejects these
 cross-group overlaps without rejecting a valid `flex_bg` layout.
 Use `e2fsck -fn` on the unmounted image after each test.
+
+For read-only `large_dir` coverage, create an ext4 image with
+`large_dir` and `dir_index` enabled (and `orphan_file` disabled), populate
+a directory on Linux until `debugfs -R 'htree_dump /path' image` reports a
+three-level HTree, then run `e2fsck -fn`. Attach the image to MINIX and verify
+both pathname lookup and `getdents`/directory listing across the full
+directory. Include enough entries to force enumeration across multiple leaf
+and internal-index blocks. Mount read-only; modifying indexed directories is
+still intentionally rejected. Run `e2fsck -fn` again after testing.
 
 The large-file read path should be tested with files larger than 2 TiB on
 4 KiB-block volumes and with sizes near the 32-bit logical-block boundary on
