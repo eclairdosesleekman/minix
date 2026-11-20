@@ -475,7 +475,7 @@ ext4_decode_one_time(const unsigned char *raw, size_t inode_size,
 {
 	u32_t extra;
 
-	*seconds = (time_t)(s32_t)ext4_inode_read32(raw, seconds_offset);
+	*seconds = (time_t)(int32_t)ext4_inode_read32(raw, seconds_offset);
 	*nanoseconds = 0;
 	if (extra_offset == 0 ||
 	    !ext4_inode_extra_fits(extra_isize, inode_size, extra_offset + 4))
@@ -557,7 +557,7 @@ ext4_encode_one_time(time_t seconds, long nanoseconds, int has_extra,
 		if (seconds < (time_t)-2147483648LL ||
 		    seconds > (time_t)2147483647LL || nanoseconds != 0)
 			return(EOVERFLOW);
-		encoded->seconds = (u32_t)(s32_t)seconds;
+		encoded->seconds = (u32_t)(int32_t)seconds;
 		encoded->extra = 0;
 		encoded->has_extra = FALSE;
 		return(OK);
@@ -574,7 +574,7 @@ ext4_encode_one_time(time_t seconds, long nanoseconds, int has_extra,
 	    low_seconds > (time_t)2147483647LL)
 		return(EOVERFLOW);
 
-	encoded->seconds = (u32_t)(s32_t)low_seconds;
+	encoded->seconds = (u32_t)(int32_t)low_seconds;
 	encoded->extra = (epoch & 3U) | ((u32_t)nanoseconds << 2);
 	encoded->has_extra = TRUE;
 	return(OK);
@@ -810,9 +810,9 @@ static void icopy(
 	} else {
 		rip->i_size = (off_t)(u32_t)conv4(norm, dip->i_size);
 	}
-	rip->i_atime   = (time_t)(s32_t)(u32_t)conv4(norm,dip->i_atime);
-	rip->i_ctime   = (time_t)(s32_t)(u32_t)conv4(norm,dip->i_ctime);
-	rip->i_mtime   = (time_t)(s32_t)(u32_t)conv4(norm,dip->i_mtime);
+	rip->i_atime   = (time_t)(int32_t)(u32_t)conv4(norm,dip->i_atime);
+	rip->i_ctime   = (time_t)(int32_t)(u32_t)conv4(norm,dip->i_ctime);
+	rip->i_mtime   = (time_t)(int32_t)(u32_t)conv4(norm,dip->i_mtime);
 	rip->i_dtime   = conv4(norm,dip->i_dtime);
 	rip->i_gid     = (u32_t)conv2(norm, dip->i_gid);
 	if (rip->i_sp->s_is_ext4 &&
