@@ -239,6 +239,8 @@ void put_inode(
  * write it back to the disk immediately. If it has no links, truncate it and
  * return it to the pool of available inodes.
  */
+  int truncate_error, keep_allocated;
+
 
   if (rip == NULL)
 	return;    /* checking here is easier than in caller */
@@ -247,18 +249,31 @@ void put_inode(
 	panic("put_inode: i_count already below 1: %d", rip->i_count);
 
   if (--rip->i_count == 0) {    /* i_count == 0 means no one is using it now */
+	keep_allocated = FALSE;
 	if (rip->i_links_count == NO_LINK &&
 	    (rip->i_sp == NULL || !rip->i_sp->s_rd_only)) {
 		/* i_nlinks == NO_LINK means free the inode. */
 		/* return all the disk blocks */
 
-		/* Ignore errors by truncate_inode in case inode is a block
-		 * special or character special file.
+		/*
+		 * Do not release the inode bitmap if data/extent reclamation fails.
+		 * Doing so would let a new inode reuse blocks still referenced by
+		 * this inode. Special files have no data mapping to truncate.
 		 */
-		(void) truncate_inode(rip, (off_t) 0);
-		/* free inode clears I_TYPE field, since it's used there */
-		rip->i_dirt = IN_DIRTY;
-		free_inode(rip);
+		truncate_error = truncate_inode(rip, (off_t) 0);
+		if (truncate_error != OK &&
+		    (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL &&
+		    (rip->i_mode & I_TYPE) != I_BLOCK_SPECIAL) {
+			printf("ext4: keeping unlinked inode %llu allocated after "
+			    "truncate error %d\n",
+			    (unsigned long long)rip->i_num, truncate_error);
+			keep_allocated = TRUE;
+			rip->i_dirt = IN_DIRTY;
+		} else {
+			/* free inode clears I_TYPE field, since it's used there */
+			rip->i_dirt = IN_DIRTY;
+			free_inode(rip);
+		}
 	}
 
 	rip->i_mountpoint = FALSE;
@@ -269,7 +284,7 @@ void put_inode(
 	if (rip->i_sp == NULL || !rip->i_sp->s_rd_only)
 		discard_preallocated_blocks(rip); /* Return blocks to the filesystem */
 
-	if (rip->i_links_count == NO_LINK) {
+	if (rip->i_links_count == NO_LINK && !keep_allocated) {
 		/* free, put at the front of the LRU list */
 		unhash_inode(rip);
 		rip->i_num = NO_ENTRY;
