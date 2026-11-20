@@ -919,8 +919,8 @@ update_legacy_group_descriptor_checksums(struct super_block *sp,
 
 /*
  * Verify both initialized allocation bitmaps for every block group before
- * the filesystem is made available. Bitmap checksums cover the full bitmap
- * block and use CRC32C(seed, little-endian group number, bitmap bytes).
+ * the filesystem is made available. Bitmap checksums cover the defined bitmap
+ * bytes and use CRC32C(seed, little-endian group number, bitmap bytes).
  *
  * Uninitialized bitmaps are intentionally skipped: the on-disk block is
  * not authoritative until ext4 initializes it from group metadata.
@@ -951,9 +951,9 @@ verify_one_group_bitmap(dev_t dev, struct super_block *sp,
 		return(EINVAL);
 
 	/*
-	 * Linux ext4 hashes only the bitmap's defined bytes. With bigalloc
-	 * disabled, block bitmap size is blocks_per_group / 8; inode bitmap
-	 * size is inodes_per_group / 8.
+	 * Linux ext4 hashes only the bitmap's defined bytes. The block bitmap
+	 * uses clusters_per_group / 8 bytes (equal to blocks_per_group / 8
+	 * without bigalloc); the inode bitmap uses inodes_per_group / 8.
 	 */
 	crc = ext4_crc32c(sp->s_checksum_seed, bitmap, bitmap_bytes);
 
