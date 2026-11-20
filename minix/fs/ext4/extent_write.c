@@ -2165,9 +2165,12 @@ extent_depth2_write_map_single(struct inode *rip, off_t position,
 		return(OK);
 	}
 
-	/* Propagate a changed first logical key from the child index node. */
-	extent_put32(root + 12, extent_get32(parent_node + 12));
+	/* The parent index block is no longer needed after demotion. */
 	if (parent_entries <= root_max) {
+		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
+			put_block(parent_bp);
+			return(EIO);
+		}
 		/* Collapse depth two back to depth one in the inode root. */
 		memset(root, 0, sizeof(rip->i_block));
 		extent_put16(root, EXT4_EXTENT_MAGIC);
@@ -2175,10 +2178,6 @@ extent_depth2_write_map_single(struct inode *rip, off_t position,
 		extent_put16(root + 4, root_max);
 		extent_put16(root + 6, 1);
 		memcpy(root + 12, parent_node + 12, parent_entries * 12);
-		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
-			put_block(parent_bp);
-			return(EIO);
-		}
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
 		rip->i_dirt = IN_DIRTY;
 		put_block(parent_bp);
@@ -2187,6 +2186,7 @@ extent_depth2_write_map_single(struct inode *rip, off_t position,
 	}
 
 	/* The external index remains attached; persist its modified records. */
+	extent_put32(root + 12, extent_get32(parent_node + 12));
 	lmfs_markdirty(parent_bp);
 	put_block(parent_bp);
 	rip->i_dirt = IN_DIRTY;
