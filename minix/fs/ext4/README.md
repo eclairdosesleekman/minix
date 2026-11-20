@@ -271,7 +271,13 @@ implementation.
   directory entry is removed. Multi-entry depth-two roots and depth-three or
   deeper trees remain unsupported for final unlink.
 - Existing restrictions still apply: recovery, MMP, encryption,
-  casefold, bigalloc, inline-data writes, and unsupported feature flags are rejected.
+  casefold, inline-data writes, and unsupported feature flags are rejected.
+  BIGALLOC is supported only on read-only mounts. Its cluster geometry and
+  block-bitmap checksum length are validated, and mapped file-data ranges are
+  checked against every metadata cluster (including backup super/GDT, group
+  bitmaps, inode tables, and external xattr blocks). The allocator and writers
+  remain disabled because they account for individual blocks rather than
+  allocation clusters.
   META_BG is supported only for read-only primary-superblock mounts with
   the traditional `sparse_super` layout (or a superblock in every group).
   Combining `META_BG` with `sparse_super2`, nonzero reserved-GDT expansion
@@ -317,6 +323,23 @@ mke2fs -F -t ext4 -b 4096 \
 ^huge_file,^orphan_file ext4-rw-test.img
 e2fsck -fn ext4-rw-test.img
 ```
+
+A read-only BIGALLOC image exercises cluster-aware bitmap checksums and data
+range validation. For example, a 64 KiB cluster uses sixteen 4 KiB blocks per
+allocation cluster:
+
+```sh
+truncate -s 1G ext4-bigalloc-test.img
+mke2fs -F -t ext4 -b 4096 -C 65536 \
+  -O extent,64bit,bigalloc ext4-bigalloc-test.img
+e2fsck -fn ext4-bigalloc-test.img
+```
+
+Mount the image read-only. Check ordinary reads, holes, unwritten extents, and
+files with multiple extents. A writable mount must fail. Include malformed
+extent pointers aimed at a block adjacent to (but in the same allocation
+cluster as) a superblock/GDT, bitmap, inode table, or xattr block; each read
+must fail with EIO before exposing the reserved cluster.
 
 A separate image exercises the 64 KiB directory-record encoding:
 
