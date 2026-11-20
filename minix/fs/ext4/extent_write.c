@@ -123,6 +123,35 @@ extent_root(struct inode *rip, unsigned char **rootp, u16_t *entriesp,
 	return(OK);
 }
 
+/*
+ * Keep the write-side allocation check in sync with ext4_encode_inode_blocks()
+ * in inode.c.  i_blocks is maintained in 512-byte sectors in memory.  Without
+ * HUGE_FILE the on-disk field is 32 bits; with HUGE_FILE it is 48 bits, and
+ * values above that can be represented as filesystem blocks when aligned.
+ */
+static int
+extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
+{
+	u64_t new_blocks, sectors_per_block;
+
+	if (sectors > ~(u64_t)0 - rip->i_blocks)
+		return(FALSE);
+	new_blocks = rip->i_blocks + sectors;
+
+	if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_HUGE_FILE))
+		return(new_blocks <= 0xffffffffULL);
+
+	if (new_blocks <= 0xffffffffffffULL)
+		return(TRUE);
+
+	sectors_per_block = rip->i_sp->s_sectors_in_block;
+	if (sectors_per_block == 0 ||
+	    new_blocks % sectors_per_block != 0)
+		return(FALSE);
+
+	return(new_blocks / sectors_per_block <= 0xffffffffffffULL);
+}
+
 int
 ext4_extent_write_map(struct inode *rip, off_t position,
 	block64_t new_wblock, int op)
@@ -254,7 +283,13 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if (physical == 0 || physical >= rip->i_sp->s_blocks_count ||
 	    physical > (((u64_t)1 << 48) - 1))
 		return(EIO);
-	if (rip->i_blocks > UINT32_MAX - rip->i_sp->s_sectors_in_block)
+	/*
+	 * The in-core counter is 64 bits.  Do not retain the old ext2
+	 * 32-bit limit here: HUGE_FILE filesystems can store a 48-bit
+	 * sector count (or a 48-bit filesystem-block count).
+	 */
+	if (!extent_i_blocks_can_add(rip,
+	    rip->i_sp->s_sectors_in_block))
 		return(EFBIG);
 
 	/* Locate the sorted insertion point. */
