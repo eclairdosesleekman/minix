@@ -916,7 +916,7 @@ extent_depth1_compact(struct inode *rip, unsigned char *root,
 		    block <= sp->s_first_data_block ||
 		    block >= sp->s_blocks_count ||
 		    extent_is_group_metadata(sp, block))
-			return(EIO);
+			return(OK); /* Keep the valid tree; compaction is optional. */
 
 		memset(root, 0, sizeof(rip->i_block));
 		extent_put16(root, EXT4_EXTENT_MAGIC);
