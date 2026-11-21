@@ -407,6 +407,20 @@ corrupt:
 	return(NO_BLOCK);
 }
 
+
+/*
+ * META_BG descriptor blocks are reserved. Check both extent results and
+ * legacy indirect-map pointer blocks before exposing or reading them.
+ */
+static int
+ext4_meta_bg_reserved_block(struct inode *rip, block64_t block)
+{
+	if (!rip->i_sp->s_is_ext4 || block == NO_BLOCK)
+		return(FALSE);
+	return(ext4_meta_bg_overlaps_descriptor_blocks(rip->i_sp,
+	    block, block + 1));
+}
+
 block64_t read_map(register struct inode *rip, off_t position,
 	int opportunistic)
 {
@@ -432,7 +446,12 @@ block64_t read_map(register struct inode *rip, off_t position,
 			err_code = EIO;
 			return(NO_BLOCK);
 		}
-		return(ext4_extent_map(rip, (u32_t)block_pos));
+		b = ext4_extent_map(rip, (u32_t)block_pos);
+		if (ext4_meta_bg_reserved_block(rip, b)) {
+			err_code = EIO;
+			return(NO_BLOCK);
+		}
+		return(b);
 	}
 
 	if (first_time) {
@@ -444,8 +463,14 @@ block64_t read_map(register struct inode *rip, off_t position,
 		first_time = FALSE;
 	}
 
-	if (block_pos < EXT2_NDIR_BLOCKS)
-		return(rip->i_block[block_pos]);
+	if (block_pos < EXT2_NDIR_BLOCKS) {
+		b = rip->i_block[block_pos];
+		if (ext4_meta_bg_reserved_block(rip, b)) {
+			err_code = EIO;
+			return(NO_BLOCK);
+		}
+		return(b);
+	}
 	if (block_pos < (u64_t)doub_ind_s) {
 		b = rip->i_block[EXT2_NDIR_BLOCKS];
 		mindex = (int)(block_pos - EXT2_NDIR_BLOCKS);
@@ -457,6 +482,10 @@ block64_t read_map(register struct inode *rip, off_t position,
 		if (block_pos >= (u64_t)triple_ind_s) {
 			b = rip->i_block[EXT2_TIND_BLOCK];
 			if (b == NO_BLOCK) return(NO_BLOCK);
+			if (ext4_meta_bg_reserved_block(rip, b)) {
+				err_code = EIO;
+				return(NO_BLOCK);
+			}
 			bp = get_block(rip->i_dev, b, NORMAL);
 			excess = block_pos - triple_ind_s;
 			mindex = (int)(excess / addr_in_block2);
@@ -465,6 +494,10 @@ block64_t read_map(register struct inode *rip, off_t position,
 			excess %= addr_in_block2;
 		}
 		if (b == NO_BLOCK) return(NO_BLOCK);
+		if (ext4_meta_bg_reserved_block(rip, b)) {
+			err_code = EIO;
+			return(NO_BLOCK);
+		}
 		bp = get_block(rip->i_dev, b, iomode);
 		if (bp == NULL) return(NO_BLOCK);
 		mindex = (int)(excess / addr_in_block);
@@ -473,10 +506,18 @@ block64_t read_map(register struct inode *rip, off_t position,
 		mindex = (int)(excess % addr_in_block);
 	}
 	if (b == NO_BLOCK) return(NO_BLOCK);
+	if (ext4_meta_bg_reserved_block(rip, b)) {
+		err_code = EIO;
+		return(NO_BLOCK);
+	}
 	bp = get_block(rip->i_dev, b, iomode);
 	if (bp == NULL) return(NO_BLOCK);
 	b = rd_indir(bp, mindex);
 	put_block(bp);
+	if (ext4_meta_bg_reserved_block(rip, b)) {
+		err_code = EIO;
+		return(NO_BLOCK);
+	}
 	return(b);
 }
 
