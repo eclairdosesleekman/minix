@@ -444,6 +444,40 @@ int read_super(register struct super_block *sp)
 		return(EINVAL);
 	sp->s_sectors_in_block = sp->s_block_size / 512;
 
+	/*
+	 * s_log_frag_size and s_frags_per_group were renamed to
+	 * s_log_cluster_size and s_clusters_per_group by ext4. Without
+	 * BIGALLOC, the cluster is exactly one filesystem block. With
+	 * BIGALLOC, each block bitmap bit denotes a power-of-two run of blocks.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC)) {
+		u32_t cluster_bits;
+		u64_t cluster_ratio, blocks_per_group;
+
+		if (sp->s_log_frag_size < sp->s_log_block_size)
+			return(EINVAL);
+		cluster_bits = sp->s_log_frag_size - sp->s_log_block_size;
+		if (cluster_bits >= 32)
+			return(EINVAL);
+		cluster_ratio = (u64_t)1 << cluster_bits;
+		if (sp->s_frags_per_group == 0 ||
+		    (u64_t)sp->s_frags_per_group >
+		    (u64_t)sp->s_block_size * 8)
+			return(EINVAL);
+		blocks_per_group = (u64_t)sp->s_frags_per_group *
+		    cluster_ratio;
+		if (blocks_per_group != sp->s_blocks_per_group)
+			return(EINVAL);
+		sp->s_cluster_ratio = (u32_t)cluster_ratio;
+		sp->s_clusters_per_group = sp->s_frags_per_group;
+	} else {
+		if (sp->s_log_frag_size != sp->s_log_block_size ||
+		    sp->s_frags_per_group != sp->s_blocks_per_group)
+			return(EINVAL);
+		sp->s_cluster_ratio = 1;
+		sp->s_clusters_per_group = sp->s_blocks_per_group;
+	}
+
 	/* ext4 superblock high block counts (offsets 0x150, 0x154, 0x158). */
 	memcpy(&blocks_hi, (char *)ondisk_superblock + 0x150, 4);
 	memcpy(&reserved_hi, (char *)ondisk_superblock + 0x154, 4);
@@ -1043,9 +1077,9 @@ verify_one_group_bitmap(dev_t dev, struct super_block *sp,
 		return(EINVAL);
 
 	/*
-	 * Linux ext4 hashes only the bitmap's defined bytes. With bigalloc
-	 * disabled, block bitmap size is blocks_per_group / 8; inode bitmap
-	 * size is inodes_per_group / 8.
+	 * Linux ext4 hashes only the bitmap's defined bytes. With BIGALLOC,
+	 * one block-bitmap bit represents one cluster, not one filesystem
+	 * block. Inode bitmap bits continue to represent individual inodes.
 	 */
 	crc = ext4_crc32c(sp->s_csum_seed, bitmap, bitmap_bytes);
 
@@ -1085,7 +1119,7 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 		if (!(flags & EXT4_BG_BLOCK_UNINIT)) {
 			r = verify_one_group_bitmap(dev, sp,
 			    groups[i].block_bitmap, desc, 24, 56,
-			    desc_size, sp->s_blocks_per_group / 8, bitmap);
+			    desc_size, sp->s_clusters_per_group / 8, bitmap);
 			if (r != OK) {
 				printf("ext4: block bitmap checksum mismatch in group %u\n",
 				    i);
@@ -1173,10 +1207,20 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	size_t range_count, n;
 	unsigned int i, previous_group;
 
-	/* A bitmap has one bit per block/inode (bigalloc is not implemented). */
-	if ((u64_t)sp->s_inodes_per_group > (u64_t)sp->s_block_size * 8 ||
-	    (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC) &&
-	    (u64_t)sp->s_blocks_per_group > (u64_t)sp->s_block_size * 8) ||
+	/*
+	 * The block bitmap has one bit per cluster (one block without BIGALLOC)
+	 * and the inode bitmap has one bit per inode. Both must fit in one
+	 * filesystem block. The cluster geometry was validated from the
+	 * superblock before group descriptors are interpreted.
+	 */
+	if ((u64_t)sp->s_inodes_per_group >
+	    (u64_t)sp->s_block_size * 8 ||
+	    sp->s_clusters_per_group == 0 ||
+	    (u64_t)sp->s_clusters_per_group >
+	    (u64_t)sp->s_block_size * 8 ||
+	    sp->s_cluster_ratio == 0 ||
+	    (u64_t)sp->s_clusters_per_group * sp->s_cluster_ratio !=
+	    sp->s_blocks_per_group ||
 	    sp->s_itb_per_group == 0)
 		return(EINVAL);
 
