@@ -90,6 +90,8 @@ int read_super(struct super_block *sp);
 void write_super(struct super_block *sp);
 int ext4_update_bitmap_checksum(struct super_block *sp, unsigned int group,
 	const unsigned char *bitmap, int inode_bitmap);
+int ext4_init_group_bitmap(struct super_block *sp, unsigned int group,
+	struct buf *bp, int inode_bitmap);
 int ext4_check_rw_mount(struct super_block *sp);
 struct group_desc* get_group_desc(unsigned int bnum);
 
