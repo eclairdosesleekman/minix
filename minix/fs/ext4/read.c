@@ -336,7 +336,10 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 					    physical_lo;
 					physical += (u64_t)logical - first;
 					if (physical == 0 ||
-					    physical >= rip->i_sp->s_blocks_count)
+					    physical >= rip->i_sp->s_blocks_count ||
+					    ext4_meta_bg_overlaps_descriptor_blocks(
+					    rip->i_sp, (block64_t)physical,
+					    (block64_t)physical + 1))
 						goto corrupt;
 					if (bp != NULL)
 						put_block(bp);
@@ -380,7 +383,9 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 				found = TRUE;
 			}
 			if (!found || child == 0 ||
-			    child >= rip->i_sp->s_blocks_count)
+			    child >= rip->i_sp->s_blocks_count ||
+			    ext4_meta_bg_overlaps_descriptor_blocks(rip->i_sp,
+			    child, child + 1))
 				goto corrupt;
 			if (bp != NULL) {
 				put_block(bp);
