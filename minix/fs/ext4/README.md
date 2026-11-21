@@ -139,6 +139,13 @@ read-write mode.
   block and inode bitmaps, group free counters, inode table, superblock
   counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
+- Extent nodes are validated across all records in each traversed node. Leaf
+  entries must be sorted and non-overlapping, fit in the 32-bit logical-block
+  address space, and map wholly within non-reserved filesystem blocks. Index
+  keys must be strictly increasing and every child pointer must reference an
+  in-range non-reserved block. Empty external nodes are rejected; an empty
+  inline root remains valid. Sibling subtrees are checked when traversed rather
+  than eagerly scanned at mount.
 - Inline extent roots and existing external extent-tree leaves can be updated
   in place while allocating, writing, and truncating files. External-leaf
   updates are bounded: they must preserve the leaf's first logical-block key
