@@ -1261,7 +1261,7 @@ ext4_initialize_uninit_bitmaps(struct super_block *sp)
 	struct group_desc *gd;
 	unsigned char *bitmap;
 	unsigned char *desc;
-	u64_t group_first, group_first_ino;
+	u64_t group_first, group_first_ino, group_blocks_left;
 	unsigned int group, bit, bitmap_bits, valid_bits;
 	unsigned int free_count, first_ino;
 	u16_t flags, new_flags;
@@ -1311,9 +1311,9 @@ ext4_initialize_uninit_bitmaps(struct super_block *sp)
 				r = EIO;
 				goto out;
 			}
-			valid_bits = sp->s_blocks_count - group_first;
-			if (valid_bits > sp->s_blocks_per_group)
-				valid_bits = sp->s_blocks_per_group;
+			group_blocks_left = sp->s_blocks_count - group_first;
+			valid_bits = group_blocks_left > sp->s_blocks_per_group ?
+			    sp->s_blocks_per_group : (unsigned int)group_blocks_left;
 
 			memset(bitmap, 0, sp->s_block_size);
 			free_count = 0;
