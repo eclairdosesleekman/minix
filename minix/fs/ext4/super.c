@@ -221,7 +221,7 @@ ext4_data_overlaps_reserved_clusters(struct super_block *sp, block64_t block)
 {
 	block64_t cluster_first, cluster_end;
 	u64_t cluster_index, start, end;
-	unsigned int lo, hi, mid;
+	u64_t lo, hi, mid;
 
 	if (block == NO_BLOCK)
 		return(FALSE);
@@ -1376,7 +1376,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	 * data-cluster checks. They remain valid for the life of this mount.
 	 */
 	sp->s_metadata_ranges = ranges;
-	sp->s_metadata_range_count = (u32_t)range_count;
+	sp->s_metadata_range_count = (u64_t)range_count;
 	return(OK);
 }
 
