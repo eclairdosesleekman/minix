@@ -126,6 +126,26 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 		if (bp == NULL &&
 		    max_entries > (sizeof(rip->i_block) - 12) / 12)
 			goto corrupt;
+
+		/*
+		 * External extent nodes store their checksum immediately after the
+		 * maximum-size entry array, not after the used entries. Validate
+		 * every node in the path before allowing an in-place edit.
+		 */
+		if (bp != NULL &&
+		    HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM)) {
+			size_t tail_offset;
+			u32_t stored, calculated;
+
+			tail_offset = 12 + (size_t)max_entries * 12;
+			if (tail_offset > node_size - sizeof(stored))
+				goto corrupt;
+			stored = extent_get32(node + tail_offset);
+			calculated = ext4_crc32c(ext4_inode_csum_seed(rip),
+			    node, tail_offset);
+			if (stored != calculated)
+				goto corrupt;
+		}
 		/*
 		 * Each index entry records the first logical block in its child.
 		 * Check that the selected child really starts at that key.
@@ -228,9 +248,26 @@ corrupt:
 }
 
 static void
-extent_release_leaf(struct buf *bp, int dirty)
+extent_release_leaf(struct inode *rip, struct buf *bp, int dirty)
 {
 	if (bp != NULL) {
+		if (dirty &&
+		    HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM)) {
+			unsigned char *node;
+			size_t tail_offset;
+			u16_t max_entries;
+			u32_t checksum;
+
+			node = (unsigned char *)b_data(bp);
+			max_entries = extent_get16(node + 4);
+			tail_offset = 12 + (size_t)max_entries * 12;
+			if (tail_offset > rip->i_sp->s_block_size -
+			    sizeof(checksum))
+				panic("ext4: invalid extent checksum tail");
+			checksum = ext4_crc32c(ext4_inode_csum_seed(rip),
+			    node, tail_offset);
+			extent_put32(node + tail_offset, checksum);
+		}
 		if (dirty)
 			lmfs_markdirty(bp);
 		put_block(bp);
@@ -309,14 +346,14 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		u64_t block_to_free;
 
 		if (i == entries) {
-			extent_release_leaf(leaf_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(OK);	/* A hole needs no work. */
 		}
 
 		offset = logical - ex.logical;
 		block_to_free = ex.physical + offset;
 		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
-			extent_release_leaf(leaf_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(EIO);
 		}
 		/*
@@ -324,13 +361,13 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		 * also changes its parent's index key.  Do not leave a stale key.
 		 */
 		if (leaf_bp != NULL && i == 0 && offset == 0) {
-			extent_release_leaf(leaf_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(EOPNOTSUPP);
 		}
 		/* Splitting a middle extent consumes one additional leaf slot. */
 		if (offset != 0 && offset != ex.length - 1 &&
 		    entries >= max_entries) {
-			extent_release_leaf(leaf_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(EFBIG);
 		}
 
@@ -359,7 +396,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		extent_put16(root + 2, entries);
 		free_block(rip->i_sp, block_to_free);
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
-		extent_release_leaf(leaf_bp, TRUE);
+		extent_release_leaf(rip, leaf_bp, TRUE);
 		rip->i_dirt = IN_DIRTY;
 		return(OK);
 	}
@@ -373,7 +410,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		u64_t old_physical;
 
 		if (!ex.unwritten) {
-			extent_release_leaf(leaf_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(EEXIST);
 		}
 		offset = logical - ex.logical;
@@ -382,7 +419,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			extent_put(entry, logical, old_physical, 1, FALSE);
 		} else if (offset == 0) {
 			if (entries >= max_entries) {
-				extent_release_leaf(leaf_bp, FALSE);
+				extent_release_leaf(rip, leaf_bp, FALSE);
 				return(EFBIG);
 			}
 			memmove(entry + 12, entry,
@@ -393,7 +430,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			entries++;
 		} else if (offset == ex.length - 1) {
 			if (entries >= max_entries) {
-				extent_release_leaf(leaf_bp, FALSE);
+				extent_release_leaf(rip, leaf_bp, FALSE);
 				return(EFBIG);
 			}
 			extent_put(entry, ex.logical, ex.physical, ex.length - 1,
@@ -404,7 +441,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			entries++;
 		} else {
 			if (entries > max_entries - 2) {
-				extent_release_leaf(leaf_bp, FALSE);
+				extent_release_leaf(rip, leaf_bp, FALSE);
 				return(EFBIG);
 			}
 			memmove(entry + 36, entry + 12,
@@ -417,7 +454,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		}
 		extent_put16(root + 2, entries);
 		free_block(rip->i_sp, new_wblock);
-		extent_release_leaf(leaf_bp, TRUE);
+		extent_release_leaf(rip, leaf_bp, TRUE);
 		rip->i_dirt = IN_DIRTY;
 		return(OK);
 	}
@@ -425,7 +462,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	physical = (u64_t)new_wblock;
 	if (physical == 0 || physical >= rip->i_sp->s_blocks_count ||
 	    physical > (((u64_t)1 << 48) - 1)) {
-		extent_release_leaf(leaf_bp, FALSE);
+		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EIO);
 	}
 	/*
@@ -435,7 +472,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	 */
 	if (!extent_i_blocks_can_add(rip,
 	    rip->i_sp->s_sectors_in_block)) {
-		extent_release_leaf(leaf_bp, FALSE);
+		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EFBIG);
 	}
 
@@ -454,7 +491,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	    entries != 0) {
 		extent_get(root + 12, &next);
 		if (logical < next.logical) {
-			extent_release_leaf(leaf_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(EOPNOTSUPP);
 		}
 	}
@@ -485,7 +522,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    new_length, FALSE);
 			extent_put16(root + 2, entries);
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
-			extent_release_leaf(leaf_bp, TRUE);
+			extent_release_leaf(rip, leaf_bp, TRUE);
 			rip->i_dirt = IN_DIRTY;
 			return(OK);
 		}
@@ -502,14 +539,14 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			extent_put(entry, logical, physical, next.length + 1,
 			    FALSE);
 			rip->i_blocks += rip->i_sp->s_sectors_in_block;
-			extent_release_leaf(leaf_bp, TRUE);
+			extent_release_leaf(rip, leaf_bp, TRUE);
 			rip->i_dirt = IN_DIRTY;
 			return(OK);
 		}
 	}
 
 	if (entries >= max_entries) {
-		extent_release_leaf(leaf_bp, FALSE);
+		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EFBIG);
 	}
 
@@ -519,7 +556,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	extent_put(entry, logical, physical, 1, FALSE);
 	extent_put16(root + 2, entries + 1);
 	rip->i_blocks += rip->i_sp->s_sectors_in_block;
-	extent_release_leaf(leaf_bp, TRUE);
+	extent_release_leaf(rip, leaf_bp, TRUE);
 	rip->i_dirt = IN_DIRTY;
 	return(OK);
 }

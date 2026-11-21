@@ -229,6 +229,9 @@ static block64_t alloc_block_bit(struct super_block *sp, block64_t goal,
 			rip->i_prealloc_index = 0;
 			rip->i_prealloc_count = EXT2_PREALLOC_BLOCKS - 1;
 
+			if (ext4_update_bitmap_checksum(sp, group,
+			    (const unsigned char *)b_bitmap(bp), FALSE) != OK)
+				panic("ext4: cannot update block bitmap checksum");
 			lmfs_markdirty(bp);
 			put_block(bp);
 
@@ -255,6 +258,9 @@ static block64_t alloc_block_bit(struct super_block *sp, block64_t goal,
 	    (block64_t)group * sp->s_blocks_per_group + bit;
 	check_block_number(block, sp, gd);
 
+	if (ext4_update_bitmap_checksum(sp, group,
+	    (const unsigned char *)b_bitmap(bp), FALSE) != OK)
+		panic("ext4: cannot update block bitmap checksum");
 	lmfs_markdirty(bp);
 	put_block(bp);
 
@@ -323,6 +329,9 @@ void free_block(struct super_block *sp, block64_t bit_returned)
 	panic("Tried to free unused block %llu",
 	    (unsigned long long)bit_returned);
 
+  if (ext4_update_bitmap_checksum(sp, group,
+      (const unsigned char *)b_bitmap(bp), FALSE) != OK)
+    panic("ext4: cannot update block bitmap checksum");
   lmfs_markdirty(bp);
   put_block(bp);
 

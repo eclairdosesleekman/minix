@@ -189,6 +189,9 @@ static bit_t alloc_inode_bit(struct super_block *sp, struct inode *parent,
 	panic("ext2: allocator tryed to use reserved inode.\n");
   }
 
+  if (ext4_update_bitmap_checksum(sp, group,
+      (const unsigned char *)b_bitmap(bp), TRUE) != OK)
+    panic("ext4: cannot update inode bitmap checksum");
   lmfs_markdirty(bp);
   put_block(bp);
 
@@ -241,6 +244,9 @@ static void free_inode_bit(struct super_block *sp, bit_t bit_returned,
   if (unsetbit(b_bitmap(bp), bit))
 	panic("Tried to free unused inode %d", bit_returned);
 
+  if (ext4_update_bitmap_checksum(sp, group,
+      (const unsigned char *)b_bitmap(bp), TRUE) != OK)
+    panic("ext4: cannot update inode bitmap checksum");
   lmfs_markdirty(bp);
   put_block(bp);
 
