@@ -112,6 +112,14 @@ read-write mode.
   file-type incompat feature continue to report `DT_UNKNOWN`.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
+- Read-only indexed-directory lookup uses the ext4 HTree for the first
+  candidate leaf with legacy, half-MD4, and TEA hashes (signed and unsigned
+  variants). Root and internal-node checksums, count/limit arrays, hash
+  ordering, child logical-block bounds, and depth are validated. A miss falls
+  back to the complete linear scan so hash-collision continuation leaves and
+  unusual layouts remain discoverable. SipHash/hash-in-dirent modes continue
+  to use linear lookup. Directory enumeration remains linear; indexed-directory
+  mutation is still unsupported.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block. The `large_dir` incompat
   feature is accepted for read-only mounts: internal HTree nodes are skipped
