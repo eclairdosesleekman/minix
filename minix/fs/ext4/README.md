@@ -78,8 +78,9 @@ read-write mode.
   non-Linux metadata checksum formats are rejected. An invalid inode checksum
   is reported as `EIO` and the inode is not cached. For the supported
   read-write paths, checksums are regenerated for the superblock, group
-  descriptors, initialized allocation bitmaps, Linux inodes, ordinary
-  directory leaves, and external extent-tree nodes. External xattr blocks are
+  descriptors, allocation bitmaps (including maps synthesized from
+  `BLOCK_UNINIT`/`INODE_UNINIT`), Linux inodes, ordinary directory leaves,
+  and external extent-tree nodes. External xattr blocks are
   verified on read but are not modified by the current filesystem operations.
   Indexed-directory mutation remains unsupported. Groups marked
   `BLOCK_UNINIT` or `INODE_UNINIT` are initialized on first allocation: the
@@ -376,7 +377,8 @@ the mount or first allocation fails without clearing the flag.
 Unmount cleanly and run `e2fsck -fn`; verify the superblock, group descriptor,
 bitmap, inode, directory-leaf, and extent-node checksums all validate.
 Corrupt one checksum at a time on copies of the image and confirm the mount is
-rejected or the corresponding read reports `EIO`, as appropriate. Do not use indexed directories in the writable test.
+rejected or the corresponding read reports `EIO`, as appropriate. Do not use
+indexed directories in the writable test.
 
 For extended timestamp coverage, use a disposable Linux-created ext4 image
 with 256-byte inodes (so the normal `i_extra_isize` timestamp fields fit):
