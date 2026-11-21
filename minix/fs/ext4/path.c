@@ -146,7 +146,8 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 				continue;
 
 			name_len = dp->d_name_len;
-			if (name_len > EXT2_NAME_MAX || name_len > NAME_MAX)
+			if (name_len == 0 || name_len > EXT2_NAME_MAX ||
+			    name_len > NAME_MAX)
 				return(EIO);
 			if ((name_len == 1 && dp->d_name[0] == '.') ||
 			    (name_len == 2 && dp->d_name[0] == '.' &&
