@@ -972,6 +972,16 @@ int rw_inode(
   }
 
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
+	/*
+	 * EA inodes are storage objects referenced by xattr entries, not
+	 * namespace files. Until xattr value lookup is implemented, never
+	 * expose one through a directory entry or ordinary inode request.
+	 */
+	if (rw_flag == READING && sp->s_is_ext4 &&
+	    (rip->i_flags & EXT4_EA_INODE_FL)) {
+		put_block(bp);
+		return(EIO);
+	}
   if (rw_flag == READING && sp->s_is_ext4) {
 	r = ext4_decode_inode_times(rip, (const unsigned char *)dip,
 	    EXT2_INODE_SIZE(sp));
