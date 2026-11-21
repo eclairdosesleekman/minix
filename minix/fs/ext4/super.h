@@ -20,7 +20,7 @@ EXTERN struct super_block {
     u32_t  s_log_block_size;       /* Block size */
     u32_t  s_log_frag_size;        /* Fragment size */
     u32_t  s_blocks_per_group;     /* # Blocks per group */
-    u32_t  s_frags_per_group;      /* # Fragments per group */
+    u32_t  s_frags_per_group;      /* # Clusters per group with BIGALLOC */
     u32_t  s_inodes_per_group;     /* # Inodes per group */
     u32_t  s_mtime;                /* Mount time */
     u32_t  s_wtime;                /* Write time */
@@ -107,6 +107,8 @@ EXTERN struct super_block {
     int     s_igsearch; /* all groups below this one have no free inodes */
     u32_t   s_dirs_counter;
     u32_t   s_csum_seed;          /* CRC32C seed for metadata_csum */
+    u32_t   s_cluster_ratio;      /* Filesystem blocks per allocation cluster */
+    u32_t   s_clusters_per_group; /* Allocation clusters per block group */
 
 } *superblock, *ondisk_superblock;
 
