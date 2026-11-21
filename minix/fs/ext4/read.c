@@ -256,7 +256,48 @@ static int rw_chunk(register struct inode *rip, u64_t position, unsigned off,
  * ext4 extent records are packed, little-endian on-disk structures. Read
  * them with memcpy to avoid alignment assumptions.
  */
-static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
+
+/*
+ * Extent data and external nodes must not point into filesystem metadata.
+ * The group metadata ranges are sorted during superblock validation, which
+ * lets us check an entire half-open block range without walking every block.
+ */
+static int
+ext4_extent_range_reserved(struct super_block *sp, block64_t first,
+	block64_t end)
+{
+	u64_t lo, hi, mid;
+
+	if (first == 0 || first >= end || end > sp->s_blocks_count)
+		return(TRUE);
+	if (ext4_overlaps_super_and_descriptor_blocks(sp, first, end))
+		return(TRUE);
+	if (sp->s_metadata_range_count != 0 &&
+	    sp->s_metadata_ranges == NULL)
+		return(TRUE);
+
+	lo = 0;
+	hi = sp->s_metadata_range_count;
+	while (lo < hi) {
+		mid = lo + (hi - lo) / 2;
+		if (sp->s_metadata_ranges[mid].end <= first)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return(lo < sp->s_metadata_range_count &&
+	    sp->s_metadata_ranges[lo].first < end);
+}
+
+
+/*
+ * ext4 extent records are packed, little-endian on-disk structures. Validate
+ * every record in each node traversed, not only the extent/index selected for
+ * the requested logical block. This prevents a malformed sibling record in
+ * the same node from being silently accepted.
+ */
+static block64_t
+ext4_extent_map(struct inode *rip, u32_t logical)
 {
 	const unsigned char *node = (const unsigned char *)rip->i_block;
 	size_t node_size = sizeof(rip->i_block);
@@ -282,8 +323,10 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 		if (magic != EXT4_EXTENT_MAGIC ||
 		    depth > EXT4_EXTENT_MAX_DEPTH ||
 		    (expected_depth >= 0 && depth != expected_depth) ||
+		    max_entries == 0 ||
 		    max_entries > (node_size - 12) / 12 ||
-		    entries > max_entries)
+		    entries > max_entries ||
+		    (entries == 0 && (bp != NULL || depth != 0)))
 			goto corrupt;
 
 		/* External extent nodes carry a checksum after their max array. */
@@ -303,10 +346,13 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 		}
 
 		if (depth == 0) {
+			u64_t previous_end = 0, logical_end, length;
+			block64_t mapped = NO_BLOCK, physical;
+			int have_previous = FALSE, found = FALSE;
+
 			for (i = 0; i < entries; i++) {
 				u32_t first, physical_lo;
 				u16_t encoded_len, physical_hi;
-				u64_t physical, length;
 				int unwritten;
 
 				entry = node + 12 + i * 12;
@@ -322,48 +368,46 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 				unwritten = encoded_len > 0x8000;
 				length = unwritten ? encoded_len - 0x8000 :
 				    encoded_len;
-				if (length == 0)
+				logical_end = (u64_t)first + length;
+				physical = ((u64_t)physical_hi << 32) |
+				    physical_lo;
+
+				if (length == 0 ||
+				    (have_previous && (u64_t)first < previous_end) ||
+				    logical_end > 0x100000000ULL ||
+				    physical == 0 ||
+				    physical >= rip->i_sp->s_blocks_count ||
+				    length > rip->i_sp->s_blocks_count - physical ||
+				    ext4_extent_range_reserved(rip->i_sp, physical,
+				    physical + length))
 					goto corrupt;
 
+				previous_end = logical_end;
+				have_previous = TRUE;
 				if ((u64_t)logical >= first &&
-				    (u64_t)logical < (u64_t)first + length) {
-					if (unwritten) {
-						if (bp != NULL)
-							put_block(bp);
-						return(NO_BLOCK);
-					}
-					physical = ((u64_t)physical_hi << 32) |
-					    physical_lo;
-					physical += (u64_t)logical - first;
-					if (physical == 0 ||
-					    physical >= rip->i_sp->s_blocks_count ||
-					    ext4_data_overlaps_reserved_clusters(
-					    rip->i_sp, (block64_t)physical))
-						goto corrupt;
-					if (bp != NULL)
-						put_block(bp);
-					return((block64_t)physical);
+				    (u64_t)logical < logical_end) {
+					found = TRUE;
+					if (!unwritten)
+						mapped = physical +
+						    ((u64_t)logical - first);
 				}
 			}
 			if (bp != NULL)
 				put_block(bp);
-			return(NO_BLOCK);
+			return(found ? mapped : NO_BLOCK);
 		}
 
-		/* Select the last index whose logical start does not exceed target. */
+		/*
+		 * Validate all index keys and child pointers while selecting the
+		 * last child whose key does not exceed the requested block.
+		 */
 		{
-			block64_t child = 0;
-			int found = FALSE;
+			block64_t selected_child = 0, child;
+			u32_t previous_key = 0, logical_first, child_lo;
+			u16_t child_hi;
+			int have_previous = FALSE, found = FALSE;
 
-			if (entries == 0) {
-				if (bp != NULL)
-					put_block(bp);
-				return(NO_BLOCK);
-			}
 			for (i = 0; i < entries; i++) {
-				u32_t logical_first, child_lo;
-				u16_t child_hi;
-
 				entry = node + 12 + i * 12;
 				memcpy(&logical_first, entry, 4);
 				memcpy(&child_lo, entry + 4, 4);
@@ -371,26 +415,31 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 				logical_first = (u32_t)conv4(le_CPU, logical_first);
 				child_lo = (u32_t)conv4(le_CPU, child_lo);
 				child_hi = (u16_t)conv2(le_CPU, child_hi);
-				if (i == 0 && logical < logical_first) {
-					if (bp != NULL)
-						put_block(bp);
-					return(NO_BLOCK);
-				}
-				if (logical_first > logical)
-					break;
 				child = ((u64_t)child_hi << 32) | child_lo;
-				found = TRUE;
+
+				if ((have_previous &&
+				    logical_first <= previous_key) ||
+				    ext4_extent_range_reserved(rip->i_sp, child,
+				    child + 1))
+					goto corrupt;
+
+				previous_key = logical_first;
+				have_previous = TRUE;
+				if (logical_first <= logical) {
+					selected_child = child;
+					found = TRUE;
+				}
 			}
-			if (!found || child == 0 ||
-			    child >= rip->i_sp->s_blocks_count ||
-			    ext4_overlaps_super_and_descriptor_blocks(rip->i_sp,
-			    child, child + 1))
-				goto corrupt;
+			if (!found) {
+				if (bp != NULL)
+					put_block(bp);
+				return(NO_BLOCK);
+			}
 			if (bp != NULL) {
 				put_block(bp);
 				bp = NULL;
 			}
-			bp = get_block(rip->i_dev, child, NORMAL);
+			bp = get_block(rip->i_dev, selected_child, NORMAL);
 			if (bp == NULL)
 				goto corrupt;
 			node = (const unsigned char *)b_data(bp);
