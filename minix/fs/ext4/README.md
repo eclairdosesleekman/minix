@@ -55,6 +55,15 @@ read-write mode.
   values are still opaque and are not exposed through a get/list-xattr API.
   Writable mounts are rejected because xattr reference counts and EA inode
   lifetimes are not maintained.
+
+- External xattr blocks are structurally validated before an inode is exposed,
+  even when `metadata_csum` is disabled. The 32-byte header, reference count,
+  single-block length, zero-terminated entry array, nonempty NUL-free names,
+  value sizes, and 4-byte-padded inline value ranges are checked. EA-inode
+  references require the `ea_inode` incompat feature and a valid non-root
+  inode number. When `metadata_csum` is enabled, the block-number-based
+  CRC32C checksum is also verified. Attribute values are still not exposed
+  through a get/list-xattr API.
 - Read-only compatibility for quota (`quota`) and project-quota (`project`)
   feature flags, and for `RO_COMPAT_READONLY`. Quota metadata is left
   untouched, so quota-enabled filesystems require read-only mounts.
@@ -555,6 +564,19 @@ and a bound Unix-domain socket. Mount it read-only on MINIX and inspect the
 `DT_SOCK` (not `DT_UNKNOWN`). Repeat with an image whose directory entry type
 field is set to `EXT2_FT_UNKNOWN`; it must continue to report `DT_UNKNOWN`.
 Run `e2fsck -fn` after testing the unmounted image.
+
+For external xattr-block validation, create a disposable ext4 image without
+`metadata_csum`, populate files with `user.*` attributes large enough to force
+external xattr blocks, and verify that valid files remain readable. On an
+unmounted copy, corrupt one field at a time: the xattr header magic, refcount,
+block count, entry terminator, name bytes (including an embedded NUL), value
+size, value offset, and an EA-inode number. Reattach the image read-only and
+verify that an inode referencing each malformed block fails with `EIO`.
+Repeat on a `metadata_csum` image after regenerating the xattr block checksum
+for each structural corruption, so the structure checks are exercised after
+checksum verification. Also test a valid `ea_inode` image and a block with an
+EA-inode reference but without the incompat feature. Run `e2fsck -fn` on the
+unmounted images after testing.
 
 For read-only `large_dir` coverage, create an ext4 image with
 `large_dir` and `dir_index` enabled (and `orphan_file` disabled), populate
