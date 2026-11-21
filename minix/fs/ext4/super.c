@@ -191,6 +191,55 @@ ext4_meta_bg_overlaps_descriptor_blocks(struct super_block *sp,
 	if (last_group >= sp->s_groups_count)
 		last_group = sp->s_groups_count - 1;
 
+	/*
+	 * Descriptor blocks before s_first_meta_bg retain the classic GDT
+	 * placement. Their primary copy and copies in sparse-super backup
+	 * groups must be reserved too; only subsequent metablock groups use
+	 * the first/second/last-group META_BG locations below.
+	 */
+	{
+		u64_t classic_group_count, classic_last_group, group;
+		u64_t group_start, descriptor_start, descriptor_end;
+		u64_t max_value = ((u64_t)~(u64_t)0) >> 1;
+		unsigned int has_super;
+
+		classic_group_count = (u64_t)sp->s_first_meta_bg *
+		    sp->s_desc_per_block;
+		if (classic_group_count > sp->s_groups_count)
+			classic_group_count = sp->s_groups_count;
+		if (first_group < classic_group_count) {
+			classic_last_group = last_group;
+			if (classic_last_group >= classic_group_count)
+				classic_last_group = classic_group_count - 1;
+			for (group = first_group; group <= classic_last_group;
+			    group++) {
+				if (group > (max_value - sp->s_first_data_block) /
+				    sp->s_blocks_per_group)
+					return(FALSE);
+				group_start = (u64_t)sp->s_first_data_block +
+				    group * sp->s_blocks_per_group;
+				has_super = ext4_meta_bg_group_has_super(sp,
+				    (u32_t)group);
+				if (sp->s_block_size == 1024 && group == 0 &&
+				    sp->s_first_data_block == 0)
+					has_super++;
+				if (group_start > max_value - has_super)
+					return(FALSE);
+				descriptor_start = group_start + has_super;
+				if (descriptor_start >= sp->s_blocks_count)
+					continue;
+				if ((u64_t)sp->s_first_meta_bg >
+				    sp->s_blocks_count - descriptor_start)
+					descriptor_end = sp->s_blocks_count;
+				else
+					descriptor_end = descriptor_start +
+					    sp->s_first_meta_bg;
+				if (descriptor_start < end && first < descriptor_end)
+					return(TRUE);
+			}
+		}
+	}
+
 	first_index = first_group / sp->s_desc_per_block;
 	if (first_index < sp->s_first_meta_bg)
 		first_index = sp->s_first_meta_bg;
