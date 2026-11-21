@@ -124,8 +124,8 @@ ext4_meta_bg_group_has_super(struct super_block *sp, u32_t group)
 
 /*
  * Validate the two optional sparse_super2 backup group numbers before they
- * are used to calculate any on-disk metadata locations. A zero first entry
- * terminates the list, as in ext4; group zero is always the primary copy.
+ * are used to calculate any on-disk metadata locations. Zero means that an
+ * entry is unused; either slot may therefore be zero independently.
  */
 static int
 ext4_validate_sparse_super2(struct super_block *sp)
@@ -140,10 +140,8 @@ ext4_validate_sparse_super2(struct super_block *sp)
 
 	backup0 = ext4_read32(raw + 0x24c);
 	backup1 = ext4_read32(raw + 0x250);
-	if ((backup0 == 0 && backup1 != 0) ||
-	    (backup0 != 0 && backup0 >= sp->s_groups_count) ||
-	    (backup1 != 0 && backup1 >= sp->s_groups_count) ||
-	    (backup1 != 0 && backup1 == backup0))
+	if ((backup0 != 0 && backup0 >= sp->s_groups_count) ||
+	    (backup1 != 0 && backup1 >= sp->s_groups_count))
 		return(EINVAL);
 	return(OK);
 }
