@@ -276,7 +276,8 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	descriptor_start = (u64_t)sp->s_first_data_block + 1;
 	if (sp->s_block_size == 1024 && sp->s_first_data_block == 0)
 		descriptor_start++;
-	if (classic_reserved_blocks != 0 && descriptor_start < sp->s_blocks_count) {
+	if (classic_reserved_blocks != 0 &&
+	    descriptor_start < sp->s_blocks_count) {
 		if (classic_reserved_blocks > sp->s_blocks_count - descriptor_start)
 			descriptor_end = sp->s_blocks_count;
 		else
@@ -301,7 +302,8 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 		classic_group_count = sp->s_groups_count;
 	}
 	if (classic_reserved_blocks != 0) {
-		span_groups = (u64_t)classic_reserved_blocks / sp->s_blocks_per_group + 1;
+		span_groups = (u64_t)classic_reserved_blocks /
+		    sp->s_blocks_per_group + 1;
 		backup_first_group = first_group > span_groups ?
 		    first_group - span_groups : 0;
 		if (backup_first_group < classic_group_count) {
@@ -330,7 +332,8 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 				    sp->s_blocks_count - descriptor_start)
 					descriptor_end = sp->s_blocks_count;
 				else
-					descriptor_end = descriptor_start + classic_reserved_blocks;
+					descriptor_end = descriptor_start +
+					    classic_reserved_blocks;
 				if (descriptor_start < end && first < descriptor_end)
 					return(TRUE);
 			}
