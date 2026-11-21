@@ -264,15 +264,22 @@ static int rw_chunk(register struct inode *rip, u64_t position, unsigned off,
  */
 static int
 ext4_extent_range_reserved(struct super_block *sp, block64_t first,
-	block64_t end)
+	block64_t end, int data_blocks)
 {
 	u64_t lo, hi, mid;
 
 	if (first == 0 || first >= end || end > sp->s_blocks_count)
 		return(TRUE);
-	if (ext4_overlaps_super_and_descriptor_blocks(sp, first, end) ||
-	    ext4_data_overlaps_reserved_clusters(sp, first) ||
-	    ext4_data_overlaps_reserved_clusters(sp, end - 1))
+	if (ext4_overlaps_super_and_descriptor_blocks(sp, first, end))
+		return(TRUE);
+	/*
+	 * File data is allocated in clusters with BIGALLOC. Extent-tree nodes
+	 * are metadata and may share a cluster with other metadata blocks, so
+	 * their pointers are checked only at block granularity.
+	 */
+	if (data_blocks &&
+	    (ext4_data_overlaps_reserved_clusters(sp, first) ||
+	    ext4_data_overlaps_reserved_clusters(sp, end - 1)))
 		return(TRUE);
 	if (sp->s_metadata_range_count != 0 &&
 	    sp->s_metadata_ranges == NULL)
@@ -381,7 +388,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 				    physical >= rip->i_sp->s_blocks_count ||
 				    length > rip->i_sp->s_blocks_count - physical ||
 				    ext4_extent_range_reserved(rip->i_sp, physical,
-				    physical + length))
+				    physical + length, TRUE))
 					goto corrupt;
 
 				previous_end = logical_end;
@@ -422,7 +429,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 				if ((have_previous &&
 				    logical_first <= previous_key) ||
 				    ext4_extent_range_reserved(rip->i_sp, child,
-				    child + 1))
+				    child + 1, FALSE))
 					goto corrupt;
 
 				previous_key = logical_first;
