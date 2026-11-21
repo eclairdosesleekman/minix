@@ -1208,26 +1208,217 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 }
 
 /*
- * The allocator operates directly on on-disk bitmaps. It cannot yet
- * synthesize the bitmap contents represented by BLOCK_UNINIT/INODE_UNINIT,
- * so a writable mount must reject such groups rather than allocating from an
- * uninitialized bitmap.
+ * Test whether a physical block belongs to any group bitmap or inode-table
+ * range. The ranges are validated, sorted, and disjoint during read_super().
+ */
+static int
+ext4_block_in_metadata_ranges(struct super_block *sp, block64_t block)
+{
+	u64_t lo, hi, mid;
+
+	if (sp->s_metadata_range_count == 0)
+		return(FALSE);
+	if (sp->s_metadata_ranges == NULL)
+		return(TRUE);
+
+	lo = 0;
+	hi = sp->s_metadata_range_count;
+	while (lo < hi) {
+		mid = lo + (hi - lo) / 2;
+		if (sp->s_metadata_ranges[mid].end <= block)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return(lo < sp->s_metadata_range_count &&
+	    sp->s_metadata_ranges[lo].first <= block);
+}
+
+static void
+ext4_bitmap_set(unsigned char *bitmap, unsigned int bit)
+{
+	bitmap[bit / CHAR_BIT] |= (unsigned char)(1U << (bit % CHAR_BIT));
+}
+
+/*
+ * Materialize ext4 lazy allocation bitmaps before enabling writes.
+ *
+ * BLOCK_UNINIT represents an all-free bitmap except for backup super/GDT
+ * metadata and the physical block ranges occupied by group bitmaps and inode
+ * tables (which may be relocated by flex_bg). INODE_UNINIT represents a
+ * zeroed inode bitmap with reserved inode numbers and out-of-range tail bits
+ * marked allocated. The descriptor free counters are checked against the
+ * generated bitmap before it is accepted.
+ *
+ * Bitmap blocks are flushed before the descriptor flags are cleared. This
+ * ordering makes a failed mount safe to retry: while a flag remains set on
+ * disk, the corresponding bitmap may always be reconstructed.
  */
 int
-ext4_check_rw_mount(struct super_block *sp)
+ext4_initialize_uninit_bitmaps(struct super_block *sp)
 {
-	unsigned int i;
-	u16_t flags;
-	const unsigned char *desc;
+	struct buf *bp;
+	struct group_desc *gd;
+	unsigned char *bitmap;
+	unsigned char *desc;
+	u64_t group_first, group_first_ino;
+	unsigned int group, bit, bitmap_bits, valid_bits;
+	unsigned int free_count, first_ino;
+	u16_t flags, new_flags;
+	block64_t block;
+	int changed, r;
 
-	/* Check all filesystems: the allocator cannot initialize lazy bitmaps. */
-	for (i = 0; i < sp->s_groups_count; i++) {
-		desc = ondisk_group_descs + (size_t)i * sp->s_desc_size;
+	if (sp->s_rd_only)
+		return(EROFS);
+	/* The allocator is still block-granular; BIGALLOC remains read-only. */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
+		return(EOPNOTSUPP);
+	if (sp->s_block_size > UINT_MAX / CHAR_BIT ||
+	    sp->s_blocks_per_group == 0 ||
+	    sp->s_inodes_per_group == 0)
+		return(EIO);
+	if (sp->s_metadata_range_count != 0 &&
+	    sp->s_metadata_ranges == NULL)
+		return(EIO);
+
+	bitmap_bits = sp->s_block_size * CHAR_BIT;
+	if (sp->s_blocks_per_group > bitmap_bits ||
+	    sp->s_inodes_per_group > bitmap_bits ||
+	    (sp->s_blocks_per_group & 7U) != 0 ||
+	    (sp->s_inodes_per_group & 7U) != 0)
+		return(EIO);
+
+	bitmap = malloc(sp->s_block_size);
+	if (bitmap == NULL)
+		return(ENOMEM);
+	changed = FALSE;
+
+	for (group = 0; group < sp->s_groups_count; group++) {
+		desc = ondisk_group_descs + (size_t)group * sp->s_desc_size;
 		flags = ext4_read16(desc + 18);
-		if (flags & (EXT4_BG_BLOCK_UNINIT | EXT4_BG_INODE_UNINIT))
-			return(EOPNOTSUPP);
+		if (!(flags & (EXT4_BG_BLOCK_UNINIT | EXT4_BG_INODE_UNINIT)))
+			continue;
+		gd = get_group_desc(group);
+		if (gd == NULL) {
+			r = EIO;
+			goto out;
+		}
+
+		if (flags & EXT4_BG_BLOCK_UNINIT) {
+			group_first = (u64_t)sp->s_first_data_block +
+			    (u64_t)group * sp->s_blocks_per_group;
+			if (group_first >= sp->s_blocks_count) {
+				r = EIO;
+				goto out;
+			}
+			valid_bits = sp->s_blocks_count - group_first;
+			if (valid_bits > sp->s_blocks_per_group)
+				valid_bits = sp->s_blocks_per_group;
+
+			memset(bitmap, 0, sp->s_block_size);
+			free_count = 0;
+			for (bit = 0; bit < valid_bits; bit++) {
+				block = (block64_t)(group_first + bit);
+				if (ext4_overlaps_super_and_descriptor_blocks(sp,
+				    block, block + 1) ||
+				    ext4_block_in_metadata_ranges(sp, block)) {
+					ext4_bitmap_set(bitmap, bit);
+				} else {
+					free_count++;
+				}
+			}
+			for (bit = valid_bits; bit < bitmap_bits; bit++)
+				ext4_bitmap_set(bitmap, bit);
+
+			if (free_count != gd->free_blocks_count) {
+				printf("ext4: initialized block bitmap count mismatch in group %u (%u != %u)\n",
+				    group, free_count, gd->free_blocks_count);
+				r = EIO;
+				goto out;
+			}
+			r = ext4_update_bitmap_checksum(sp, group, bitmap, FALSE);
+			if (r != OK)
+				goto out;
+			bp = get_block(sp->s_dev, gd->block_bitmap, NORMAL);
+			if (bp == NULL) {
+				r = EIO;
+				goto out;
+			}
+			memcpy(b_data(bp), bitmap, sp->s_block_size);
+			lmfs_markdirty(bp);
+			put_block(bp);
+			changed = TRUE;
+		}
+
+		if (flags & EXT4_BG_INODE_UNINIT) {
+			group_first_ino = (u64_t)group *
+			    sp->s_inodes_per_group + 1;
+			if (group_first_ino > sp->s_inodes_count) {
+				r = EIO;
+				goto out;
+			}
+			valid_bits = sp->s_inodes_count -
+			    group_first_ino + 1;
+			if (valid_bits > sp->s_inodes_per_group)
+				valid_bits = sp->s_inodes_per_group;
+
+			memset(bitmap, 0, sp->s_block_size);
+			free_count = 0;
+			first_ino = EXT2_FIRST_INO(sp);
+			for (bit = 0; bit < valid_bits; bit++) {
+				if (group_first_ino + bit < first_ino)
+					ext4_bitmap_set(bitmap, bit);
+				else
+					free_count++;
+			}
+			for (bit = valid_bits; bit < bitmap_bits; bit++)
+				ext4_bitmap_set(bitmap, bit);
+
+			if (free_count != gd->free_inodes_count) {
+				printf("ext4: initialized inode bitmap count mismatch in group %u (%u != %u)\n",
+				    group, free_count, gd->free_inodes_count);
+				r = EIO;
+				goto out;
+			}
+			r = ext4_update_bitmap_checksum(sp, group, bitmap, TRUE);
+			if (r != OK)
+				goto out;
+			bp = get_block(sp->s_dev, gd->inode_bitmap, NORMAL);
+			if (bp == NULL) {
+				r = EIO;
+				goto out;
+			}
+			memcpy(b_data(bp), bitmap, sp->s_block_size);
+			lmfs_markdirty(bp);
+			put_block(bp);
+			changed = TRUE;
+		}
 	}
-	return(OK);
+
+	if (changed) {
+		/*
+		 * Persist the newly materialized bitmaps before clearing their
+		 * on-disk lazy-init flags. write_super() later commits the updated
+		 * descriptor flags and checksums before accepting writes.
+		 */
+		lmfs_flushall();
+		for (group = 0; group < sp->s_groups_count; group++) {
+			desc = ondisk_group_descs +
+			    (size_t)group * sp->s_desc_size;
+			flags = ext4_read16(desc + 18);
+			new_flags = flags &
+			    ~(EXT4_BG_BLOCK_UNINIT | EXT4_BG_INODE_UNINIT);
+			if (new_flags != flags) {
+				ext4_store16(desc + 18, new_flags);
+				group_descriptors_dirty = 1;
+			}
+		}
+	}
+	r = OK;
+
+out:
+	free(bitmap);
+	return(r);
 }
 
 static int compare_ext4_metadata_ranges(const void *left, const void *right)
