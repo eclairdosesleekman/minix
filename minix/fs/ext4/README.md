@@ -15,6 +15,13 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Linux ext4 extended inode timestamps are decoded and stored using ext4's
+  34-bit seconds and nanosecond fields when present in `i_extra_isize`.
+  `stat` reports atime/mtime/ctime nanoseconds and the inode creation time
+  (`st_birthtim`); `utimes` preserves requested subsecond values when the
+  corresponding extra field exists. Older or short-extra inodes retain
+  seconds-only timestamps. Invalid extra sizes or nanosecond encodings are
+  rejected.
 - Read-write support for the `huge_file` feature. The in-core `i_blocks`
   counter is 64-bit; writes serialize the 48-bit on-disk counter in 512-byte
   units when possible, then switch to filesystem-block units and set
@@ -114,6 +121,14 @@ implementation.
   ext4 features. A power loss or server crash during metadata updates can leave
   the volume inconsistent.
 
+- **Extended timestamp field requirements:** 64-bit seconds and nanoseconds
+  require the relevant Linux inode extra field to fit within `i_extra_isize`.
+  When an older inode lacks an atime/mtime extra field, `utimes` retains the
+  seconds value and rounds subsecond precision down. Explicit dates outside
+  the signed 32-bit range are rejected when the matching extended field is
+  absent; dates outside ext4's 34-bit seconds range are always rejected.
+  ext4's `dtime` remains the legacy 32-bit field.
+
 Do not use writable mode on valuable data. Run `e2fsck` on the unmounted
 volume after every test session.
 
@@ -162,6 +177,25 @@ bitmap, inode, directory-leaf, and extent-node checksums all validate.
 Corrupt one checksum at a time on copies of the image and confirm the mount is
 rejected or the corresponding read reports `EIO`, as appropriate. Do not use
 indexed directories or lazy allocation bitmaps in the writable test.
+
+For extended timestamp coverage, use a disposable Linux-created ext4 image
+with 256-byte inodes (so the normal `i_extra_isize` timestamp fields fit):
+
+```sh
+truncate -s 512M ext4-time-test.img
+mke2fs -F -t ext4 -b 4096 -I 256 \
+  -O extent,64bit,^has_journal,^dir_index,^metadata_csum,^gdt_csum,\
+^huge_file,^orphan_file ext4-time-test.img
+e2fsck -fn ext4-time-test.img
+```
+
+On MINIX, set atime/mtime to values immediately below and above the 2038
+boundary, include non-zero nanoseconds, and test the maximum 34-bit ext4
+seconds value. Compare `stat` results before and after an unmount/remount,
+including the birth time of newly created files. Run `e2fsck -fn` after the
+clean unmount. Repeat with a 128-byte-inode image: subsecond precision should
+be discarded and explicit seconds outside the signed 32-bit range should
+fail with `EOVERFLOW`.
 
 A separate image exercises the 64 KiB directory-record encoding:
 
@@ -312,7 +346,7 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The 64 KiB directory-record, `huge_file`, `metadata_csum`, bounded
-external-extent-leaf update, and writable legacy `gdt_csum` changes have not
-yet been compiled or runtime-tested in a MINIX build environment. Treat this
+The extended timestamp, 64 KiB directory-record, `huge_file`, `metadata_csum`,
+bounded external-extent-leaf update, and writable legacy `gdt_csum` changes
+have not yet been compiled or runtime-tested in a MINIX build environment. Treat this
 as a review candidate and test it on disposable images only.

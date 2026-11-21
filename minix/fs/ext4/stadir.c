@@ -37,9 +37,14 @@ int fs_stat(ino_t ino_nr, struct stat *statbuf)
   statbuf->st_gid = rip->i_gid;
   statbuf->st_rdev = (s ? (dev_t)rip->i_block[0] : NO_DEV);
   statbuf->st_size = rip->i_size;
-  statbuf->st_atime = rip->i_atime;
-  statbuf->st_mtime = rip->i_mtime;
-  statbuf->st_ctime = rip->i_ctime;
+  statbuf->st_atim.tv_sec = rip->i_atime;
+  statbuf->st_atim.tv_nsec = rip->i_atime_nsec;
+  statbuf->st_mtim.tv_sec = rip->i_mtime;
+  statbuf->st_mtim.tv_nsec = rip->i_mtime_nsec;
+  statbuf->st_ctim.tv_sec = rip->i_ctime;
+  statbuf->st_ctim.tv_nsec = rip->i_ctime_nsec;
+  statbuf->st_birthtim.tv_sec = rip->i_crtime;
+  statbuf->st_birthtim.tv_nsec = rip->i_crtime_nsec;
   statbuf->st_blksize = rip->i_sp->s_block_size;
   statbuf->st_blocks = rip->i_blocks;
 
