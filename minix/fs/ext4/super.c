@@ -1207,33 +1207,6 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	return(OK);
 }
 
-/*
- * Test whether a physical block belongs to any group bitmap or inode-table
- * range. The ranges are validated, sorted, and disjoint during read_super().
- */
-static int
-ext4_block_in_metadata_ranges(struct super_block *sp, block64_t block)
-{
-	u64_t lo, hi, mid;
-
-	if (sp->s_metadata_range_count == 0)
-		return(FALSE);
-	if (sp->s_metadata_ranges == NULL)
-		return(TRUE);
-
-	lo = 0;
-	hi = sp->s_metadata_range_count;
-	while (lo < hi) {
-		mid = lo + (hi - lo) / 2;
-		if (sp->s_metadata_ranges[mid].end <= block)
-			lo = mid + 1;
-		else
-			hi = mid;
-	}
-	return(lo < sp->s_metadata_range_count &&
-	    sp->s_metadata_ranges[lo].first <= block);
-}
-
 static void
 ext4_bitmap_set(unsigned char *bitmap, unsigned int bit)
 {
@@ -1277,10 +1250,6 @@ ext4_initialize_uninit_bitmaps(struct super_block *sp)
 	    sp->s_blocks_per_group == 0 ||
 	    sp->s_inodes_per_group == 0)
 		return(EIO);
-	if (sp->s_metadata_range_count != 0 &&
-	    sp->s_metadata_ranges == NULL)
-		return(EIO);
-
 	bitmap_bits = sp->s_block_size * CHAR_BIT;
 	if (sp->s_blocks_per_group > bitmap_bits ||
 	    sp->s_inodes_per_group > bitmap_bits ||
@@ -1321,7 +1290,10 @@ ext4_initialize_uninit_bitmaps(struct super_block *sp)
 				block = (block64_t)(group_first + bit);
 				if (ext4_overlaps_super_and_descriptor_blocks(sp,
 				    block, block + 1) ||
-				    ext4_block_in_metadata_ranges(sp, block)) {
+				    block == gd->block_bitmap ||
+				    block == gd->inode_bitmap ||
+				    (block >= gd->inode_table &&
+				    block - gd->inode_table < sp->s_itb_per_group)) {
 					ext4_bitmap_set(bitmap, bit);
 				} else {
 					free_count++;
