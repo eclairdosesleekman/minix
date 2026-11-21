@@ -39,7 +39,7 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	sp->s_rd_only = readonly;
 
 	if (!readonly && ext4_check_rw_mount(sp) != OK) {
-		printf("ext4: read-write mounts require initialized group bitmaps\n");
+		printf("ext4: invalid or unsupported lazy group bitmap layout\n");
 		goto bad_mount;
 	}
 
