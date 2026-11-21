@@ -915,9 +915,9 @@ int rw_inode(
 		xattr_block |= (block64_t)xattr_block_hi << 32;
 	}
 	if (xattr_block != 0 &&
-	    ext4_meta_bg_overlaps_descriptor_blocks(sp, xattr_block,
+	    ext4_overlaps_super_and_descriptor_blocks(sp, xattr_block,
 	    xattr_block + 1)) {
-		printf("ext4: xattr block overlaps META_BG descriptor for inode %llu\n",
+		printf("ext4: xattr block overlaps reserved metadata for inode %llu\n",
 		    (unsigned long long)rip->i_num);
 		put_block(bp);
 		return(EIO);
