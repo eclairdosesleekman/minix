@@ -226,7 +226,8 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	u64_t descriptor_start, descriptor_end, max_value;
 	u64_t span_groups, backup_first_group;
 	u64_t candidates[3];
-	unsigned int i, copy_blocks;
+	unsigned int i;
+	u64_t copy_blocks;
 	block64_t descriptor;
 	int meta_bg;
 
@@ -270,6 +271,8 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 		copy_blocks = sp->s_first_meta_bg;
 	else
 		copy_blocks = sp->s_gdb_count;
+	/* resize_inode reserves additional blocks after each classic GDT copy. */
+	copy_blocks += sp->s_reserved_gdt_blocks;
 	descriptor_start = (u64_t)sp->s_first_data_block + 1;
 	if (sp->s_block_size == 1024 && sp->s_first_data_block == 0)
 		descriptor_start++;
@@ -862,7 +865,7 @@ static void super_copy(
 			conv4(le_CPU, source->s_algorithm_usage_bitmap);
   dest->s_prealloc_blocks = source->s_prealloc_blocks;
   dest->s_prealloc_dir_blocks = source->s_prealloc_dir_blocks;
-  dest->s_padding1 = conv2(le_CPU, source->s_padding1);
+  dest->s_reserved_gdt_blocks = conv2(le_CPU, source->s_reserved_gdt_blocks);
 }
 
 
