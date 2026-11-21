@@ -161,7 +161,8 @@
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
                                      INCOMPAT_META_BG | INCOMPAT_CSUM_SEED | \
-                                     INCOMPAT_LARGEDIR | INCOMPAT_INLINE_DATA)
+                                     INCOMPAT_LARGEDIR | INCOMPAT_INLINE_DATA | \
+                                     INCOMPAT_EA_INODE)
 #define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \
                                       RO_COMPAT_LARGE_FILE | \
                                       RO_COMPAT_BTREE_DIR | \

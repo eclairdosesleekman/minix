@@ -48,6 +48,13 @@ read-write mode.
   pointers, file extents, indirect mappings, external extent-tree nodes, and
   external xattr pointers. Writable mounts
   remain disabled because the current writer does not update backup copies.
+- Read-only compatibility with the ext4 `ea_inode` incompat feature. The
+  mount path accepts filesystems using EA inodes as extended-attribute value
+  storage, while keeping those storage inodes out of the pathname namespace.
+  Ordinary file data and metadata remain readable; EA-inode-backed xattr
+  values are still opaque and are not exposed through a get/list-xattr API.
+  Writable mounts are rejected because xattr reference counts and EA inode
+  lifetimes are not maintained.
 - Read-only compatibility for quota (`quota`) and project-quota (`project`)
   feature flags, and for `RO_COMPAT_READONLY`. Quota metadata is left
   untouched, so quota-enabled filesystems require read-only mounts.
@@ -236,13 +243,21 @@ mke2fs -F -t ext4 -O project,^has_journal ext4-project-ro.img
 truncate -s 256M ext4-orphan-ro.img
 mke2fs -F -t ext4 -O orphan_file,^has_journal ext4-orphan-ro.img
 
+truncate -s 256M ext4-ea-inode-ro.img
+mke2fs -F -t ext4 -O ea_inode,^has_journal ext4-ea-inode-ro.img
+
 e2fsck -fn ext4-quota-ro.img
 e2fsck -fn ext4-project-ro.img
 e2fsck -fn ext4-orphan-ro.img
+e2fsck -fn ext4-ea-inode-ro.img
 ```
 
 On MINIX, verify pathname lookup, stat, file reads, and directory enumeration
-on each read-only mount, including a BIGALLOC volume with metadata checksums.
+on each read-only mount, including a BIGALLOC volume with metadata checksums
+and an `ea_inode` volume containing large xattr values. Confirm ordinary file
+contents remain readable, and that EA-inode storage objects cannot be reached
+as directory entries. EA-inode-backed xattr get/list operations are not
+implemented and must not be inferred to work.
 Check that a block bitmap checksum over the cluster-bit length is accepted and
 that a deliberately corrupted checksum is rejected. Writable BIGALLOC mounts
 must fail before the volume is marked unclean. After unmount, run
