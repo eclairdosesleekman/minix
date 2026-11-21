@@ -699,6 +699,169 @@ static unsigned int get_dtype(struct ext2_disk_dir_desc *dp)
   }
 }
 
+/*
+ * Emit an ext4 inline directory using the same stable byte cookies as
+ * ext4_read_inline_dir(): "." at 0, ".." at 12, the first dirent area at 24,
+ * and the system.data dirent area at 80. Inline directories have no block
+ * checksum tail; their bytes are covered by the inode checksum.
+ */
+static ssize_t
+ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
+	size_t bytes, off_t *posp)
+{
+#define INLINE_GETDENTS_BUFSIZE (sizeof(struct dirent) + EXT2_NAME_MAX + 1)
+#define INLINE_GETDENTS_ENTRIES 8
+	static char inline_getdents_buf[INLINE_GETDENTS_BUFSIZE *
+	    INLINE_GETDENTS_ENTRIES];
+	struct fsdriver_dentry fsdentry;
+	const unsigned char *areas[2];
+	unsigned int lengths[2], area, offset, rec_len, name_len;
+	off_t pos, new_pos, cookie, dir_end;
+	struct ext2_disk_dir_desc *dp;
+	ino_t child;
+	int r, done;
+
+	if ((rip->i_mode & I_TYPE) != I_DIRECTORY)
+		return(ENOTDIR);
+	if (rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_MAX ||
+	    rip->i_inline_size != EXT4_INLINE_DATA_MIN +
+	    rip->i_inline_value_size ||
+	    rip->i_inline_parent == 0 ||
+	    rip->i_inline_parent > rip->i_sp->s_inodes_count)
+		return(EIO);
+	if (rip->i_inline_size > EXT4_INLINE_DATA_MIN &&
+	    (rip->i_inline_value_size < MIN_DIR_ENTRY_SIZE ||
+	    (rip->i_inline_value_size & (DIR_ENTRY_ALIGN - 1)) != 0))
+		return(EIO);
+
+	areas[0] = rip->i_inline_data + sizeof(u32_t);
+	lengths[0] = EXT4_INLINE_DATA_MIN - sizeof(u32_t);
+	areas[1] = rip->i_inline_data + EXT4_INLINE_DATA_MIN;
+	lengths[1] = rip->i_inline_value_size;
+	dir_end = 20 + rip->i_inline_size;
+	pos = *posp;
+	if (pos < 0 || (pos & (DIR_ENTRY_ALIGN - 1)) != 0)
+		return(ENOENT);
+
+	fsdriver_dentry_init(&fsdentry, data, bytes, inline_getdents_buf,
+	    sizeof(inline_getdents_buf));
+	new_pos = dir_end;
+	done = FALSE;
+	r = 0;
+
+	/* The two dot entries are synthesized; neither is stored as a dirent. */
+	if (pos < 12) {
+		r = fsdriver_dentry_add(&fsdentry, rip->i_num, ".", 1, DT_DIR);
+		if (r <= 0) {
+			new_pos = 0;
+			done = TRUE;
+		} else {
+			pos = 12;
+			r = 0;
+		}
+	}
+	if (!done && pos < 24) {
+		r = fsdriver_dentry_add(&fsdentry,
+		    (ino_t)rip->i_inline_parent, "..", 2, DT_DIR);
+		if (r <= 0) {
+			new_pos = 12;
+			done = TRUE;
+		} else {
+			pos = 24;
+			r = 0;
+		}
+	}
+
+	cookie = 24;
+	for (area = 0; !done && area < 2; area++) {
+		if (lengths[area] == 0) {
+			cookie += lengths[area];
+			continue;
+		}
+		if (lengths[area] < MIN_DIR_ENTRY_SIZE ||
+		    (lengths[area] & (DIR_ENTRY_ALIGN - 1)) != 0) {
+			r = EIO;
+			break;
+		}
+
+		offset = 0;
+		/* An lseek into a record resumes at that record's start. */
+		while (offset < lengths[area]) {
+			dp = (struct ext2_disk_dir_desc *)(areas[area] + offset);
+			if (!ext4_valid_dirent(dp, offset, lengths[area])) {
+				r = EIO;
+				break;
+			}
+			rec_len = ext4_dir_rec_len(dp, lengths[area]);
+			if (rec_len > lengths[area] - offset) {
+				r = EIO;
+				break;
+			}
+			if (cookie + rec_len > pos)
+				break;
+			cookie += rec_len;
+			offset += rec_len;
+		}
+		if (r != 0)
+			break;
+
+		for (; offset < lengths[area]; offset += rec_len,
+		    cookie += rec_len) {
+			dp = (struct ext2_disk_dir_desc *)(areas[area] + offset);
+			if (!ext4_valid_dirent(dp, offset, lengths[area])) {
+				r = EIO;
+				break;
+			}
+			rec_len = ext4_dir_rec_len(dp, lengths[area]);
+			if (rec_len > lengths[area] - offset) {
+				r = EIO;
+				break;
+			}
+			if (dp->d_ino == NO_ENTRY)
+				continue;
+
+			name_len = dp->d_name_len;
+			if (name_len == 0 || name_len > NAME_MAX ||
+			    name_len > EXT2_NAME_MAX ||
+			    (name_len == 1 && dp->d_name[0] == '.') ||
+			    (name_len == 2 && dp->d_name[0] == '.' &&
+			    dp->d_name[1] == '.')) {
+				r = EIO;
+				break;
+			}
+			child = (ino_t)conv4(le_CPU, dp->d_ino);
+			if (child == NO_ENTRY ||
+			    child > rip->i_sp->s_inodes_count) {
+				r = EIO;
+				break;
+			}
+
+			r = fsdriver_dentry_add(&fsdentry, child, dp->d_name,
+			    name_len, get_dtype(dp));
+			if (r <= 0) {
+				new_pos = cookie;
+				done = TRUE;
+				break;
+			}
+			r = 0;
+		}
+		if (r != 0)
+			break;
+		cookie = area == 0 ? 80 : dir_end;
+	}
+
+	if (r >= 0 && (r = fsdriver_dentry_finish(&fsdentry)) >= 0) {
+		*posp = new_pos;
+		rip->i_update |= ATIME;
+		if (!rip->i_sp->s_rd_only)
+			rip->i_dirt = IN_DIRTY;
+	}
+	return(r);
+#undef INLINE_GETDENTS_BUFSIZE
+#undef INLINE_GETDENTS_ENTRIES
+}
+
 /*===========================================================================*
  *				fs_getdents				     *
  *===========================================================================*/
@@ -724,6 +887,16 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 
   if ((rip = get_inode(fs_dev, ino_nr)) == NULL)
 	return(EINVAL);
+
+  if (rip->i_sp->s_is_ext4 &&
+      HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
+      (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	ssize_t inline_result;
+
+	inline_result = ext4_getdents_inline_dir(rip, data, bytes, posp);
+	put_inode(rip);
+	return(inline_result);
+  }
 
   block_size = rip->i_sp->s_block_size;
   off = (pos % block_size);             /* Offset in block */
