@@ -85,8 +85,9 @@ read-write mode.
 - Verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
   leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
-  The 48-bit `i_file_acl` pointer is range-checked and shared xattr blocks use
-  the block-number-based checksum defined by Linux ext4. Bitmap checksums are
+  The 48-bit `i_file_acl` pointer is range-checked; external xattr entry/value
+  structure is validated even without `metadata_csum`, while shared blocks also
+  use the block-number-based checksum when that feature is enabled. Bitmap checksums are
   verified for every initialized group during mount, before the filesystem is
   exposed. Both UUID-derived and `metadata_csum_seed` checksum seeds are
   supported. When both `metadata_csum` and legacy `gdt_csum` are present,
@@ -572,9 +573,9 @@ unmounted copy, corrupt one field at a time: the xattr header magic, refcount,
 block count, entry terminator, name bytes (including an embedded NUL), value
 size, value offset, and an EA-inode number. Reattach the image read-only and
 verify that an inode referencing each malformed block fails with `EIO`.
-Repeat on a `metadata_csum` image after regenerating the xattr block checksum
-for each structural corruption, so the structure checks are exercised after
-checksum verification. Also test a valid `ea_inode` image and a block with an
+Repeat on a `metadata_csum` image and recompute the block checksum after each
+byte-level edit, so rejection is attributable to malformed xattr structure
+rather than a stale checksum. Also test a valid `ea_inode` image and a block with an
 EA-inode reference but without the incompat feature. Run `e2fsck -fn` on the
 unmounted images after testing.
 
