@@ -21,7 +21,9 @@ read-write mode.
   Descriptor checksums are verified after all descriptor blocks are gathered.
   Primary and backup descriptor blocks in the first, second, and last groups
   of each metablock group are reserved against group bitmap/inode-table
-  pointers, file-data extents, and external extent-tree node pointers.
+  pointers, file-data extents, external extent-tree nodes, and external xattr
+  pointers. Classic-prefix descriptor copies in the primary and sparse-super
+  backup groups are reserved as well.
   Writable mounts remain disabled because the current writer emits a classic
   contiguous descriptor table. `sparse_super2` combined with `meta_bg`,
   alternate-superblock selection, and malformed `s_first_meta_bg` values are
