@@ -98,9 +98,10 @@ read-write mode.
   descriptors, initialized allocation bitmaps, Linux inodes, ordinary
   directory leaves, and external extent-tree nodes. External xattr blocks are
   verified on read but are not modified by the current filesystem operations.
-  Indexed-directory mutation remains unsupported. Writable mounts reject
-  groups with `BLOCK_UNINIT` or `INODE_UNINIT`; the allocator cannot yet
-  initialize lazy allocation bitmaps safely.
+  Indexed-directory mutation remains unsupported. Writable mounts now
+  materialize groups carrying `BLOCK_UNINIT` or `INODE_UNINIT`, verify the
+  generated free-bit counts, update bitmap checksums, flush bitmap blocks, and
+  clear the descriptor flags before enabling writes.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
   Live entries must also have nonempty names without NUL or slash bytes, and
@@ -131,7 +132,10 @@ read-write mode.
   separate regions. Inline-directory mutation, EA-inode-backed values, and
   VM page mapping remain unsupported.
 - Read-write support for clean filesystems without a journal or indexed
-  directories, provided every allocation bitmap is already initialized. The
+  directories. Lazy `BLOCK_UNINIT` and `INODE_UNINIT` bitmaps are synthesized
+  from backup-super/GDT locations and each group's block bitmap, inode bitmap,
+  and inode-table range, checked against group free counters, and
+  persisted before their group-descriptor flags are cleared. The
   block and inode bitmaps, group free counters, inode table, superblock
   counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
@@ -156,9 +160,10 @@ implementation.
   currently supported write paths: superblock, group descriptors, initialized
   allocation bitmaps, inodes, ordinary directory leaves, and external extent
   nodes. External xattr blocks are verified but have no write/update path in
-  the current server. Writable mounts reject any group with
-  `BLOCK_UNINIT` or `INODE_UNINIT`, because the allocator does not yet
-  synthesize the lazy-initialized bitmaps represented by those flags. Legacy
+  the current server. Lazy block/inode bitmap initialization is supported for
+  non-BIGALLOC writable filesystems: generated bitmaps are checked against the
+  descriptor's free counters, their checksums are updated, and bitmap blocks
+  are flushed before the lazy-init flags are cleared. Legacy
   `gdt_csum` without `metadata_csum` remains supported for read-write mounts;
   its CRC16 checksum is regenerated whenever group descriptors are written.
 - **No indexed-directory updates:** writable mounts reject `dir_index`
@@ -227,6 +232,25 @@ may vary):
 ```sh
 service up /service/ext4
 mount -t ext4 /dev/c0d0p1 /mnt
+```
+
+To exercise writable lazy-bitmap initialization, create a fresh ext4 image
+with uninitialized block/inode bitmaps and no journal. Confirm that
+`dumpe2fs` reports `BLOCK_UNINIT` and/or `INODE_UNINIT` on nonzero groups.
+Mount it read-write on MINIX, create files and directories, allocate and
+truncate data across multiple block groups, then unmount cleanly. Run
+`e2fsck -fn` before and after the test. Repeat with `metadata_csum` and
+legacy `gdt_csum` where supported; the first write mount must materialize
+each lazy bitmap, update its checksum, and clear only the corresponding group
+flags. Corrupt a group free counter in a disposable copy and verify that the
+writable mount is rejected before the filesystem is marked unclean.
+
+```sh
+truncate -s 1G ext4-lazy-bitmap-rw.img
+mke2fs -F -t ext4 -b 4096 -O uninit_bg,metadata_csum,^has_journal \
+  ext4-lazy-bitmap-rw.img
+dumpe2fs ext4-lazy-bitmap-rw.img | grep -E 'BLOCK_UNINIT|INODE_UNINIT'
+e2fsck -fn ext4-lazy-bitmap-rw.img
 ```
 
 Read-only feature compatibility can be tested with disposable images made

@@ -38,11 +38,6 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	sp->s_rd_only = readonly;
 
-	if (!readonly && ext4_check_rw_mount(sp) != OK) {
-		printf("ext4: read-write mounts require initialized group bitmaps\n");
-		goto bad_mount;
-	}
-
 	if (sp->s_rev_level != EXT2_DYNAMIC_REV) {
 		printf("ext4: dynamic-revision superblock required\\n");
 		goto bad_mount;
@@ -201,6 +196,12 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	root_node->fn_uid = root_ip->i_uid;
 	root_node->fn_gid = root_ip->i_gid;
 	root_node->fn_dev = NO_DEV;
+
+	if (!readonly && ext4_initialize_uninit_bitmaps(sp) != OK) {
+		printf("ext4: cannot safely initialize lazy allocation bitmaps\n");
+		put_inode(root_ip);
+		goto bad_mount;
+	}
 
 	if (!readonly) {
 		/* Mark the volume unclean before accepting the first write. */
