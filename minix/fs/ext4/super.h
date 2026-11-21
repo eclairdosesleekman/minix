@@ -132,5 +132,7 @@ struct group_desc
 
 int ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	block64_t first, block64_t end);
+int ext4_data_overlaps_reserved_clusters(struct super_block *sp,
+	block64_t block);
 
 #endif /* EXT4_SUPER_H */
