@@ -58,12 +58,38 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		    unsupported);
 		goto bad_mount;
 	}
+	/*
+	 * RO_COMPAT_ORPHAN_PRESENT means that the orphan file may contain
+	 * inodes requiring recovery. This server cannot scan or recover that
+	 * file, so reject the filesystem even for a read-only mount.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_ORPHAN_PRESENT)) {
+		printf("ext4: orphan file contains pending recovery entries\\n");
+		goto bad_mount;
+	}
 	unsupported = sp->s_feature_ro_compat & ~SUPPORTED_RO_COMPAT_FEATURES;
 	if (unsupported != 0) {
 		printf("ext4: unsupported read-only-compatible features 0x%x\\n",
 		    unsupported);
 		goto bad_mount;
 	}
+	/*
+	 * These read-only-compatible feature bits describe metadata which this
+	 * server can leave untouched while reading. They must not silently
+	 * become writable: quota accounting is not maintained, and
+	 * RO_COMPAT_READONLY explicitly forbids write access.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_READONLY) && !readonly) {
+		printf("ext4: read-only image feature forbids writable mounts\\n");
+		goto bad_mount;
+	}
+	if (!readonly &&
+	    (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_QUOTA) ||
+	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_PROJECT))) {
+		printf("ext4: quota/project-quota filesystems require read-only mounts\\n");
+		goto bad_mount;
+	}
+
 	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
 	    sp->s_creator_os != EXT4_OS_LINUX) {
 		printf("ext4: metadata checksums require a Linux-created filesystem\\n");
@@ -76,8 +102,13 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	 * metadata_csum takes precedence and is writable only for the metadata
 	 * mutation paths covered below.
 	 */
-	if (sp->s_feature_compat & COMPAT_ORPHAN_FILE) {
-		printf("ext4: orphan-file feature is not supported\\n");
+	/*
+	 * The orphan-file inode is harmless on a clean read-only mount when
+	 * ORPHAN_PRESENT is clear. Writable orphan-file maintenance is not
+	 * implemented, so keep those mounts disabled.
+	 */
+	if (HAS_COMPAT_FEATURE(sp, COMPAT_ORPHAN_FILE) && !readonly) {
+		printf("ext4: read-write orphan-file support is not implemented\\n");
 		goto bad_mount;
 	}
 	if (sp->s_last_orphan != 0) {
