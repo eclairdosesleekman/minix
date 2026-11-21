@@ -370,8 +370,10 @@ ext4_dx_name_hash(struct inode *dir, const char *name, unsigned int len,
 	case EXT4_DX_HASH_TEA_UNSIGNED:
 		use_unsigned = TRUE;
 		break;
-	default:
+	case 6: /* SipHash needs hash-in-dirent support not implemented here. */
 		return(EOPNOTSUPP);
+	default:
+		return(EIO);
 	}
 
 	seed[0] = 0x67452301U;
@@ -427,7 +429,7 @@ ext4_dx_name_hash(struct inode *dir, const char *name, unsigned int len,
 		hash = seed[0];
 		break;
 	default:
-		return(EOPNOTSUPP);
+		return(EIO);
 	}
 
 	hash &= ~1U;
