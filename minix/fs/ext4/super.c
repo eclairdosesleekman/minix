@@ -1327,6 +1327,11 @@ ext4_initialize_uninit_bitmaps(struct super_block *sp)
 		}
 
 		if (flags & EXT4_BG_INODE_UNINIT) {
+			/* Linux ext4 never marks the special first inode group lazy. */
+			if (group == 0) {
+				r = EIO;
+				goto out;
+			}
 			group_first_ino = (u64_t)group *
 			    sp->s_inodes_per_group + 1;
 			if (group_first_ino > sp->s_inodes_count) {
