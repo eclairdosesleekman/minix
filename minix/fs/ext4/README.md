@@ -20,7 +20,7 @@ read-write mode.
   units when possible, then switch to filesystem-block units and set
   `HUGE_FILE` when the 48-bit sector representation is exceeded.
 - Verification and write-time regeneration of legacy `gdt_csum` group-descriptor checksums using ext4's CRC16 algorithm. Both 32-byte descriptors and the 64-byte descriptors used with `64bit` are covered. Read-write mounts can use `gdt_csum` when `metadata_csum` is absent; descriptor checksums are recomputed after updated group counters are serialized. `metadata_csum` takes precedence when both features are present.
-- Read-only verification of `metadata_csum` CRC32C checksums on the superblock,
+- Verification of `metadata_csum` CRC32C checksums on the superblock,
   group descriptors, initialized block/inode bitmaps, Linux inodes, directory
   leaf/htree blocks, external extent-tree nodes, and external xattr blocks.
   The 48-bit `i_file_acl` pointer is range-checked and shared xattr blocks use
@@ -32,8 +32,10 @@ read-write mode.
   metadata_csum algorithm is used. Unknown checksum types and non-Linux
   metadata checksum formats are rejected. An invalid inode checksum is
   reported as `EIO` and the inode is not cached. Inode checksums are also
-  regenerated on inode writeback; other metadata checksum mutation paths are
-  not yet complete, so writable mounts still reject `metadata_csum`.
+  regenerated on inode writeback, and ordinary directory leaf checksums are
+  regenerated after entry insertion/deletion. HTree directory mutation and
+  external extent/xattr checksum writeback remain unsupported, so writable
+  mounts still reject `metadata_csum`.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -74,14 +76,16 @@ implementation.
 
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
-- **Read-only metadata checksums:** `metadata_csum` superblock, group
-  descriptor, initialized bitmap, inode, directory, external extent-node, and
-  external xattr-block checksums are verified. All initialized block and inode bitmaps are scanned
-  at mount time. Writable mounts reject `metadata_csum` because allocation,
-  inode and directory mutation paths do not update checksums. Legacy
-  `gdt_csum` without `metadata_csum` is verified at mount and its CRC16
-  checksum is regenerated whenever group descriptors are written, so it is
-  supported on read-write mounts.
+- **Metadata checksums:** `metadata_csum` superblock, group descriptor,
+  initialized bitmap, inode, directory, external extent-node, and external
+  xattr-block checksums are verified. Inode, initialized bitmap, group
+  descriptor, and ordinary directory leaf checksums are regenerated on their
+  corresponding write paths. Writable mounts still reject `metadata_csum`
+  because external extent-node and xattr-block checksum updates and other
+  metadata mutation paths are not yet complete. Legacy `gdt_csum` without
+  `metadata_csum` is verified at mount and its CRC16 checksum is regenerated
+  whenever group descriptors are written, so it is supported on read-write
+  mounts.
 - **No indexed-directory updates:** writable mounts reject `dir_index`
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level

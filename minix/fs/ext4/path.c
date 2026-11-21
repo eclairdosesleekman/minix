@@ -115,7 +115,7 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   int extended = 0;
   int required_space = 0;
   int string_len = 0;
-  unsigned int block_size, block_off, rec_len, entry_rec_len;
+  unsigned int block_size, block_limit, block_off, rec_len, entry_rec_len;
 
   /* If 'ldir_ptr' is not a pointer to a dir inode, error. */
   if ( (ldir_ptr->i_mode & I_TYPE) != I_DIRECTORY)  {
@@ -153,6 +153,12 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 		return(EIO);
 	}
 
+	block_limit = block_size;
+	if (HAS_RO_COMPAT_FEATURE(ldir_ptr->i_sp,
+	    RO_COMPAT_METADATA_CSUM) &&
+	    !(ldir_ptr->i_flags & EXT2_INDEX_FL))
+		block_limit -= 12; /* ext4 directory checksum tail */
+
 	prev_dp = NULL; /* New block - new first dentry, so no prev. */
 
 	/*
@@ -161,7 +167,7 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	 * complete 64 KiB directory block.
 	 */
 	for (block_off = 0, dp = (struct ext2_disk_dir_desc*) &b_data(bp);
-	     block_off < block_size;) {
+	     block_off < block_limit;) {
 		/* Validate the record before touching its name or advancing. */
 		if (!ext4_valid_dirent(dp, block_off, block_size)) {
 			put_block(bp);
@@ -169,6 +175,10 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 		}
 
 		rec_len = ext4_dir_rec_len(dp, block_size);
+		if (rec_len > block_limit - block_off) {
+			put_block(bp);
+			return(EIO);
+		}
 
 		/* Match occurs if string found. */
 		if (flag != ENTER && dp->d_ino != NO_ENTRY) {
@@ -194,7 +204,6 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 					memcpy(&dp->d_name[t], &dp->d_ino, sizeof(dp->d_ino));
 				}
 				dp->d_ino = NO_ENTRY;	/* erase entry */
-				lmfs_markdirty(bp);
 
 				/* If we don't support HTree (directory index),
 				 * which is fully compatible ext2 feature,
@@ -225,6 +234,13 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 					temp += rec_len;
 					ext4_set_dir_rec_len(prev_dp, temp, block_size);
 				}
+				r = ext4_update_dir_block_csum(ldir_ptr,
+				    (unsigned char *)b_data(bp));
+				if (r != OK) {
+					put_block(bp);
+					return(r);
+				}
+				lmfs_markdirty(bp);
 			} else {
 				/* 'flag' is LOOK_UP */
 				*numb = (ino_t) conv4(le_CPU, dp->d_ino);
@@ -260,7 +276,6 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 			ext4_set_dir_rec_len(dp, new_slot_size, block_size);
 			/* if we fail before writing real ino */
 			dp->d_ino = NO_ENTRY;
-			lmfs_markdirty(bp);
 			e_hit = TRUE;	/* we found a free slot */
 			break;
 		}
@@ -304,7 +319,20 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	if ( (bp = new_block(ldir_ptr, ldir_ptr->i_size)) == NULL)
 		return(err_code);
 	dp = (struct ext2_disk_dir_desc*) &b_data(bp);
-	ext4_set_dir_rec_len(dp, block_size, block_size);
+	if (HAS_RO_COMPAT_FEATURE(ldir_ptr->i_sp,
+	    RO_COMPAT_METADATA_CSUM)) {
+		unsigned char *tail;
+
+		/* ext4 leaf blocks reserve the final 12 bytes for the checksum. */
+		tail = (unsigned char *)b_data(bp) + block_size - 12;
+		memset(tail, 0, 12);
+		ext4_set_dir_rec_len((struct ext2_disk_dir_desc *)tail, 12,
+		    block_size);
+		tail[7] = 0xde;
+		ext4_set_dir_rec_len(dp, block_size - 12, block_size);
+	} else {
+		ext4_set_dir_rec_len(dp, block_size, block_size);
+	}
 	dp->d_name_len = DIR_ENTRY_MAX_NAME_LEN(dp, block_size); /* for failure */
 	extended = 1;
   }
@@ -332,13 +360,19 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 		dp->d_file_type = EXT2_FT_UNKNOWN;
   }
   entry_rec_len = ext4_dir_rec_len(dp, block_size);
+  r = ext4_update_dir_block_csum(ldir_ptr,
+      (unsigned char *)b_data(bp));
+  if (r != OK) {
+	put_block(bp);
+	return(r);
+  }
   lmfs_markdirty(bp);
   put_block(bp);
   ldir_ptr->i_update |= CTIME | MTIME;	/* mark mtime for update later */
   ldir_ptr->i_dirt = IN_DIRTY;
 
   if (new_slots == 1) {
-	ldir_ptr->i_size += (off_t) entry_rec_len;
+	ldir_ptr->i_size += (off_t)(extended ? block_size : entry_rec_len);
 	/* Send the change to disk if the directory is extended. */
 	if (extended) rw_inode(ldir_ptr, WRITING);
   }
