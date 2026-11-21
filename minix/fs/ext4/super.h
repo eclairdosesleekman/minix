@@ -116,7 +116,7 @@ EXTERN struct super_block {
     u32_t   s_cluster_ratio;      /* Filesystem blocks per allocation cluster */
     u32_t   s_clusters_per_group; /* Allocation clusters per block group */
     struct ext4_metadata_range *s_metadata_ranges;
-    u32_t   s_metadata_range_count;
+    u64_t   s_metadata_range_count;
 
 } *superblock, *ondisk_superblock;
 
