@@ -227,7 +227,7 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	u64_t span_groups, backup_first_group;
 	u64_t candidates[3];
 	unsigned int i;
-	u64_t copy_blocks;
+	u64_t classic_reserved_blocks;
 	block64_t descriptor;
 	int meta_bg;
 
@@ -268,28 +268,29 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	 * superblock and can extend across a block-group boundary.
 	 */
 	if (meta_bg)
-		copy_blocks = sp->s_first_meta_bg;
+		classic_reserved_blocks = sp->s_first_meta_bg;
 	else
-		copy_blocks = sp->s_gdb_count;
+		classic_reserved_blocks = sp->s_gdb_count;
 	/* resize_inode reserves additional blocks after each classic GDT copy. */
-	copy_blocks += sp->s_reserved_gdt_blocks;
+	classic_reserved_blocks += sp->s_reserved_gdt_blocks;
 	descriptor_start = (u64_t)sp->s_first_data_block + 1;
 	if (sp->s_block_size == 1024 && sp->s_first_data_block == 0)
 		descriptor_start++;
-	if (copy_blocks != 0 && descriptor_start < sp->s_blocks_count) {
-		if (copy_blocks > sp->s_blocks_count - descriptor_start)
+	if (classic_reserved_blocks != 0 && descriptor_start < sp->s_blocks_count) {
+		if (classic_reserved_blocks > sp->s_blocks_count - descriptor_start)
 			descriptor_end = sp->s_blocks_count;
 		else
-			descriptor_end = descriptor_start + copy_blocks;
+			descriptor_end = descriptor_start + classic_reserved_blocks;
 		if (descriptor_start < end && first < descriptor_end)
 			return(TRUE);
 	}
 
 	/*
-	 * Classic backup GDT copies occupy the blocks immediately after each
-	 * backup superblock. In META_BG filesystems only the prefix before
-	 * s_first_meta_bg remains in this layout. Include preceding backup
-	 * groups whose copy can extend into the queried physical group.
+	 * Classic backup GDT copies and any reserved resize_inode GDT blocks
+	 * occupy the blocks immediately after each backup superblock. In
+	 * META_BG filesystems only the prefix before s_first_meta_bg remains
+	 * in this layout. Include preceding backup groups whose reserved
+	 * range can extend into the queried physical group.
 	 */
 	if (meta_bg) {
 		classic_group_count = (u64_t)sp->s_first_meta_bg *
@@ -299,8 +300,8 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	} else {
 		classic_group_count = sp->s_groups_count;
 	}
-	if (copy_blocks != 0) {
-		span_groups = (u64_t)copy_blocks / sp->s_blocks_per_group + 1;
+	if (classic_reserved_blocks != 0) {
+		span_groups = (u64_t)classic_reserved_blocks / sp->s_blocks_per_group + 1;
 		backup_first_group = first_group > span_groups ?
 		    first_group - span_groups : 0;
 		if (backup_first_group < classic_group_count) {
@@ -325,11 +326,11 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 					descriptor_start++;
 				if (descriptor_start >= sp->s_blocks_count)
 					continue;
-				if (copy_blocks >
+				if (classic_reserved_blocks >
 				    sp->s_blocks_count - descriptor_start)
 					descriptor_end = sp->s_blocks_count;
 				else
-					descriptor_end = descriptor_start + copy_blocks;
+					descriptor_end = descriptor_start + classic_reserved_blocks;
 				if (descriptor_start < end && first < descriptor_end)
 					return(TRUE);
 			}
@@ -511,6 +512,9 @@ int read_super(register struct super_block *sp)
 	if (r != OK)
 		return(r);
 	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG)) {
+		/* e2fsprogs/Linux do not support resize_inode with META_BG. */
+		if (HAS_COMPAT_FEATURE(sp, COMPAT_RESIZE_INO))
+			return(EOPNOTSUPP);
 		if (sp->s_first_meta_bg > sp->s_gdb_count ||
 		    opt.block_with_super != 0)
 			return(EOPNOTSUPP);
