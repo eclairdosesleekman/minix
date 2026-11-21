@@ -233,6 +233,25 @@ service up /service/ext4
 mount -t ext4 /dev/c0d0p1 /mnt
 ```
 
+To exercise writable lazy-bitmap initialization, create a fresh ext4 image
+with uninitialized block/inode bitmaps and no journal. Confirm that
+`dumpe2fs` reports `BLOCK_UNINIT` and/or `INODE_UNINIT` on nonzero groups.
+Mount it read-write on MINIX, create files and directories, allocate and
+truncate data across multiple block groups, then unmount cleanly. Run
+`e2fsck -fn` before and after the test. Repeat with `metadata_csum` and
+legacy `gdt_csum` where supported; the first write mount must materialize
+each lazy bitmap, update its checksum, and clear only the corresponding group
+flags. Corrupt a group free counter in a disposable copy and verify that the
+writable mount is rejected before the filesystem is marked unclean.
+
+```sh
+truncate -s 1G ext4-lazy-bitmap-rw.img
+mke2fs -F -t ext4 -b 4096 -O uninit_bg,metadata_csum,^has_journal \
+  ext4-lazy-bitmap-rw.img
+dumpe2fs ext4-lazy-bitmap-rw.img | grep -E 'BLOCK_UNINIT|INODE_UNINIT'
+e2fsck -fn ext4-lazy-bitmap-rw.img
+```
+
 Read-only feature compatibility can be tested with disposable images made
 by e2fsprogs. The BIGALLOC, quota, project-quota, and orphan-file images
 described below should all mount read-only. The quota and project images, and the clean
