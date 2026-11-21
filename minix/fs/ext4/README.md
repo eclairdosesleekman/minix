@@ -15,6 +15,19 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Read-only support for ext4 `meta_bg` group-descriptor placement. The
+  descriptor table is assembled in logical order from the classic contiguous
+  prefix and the primary descriptor blocks in later metablock groups.
+  Descriptor checksums are verified after all descriptor blocks are gathered.
+  Primary and backup descriptor blocks in the first, second, and last groups
+  of each metablock group are reserved against group bitmap/inode-table
+  pointers, file-data extents, external extent-tree nodes, and external xattr
+  pointers. Classic-prefix descriptor copies in the primary and sparse-super
+  backup groups are reserved as well.
+  Writable mounts remain disabled because the current writer emits a classic
+  contiguous descriptor table. `sparse_super2` combined with `meta_bg`,
+  alternate-superblock selection, and malformed `s_first_meta_bg` values are
+  rejected.
 - Read-only compatibility for quota (`quota`) and project-quota (`project`)
   feature flags, and for `RO_COMPAT_READONLY`. Quota metadata is left
   untouched, so quota-enabled filesystems require read-only mounts.
@@ -106,6 +119,12 @@ implementation.
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level
   `large_dir` indexes.
+- **META_BG is read-only:** primary descriptor blocks are loaded from their
+  metablock-group locations, while redundant copies are treated as reserved
+  metadata. Writable mounts are rejected because descriptor writes still use
+  the classic contiguous GDT layout. `SPARSE_SUPER2` + `META_BG` and alternate
+  superblock selection are rejected rather than guessing at descriptor
+  locations.
 - **Quota metadata is read-only:** filesystems with `quota` or `project`
   enabled can be mounted read-only, but writable mounts are rejected because
   create, link, unlink, truncate, and allocation paths do not update user,
@@ -125,7 +144,7 @@ implementation.
   entries without a complete tree-rebalancing implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
-- Existing restrictions still apply: recovery, meta_bg, MMP, inline
+- Existing restrictions still apply: recovery, MMP, inline
   directories, inline-data xattr growth, encryption, casefold, bigalloc,
   and unsupported feature flags are rejected. The filesystem must be clean,
   with an empty legacy orphan list. `orphan_file` is supported only on
@@ -190,6 +209,50 @@ the filesystem is marked unclean. After unmount, run `e2fsck -fn` on each
 image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
 using disposable copies with the relevant superblock bit changed and its
 metadata checksum recomputed when `metadata_csum` is enabled.
+
+For read-only META_BG coverage, prepare disposable images with e2fsprogs.
+Test both 32-byte and 64-byte group descriptors, classic GDT prefixes with
+non-zero `first_meta_bg`, and layouts where all descriptor blocks use META_BG.
+Repeat with `sparse_super` enabled and disabled, and with both `metadata_csum`
+and legacy `gdt_csum` where supported. Include sparse backup groups whose
+numbers are powers of 3, 5, or 7. Verify pathname lookup, file reads, and
+external extent-tree traversal. Corrupt a descriptor checksum and confirm the
+mount fails before any bitmap or inode-table pointer from that descriptor is
+followed. Corrupt bitmap/inode-table pointers to alias primary or backup
+META_BG descriptor blocks and confirm mount rejects them. Construct direct
+and legacy-indirect data pointers, extent records, external extent-node
+pointers, and external xattr pointers that target descriptor blocks in both
+the classic prefix/backups and META_BG groups; reads must fail with `EIO`.
+Use an image whose group count ends part-way through a metablock group to
+confirm that the final partial group does not cause out-of-range backup
+descriptor reads. Confirm writable mounts, `sparse_super2` + `meta_bg`,
+and alternate-superblock META_BG mounts are rejected. Run `e2fsck -fn` after
+each unmounted-image test.
+
+```sh
+# 32-byte descriptors (2 descriptor blocks for 256 block groups)
+truncate -s 1G ext4-meta-bg-32bit-ro.img
+mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,meta_bg,^64bit,^resize_inode,^has_journal \
+  ext4-meta-bg-32bit-ro.img
+
+# 64-byte descriptors (4 descriptor blocks for 256 block groups),
+# keeping the first descriptor block in the classic GDT prefix.
+truncate -s 1G ext4-meta-bg-64bit-ro.img
+MKE2FS_FIRST_META_BG=1 mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,64bit,meta_bg,^resize_inode,^has_journal \
+  ext4-meta-bg-64bit-ro.img
+
+# Optional: non-multiple group count to exercise a partial final metablock.
+truncate -s 1100M ext4-meta-bg-partial-ro.img
+MKE2FS_FIRST_META_BG=1 mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,64bit,meta_bg,^resize_inode,^has_journal \
+  ext4-meta-bg-partial-ro.img
+
+e2fsck -fn ext4-meta-bg-32bit-ro.img
+e2fsck -fn ext4-meta-bg-64bit-ro.img
+e2fsck -fn ext4-meta-bg-partial-ro.img
+```
 
 A baseline host-side test image can be prepared with e2fsprogs. It disables
 journaling, indexed directories, and checksums so basic write operations can
@@ -394,7 +457,8 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The extended timestamp, 64 KiB directory-record, `huge_file`, `metadata_csum`,
-bounded external-extent-leaf update, and writable legacy `gdt_csum` changes
-have not yet been compiled or runtime-tested in a MINIX build environment. Treat this
-as a review candidate and test it on disposable images only.
+The META_BG read-only layout, extended timestamp, 64 KiB directory-record,
+`huge_file`, `metadata_csum`, bounded external-extent-leaf update, and writable
+legacy `gdt_csum` changes have not yet been compiled or runtime-tested in a
+MINIX build environment. Treat this as a review candidate and test it on
+disposable images only.

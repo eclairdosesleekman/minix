@@ -893,29 +893,37 @@ int rw_inode(
   offset &= (sp->s_block_size - 1);
   dip = (d_inode*) (b_data(bp) + offset);
 
-  /* Refuse to interpret an inode whose metadata checksum is invalid. */
-  if (rw_flag == READING &&
-      HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
-	if (!ext4_verify_inode_csum(sp, rip->i_num,
+  /* Validate ext4 inode checksums and external xattr pointers on read. */
+  if (rw_flag == READING && sp->s_is_ext4) {
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+	    !ext4_verify_inode_csum(sp, rip->i_num,
 	    (const unsigned char *)dip, EXT2_INODE_SIZE(sp))) {
 		put_block(bp);
 		return(EIO);
 	}
 
 	/*
-	 * i_file_acl is a 48-bit block pointer on 64-bit ext4 filesystems.
-	 * The high 16 bits alias the legacy Linux i_pad1 field at inode
-	 * offset 0x76. Validate a referenced external xattr block before
-	 * accepting the inode; inline xattrs remain covered by the inode
-	 * checksum above.
+	 * i_file_acl is a 48-bit block pointer on 64-bit Linux ext4 filesystems.
+	 * META_BG descriptor blocks must never be accepted as external xattr
+	 * blocks, even when metadata_csum is disabled.
 	 */
 	xattr_block = (block64_t)(u32_t)conv4(le_CPU, dip->i_file_acl);
-	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT)) {
+	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT) &&
+	    sp->s_creator_os == EXT4_OS_LINUX) {
 		xattr_block_hi = (u16_t)conv2(le_CPU,
 		    dip->osd2.linux2.i_pad1);
 		xattr_block |= (block64_t)xattr_block_hi << 32;
 	}
 	if (xattr_block != 0 &&
+	    ext4_meta_bg_overlaps_descriptor_blocks(sp, xattr_block,
+	    xattr_block + 1)) {
+		printf("ext4: xattr block overlaps META_BG descriptor for inode %llu\n",
+		    (unsigned long long)rip->i_num);
+		put_block(bp);
+		return(EIO);
+	}
+	if (xattr_block != 0 &&
+	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
 	    !ext4_verify_xattr_block_csum(sp, rip->i_dev, xattr_block)) {
 		printf("ext4: invalid xattr block for inode %llu\n",
 		    (unsigned long long)rip->i_num);
