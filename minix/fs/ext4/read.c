@@ -841,6 +841,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 				done = TRUE;
 				break;
 			}
+			r = 0;
 		}
 		if (r != 0)
 			break;
