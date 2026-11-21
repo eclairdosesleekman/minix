@@ -26,16 +26,18 @@ read-write mode.
   The 48-bit `i_file_acl` pointer is range-checked and shared xattr blocks use
   the block-number-based checksum defined by Linux ext4. Bitmap checksums are
   verified for every initialized group during mount, before the filesystem is
-  exposed. Uninitialized bitmaps are skipped according to their group flags.
-  Both UUID-derived and `metadata_csum_seed` checksum seeds are supported.
-  When both `metadata_csum` and the legacy `gdt_csum` flag are present, the
-  metadata_csum algorithm is used. Unknown checksum types and non-Linux
-  metadata checksum formats are rejected. An invalid inode checksum is
-  reported as `EIO` and the inode is not cached. Inode checksums are also
-  regenerated on inode writeback, and ordinary directory leaf checksums are
-  regenerated after entry insertion/deletion. HTree directory mutation and
-  external extent/xattr checksum writeback remain unsupported, so writable
-  mounts still reject `metadata_csum`.
+  exposed. Both UUID-derived and `metadata_csum_seed` checksum seeds are
+  supported. When both `metadata_csum` and legacy `gdt_csum` are present,
+  the metadata_csum algorithm takes precedence. Unknown checksum types and
+  non-Linux metadata checksum formats are rejected. An invalid inode checksum
+  is reported as `EIO` and the inode is not cached. For the supported
+  read-write paths, checksums are regenerated for the superblock, group
+  descriptors, initialized allocation bitmaps, Linux inodes, ordinary
+  directory leaves, and external extent-tree nodes. External xattr blocks are
+  verified on read but are not modified by the current filesystem operations.
+  Indexed-directory mutation remains unsupported. Writable mounts reject
+  groups with `BLOCK_UNINIT` or `INODE_UNINIT`; the allocator cannot yet
+  initialize lazy allocation bitmaps safely.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -56,9 +58,10 @@ read-write mode.
   `system.data` value or exceed the capacity already present in the inode.
   Inline directories, EA-inode-backed values, and VM page mapping remain
   unsupported.
-- Read-write support for filesystems without a journal and without indexed
-  directories. The block and inode bitmaps, group free counters, inode table,
-  superblock counters, and data blocks are updated.
+- Read-write support for clean filesystems without a journal or indexed
+  directories, provided every allocation bitmap is already initialized. The
+  block and inode bitmaps, group free counters, inode table, superblock
+  counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
 - Inline extent roots and existing external extent-tree leaves can be updated
   in place while allocating, writing, and truncating files. External-leaf
@@ -76,16 +79,16 @@ implementation.
 
 - **No journal support:** writable mounts reject filesystems with
   `has_journal`. Journal replay and commit are not implemented.
-- **Metadata checksums:** `metadata_csum` superblock, group descriptor,
-  initialized bitmap, inode, directory, external extent-node, and external
-  xattr-block checksums are verified. Inode, initialized bitmap, group
-  descriptor, and ordinary directory leaf checksums are regenerated on their
-  corresponding write paths. Writable mounts still reject `metadata_csum`
-  because external extent-node and xattr-block checksum updates and other
-  metadata mutation paths are not yet complete. Legacy `gdt_csum` without
-  `metadata_csum` is verified at mount and its CRC16 checksum is regenerated
-  whenever group descriptors are written, so it is supported on read-write
-  mounts.
+- **Metadata checksums:** `metadata_csum` checksums are verified on
+  mount/read and regenerated for every metadata structure modified by the
+  currently supported write paths: superblock, group descriptors, initialized
+  allocation bitmaps, inodes, ordinary directory leaves, and external extent
+  nodes. External xattr blocks are verified but have no write/update path in
+  the current server. Writable mounts reject any group with
+  `BLOCK_UNINIT` or `INODE_UNINIT`, because the allocator does not yet
+  synthesize the lazy-initialized bitmaps represented by those flags. Legacy
+  `gdt_csum` without `metadata_csum` remains supported for read-write mounts;
+  its CRC16 checksum is regenerated whenever group descriptors are written.
 - **No indexed-directory updates:** writable mounts reject `dir_index`
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level
@@ -106,10 +109,8 @@ implementation.
   truncating an `i_blocks` value that exceeds 32 bits. With `huge_file`, ext4
   can store a 48-bit sector count, or a 48-bit filesystem-block count when
   the inode's `HUGE_FILE` flag is set.
-- The `metadata_csum` and `metadata_csum_seed` features are supported only
-  for read-only mounts.
 - The server does not implement ext4 journaling, orphan recovery, extent-tree
-  rebalancing, metadata checksum updates, quota updates, or the full set of
+  rebalancing, external xattr-block mutation, quota updates, or the full set of
   ext4 features. A power loss or server crash during metadata updates can leave
   the volume inconsistent.
 
@@ -127,9 +128,9 @@ service up /service/ext4
 mount -t ext4 /dev/c0d0p1 /mnt
 ```
 
-A host-side test image can be prepared with e2fsprogs. The feature list below
-disables journaling, indexed directories, and checksum features that this
-server does not update:
+A baseline host-side test image can be prepared with e2fsprogs. It disables
+journaling, indexed directories, and checksums so basic write operations can
+be checked independently of checksum regeneration:
 
 ```sh
 truncate -s 512M ext4-rw-test.img
@@ -138,6 +139,29 @@ mke2fs -F -t ext4 -b 4096 \
 ^huge_file,^orphan_file ext4-rw-test.img
 e2fsck -fn ext4-rw-test.img
 ```
+
+For writable `metadata_csum` coverage, prepare a separate disposable image
+with initialized allocation bitmaps, no journal, and no indexed directories.
+The mount path rejects groups that still carry `BLOCK_UNINIT` or
+`INODE_UNINIT`; ensure the group flags are clear before attaching the image:
+
+```sh
+truncate -s 512M ext4-metadata-csum-rw-test.img
+mke2fs -F -t ext4 -b 4096 \
+  -O extent,64bit,metadata_csum,^has_journal,^dir_index,^orphan_file,\
+^uninit_bg -E lazy_itable_init=0 ext4-metadata-csum-rw-test.img
+e2fsck -fy ext4-metadata-csum-rw-test.img
+e2fsck -fn ext4-metadata-csum-rw-test.img
+```
+
+Mount it read-write on MINIX and create/remove files and directories. Exercise
+block/inode allocation and release, file data writes, ordinary directory
+entry insertion/deletion, and writes into an existing external extent leaf.
+Unmount cleanly and run `e2fsck -fn`; verify the superblock, group descriptor,
+bitmap, inode, directory-leaf, and extent-node checksums all validate.
+Corrupt one checksum at a time on copies of the image and confirm the mount is
+rejected or the corresponding read reports `EIO`, as appropriate. Do not use
+indexed directories or lazy allocation bitmaps in the writable test.
 
 A separate image exercises the 64 KiB directory-record encoding:
 

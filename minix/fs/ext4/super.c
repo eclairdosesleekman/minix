@@ -42,7 +42,7 @@ static int verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	unsigned int ngroups, unsigned int desc_size);
 static int verify_group_descriptor_block_ranges(struct super_block *sp,
 	struct group_desc *groups, unsigned int ngroups);
-static void update_legacy_group_descriptor_checksums(
+static void update_group_descriptor_checksums(
 	struct super_block *sp);
 
 
@@ -322,7 +322,7 @@ write_super(struct super_block *sp)
 			}
 		}
 
-		update_legacy_group_descriptor_checksums(sp);
+		update_group_descriptor_checksums(sp);
 
 		if (opt.block_with_super == 0)
 			gdt_position = ((u64_t)sp->s_first_data_block + 1) *
@@ -349,6 +349,15 @@ write_super(struct super_block *sp)
 	super_copy(ondisk_superblock, sp);
 	ext4_store32((unsigned char *)ondisk_superblock + 0x158,
 	    (u32_t)(sp->s_free_blocks_count >> 32));
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+		u32_t checksum;
+
+		/* ext4 superblock checksum covers bytes [0, 0x3fc). */
+		ext4_store32((unsigned char *)ondisk_superblock + 0x3fc, 0);
+		checksum = ext4_crc32c(~0U, ondisk_superblock, 0x3fc);
+		ext4_store32((unsigned char *)ondisk_superblock + 0x3fc,
+		    checksum);
+	}
 
 	r = bdev_write(sp->s_dev, super_block_offset,
 	    (char *)ondisk_superblock, SUPER_SIZE_D, BDEV_NOFLAGS);
@@ -366,6 +375,47 @@ struct group_desc* get_group_desc(unsigned int bnum)
 	return NULL;
   }
   return &superblock->s_group_desc[bnum];
+}
+
+/*
+ * Update the ext4 block or inode bitmap checksum in its group descriptor.
+ * The checksum is CRC32C(fs checksum seed, bitmap bytes); 64-byte descriptors
+ * store the upper half while 32-byte descriptors retain only the low half.
+ */
+int
+ext4_update_bitmap_checksum(struct super_block *sp, unsigned int group,
+	const unsigned char *bitmap, int inode_bitmap)
+{
+	unsigned int bytes, checksum_offset, checksum_hi_offset;
+	unsigned char *desc;
+	u32_t checksum;
+
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+		return(OK);
+	if (group >= sp->s_groups_count || bitmap == NULL ||
+	    sp->s_desc_size < 32)
+		return(EINVAL);
+
+	if (inode_bitmap) {
+		bytes = sp->s_inodes_per_group / 8;
+		checksum_offset = 26;
+		checksum_hi_offset = 58;
+	} else {
+		bytes = sp->s_blocks_per_group / 8;
+		checksum_offset = 24;
+		checksum_hi_offset = 56;
+	}
+	if (bytes == 0 || bytes > sp->s_block_size)
+		return(EINVAL);
+
+	checksum = ext4_crc32c(sp->s_csum_seed, bitmap, bytes);
+	desc = ondisk_group_descs + (size_t)group * sp->s_desc_size;
+	ext4_store16(desc + checksum_offset, (u16_t)checksum);
+	if (sp->s_desc_size >= 64)
+		ext4_store16(desc + checksum_hi_offset, (u16_t)(checksum >> 16));
+
+	group_descriptors_dirty = 1;
+	return(OK);
 }
 
 
@@ -502,35 +552,53 @@ ext4_crc16(u16_t crc, const void *data, size_t len)
 }
 
 /*
- * Recompute the legacy gdt_csum checksum after the in-memory descriptor
- * counters have been serialized into the raw descriptor array. The checksum
- * covers the filesystem UUID, the little-endian group number, and the complete
- * descriptor with bg_checksum (bytes 30..31) omitted. This covers both the
- * 32-byte descriptors and the 64-byte descriptors used by ext4 64bit volumes.
- * metadata_csum supersedes gdt_csum and remains read-only in this server.
+ * Recompute group descriptor checksums after the in-memory counters have
+ * been serialized into the raw descriptor array. metadata_csum uses CRC32C
+ * seeded by the filesystem checksum seed and group number; legacy gdt_csum
+ * uses CRC16 seeded by the filesystem UUID and group number. Both formats
+ * omit bg_checksum (bytes 30..31) while calculating the checksum.
  */
 static void
-update_legacy_group_descriptor_checksums(struct super_block *sp)
+update_group_descriptor_checksums(struct super_block *sp)
 {
+	static const u16_t zero16 = 0;
 	unsigned char *p;
-	u32_t group_le;
-	u16_t crc;
+	u32_t group_le, crc32;
+	u16_t crc16;
 	unsigned int i;
 
-	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) ||
-	    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) &&
+	    !HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
 		return;
 
 	for (i = 0; i < sp->s_groups_count; i++) {
 		p = ondisk_group_descs + (size_t)i * sp->s_desc_size;
 		group_le = (u32_t)conv4(le_CPU, i);
-		crc = ext4_crc16((u16_t)~0U, sp->s_uuid,
-		    sizeof(sp->s_uuid));
-		crc = ext4_crc16(crc, &group_le, sizeof(group_le));
-		crc = ext4_crc16(crc, p, 30);
-		if (sp->s_desc_size > 32)
-			crc = ext4_crc16(crc, p + 32, sp->s_desc_size - 32);
-		ext4_store16(p + 30, crc);
+
+		if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM)) {
+			/*
+			 * metadata_csum supersedes the legacy CRC16 format.
+			 * The bg_checksum field is treated as zero and only the
+			 * low 16 bits of CRC32C are stored.
+			 */
+			crc32 = ext4_crc32c(sp->s_csum_seed, &group_le,
+			    sizeof(group_le));
+			crc32 = ext4_crc32c(crc32, p, 30);
+			crc32 = ext4_crc32c(crc32, &zero16, sizeof(zero16));
+			if (sp->s_desc_size > 32)
+				crc32 = ext4_crc32c(crc32, p + 32,
+				    sp->s_desc_size - 32);
+			ext4_store16(p + 30, (u16_t)crc32);
+		} else {
+			crc16 = ext4_crc16((u16_t)~0U, sp->s_uuid,
+			    sizeof(sp->s_uuid));
+			crc16 = ext4_crc16(crc16, &group_le, sizeof(group_le));
+			crc16 = ext4_crc16(crc16, p, 30);
+			if (sp->s_desc_size > 32)
+				crc16 = ext4_crc16(crc16, p + 32,
+				    sp->s_desc_size - 32);
+			ext4_store16(p + 30, crc16);
+		}
 	}
 }
 
@@ -597,8 +665,8 @@ static u32_t ext4_read32(const unsigned char *p)
 
 /*
  * Verify both initialized allocation bitmaps for every block group before
- * the filesystem is made available. Bitmap checksums cover the full bitmap
- * block and use CRC32C(seed, little-endian group number, bitmap bytes).
+ * the filesystem is made available. Bitmap checksums use CRC32C(seed, bitmap
+ * bytes) over the defined bitmap length.
  *
  * Uninitialized bitmaps are intentionally skipped: the on-disk block is
  * not authoritative until ext4 initializes it from group metadata.
@@ -633,7 +701,7 @@ verify_one_group_bitmap(dev_t dev, struct super_block *sp,
 	 * disabled, block bitmap size is blocks_per_group / 8; inode bitmap
 	 * size is inodes_per_group / 8.
 	 */
-	crc = ext4_crc32c(sp->s_checksum_seed, bitmap, bitmap_bytes);
+	crc = ext4_crc32c(sp->s_csum_seed, bitmap, bitmap_bytes);
 
 	stored = ext4_read16(raw_desc + checksum_offset);
 	/* The low checksum field occupies 16 bits, not 32. */
@@ -694,6 +762,29 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 	}
 
 	free(bitmap);
+	return(OK);
+}
+
+/*
+ * The allocator operates directly on on-disk bitmaps. It cannot yet
+ * synthesize the bitmap contents represented by BLOCK_UNINIT/INODE_UNINIT,
+ * so a writable mount must reject such groups rather than allocating from an
+ * uninitialized bitmap.
+ */
+int
+ext4_check_rw_mount(struct super_block *sp)
+{
+	unsigned int i;
+	u16_t flags;
+	const unsigned char *desc;
+
+	/* Check all filesystems: the allocator cannot initialize lazy bitmaps. */
+	for (i = 0; i < sp->s_groups_count; i++) {
+		desc = ondisk_group_descs + (size_t)i * sp->s_desc_size;
+		flags = ext4_read16(desc + 18);
+		if (flags & (EXT4_BG_BLOCK_UNINIT | EXT4_BG_INODE_UNINIT))
+			return(EOPNOTSUPP);
+	}
 	return(OK);
 }
 
