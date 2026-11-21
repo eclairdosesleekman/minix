@@ -224,6 +224,8 @@ ext4_data_overlaps_reserved_clusters(struct super_block *sp, block64_t block)
 	unsigned int i;
 	struct group_desc *gd;
 
+	if (block == NO_BLOCK)
+		return(FALSE);
 	if (block >= sp->s_blocks_count)
 		return(TRUE);
 	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
