@@ -204,8 +204,8 @@ mount -t ext4 /dev/c0d0p1 /mnt
 ```
 
 Read-only feature compatibility can be tested with disposable images made
-by e2fsprogs. Create separate quota, project-quota, and orphan-file images;
-all should mount read-only. The quota and project images, and the clean
+by e2fsprogs. The BIGALLOC, quota, project-quota, and orphan-file images
+described below should all mount read-only. The quota and project images, and the clean
 orphan-file image, must be rejected for read-write mounts. For the orphan-file
 case, also test a copy with `RO_COMPAT_ORPHAN_PRESENT` set: it must be
 rejected even read-only because recovery is pending. An image carrying
@@ -242,10 +242,8 @@ On MINIX, verify pathname lookup, stat, file reads, and directory enumeration
 on each read-only mount, including a BIGALLOC volume with metadata checksums.
 Check that a block bitmap checksum over the cluster-bit length is accepted and
 that a deliberately corrupted checksum is rejected. Writable BIGALLOC mounts
-must fail before the volume is marked unclean. Confirm all attempted writable
-mounts fail before the filesystem is marked unclean. After unmount, run
-`e2fsck -fn` on each
-image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
+must fail before the volume is marked unclean. After unmount, run
+`e2fsck -fn` on each image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
 using disposable copies with the relevant superblock bit changed and its
 metadata checksum recomputed when `metadata_csum` is enabled.
 
