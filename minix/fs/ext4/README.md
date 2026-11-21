@@ -224,10 +224,20 @@ mounts, `sparse_super2` + `meta_bg`, and alternate-superblock META_BG mounts
 are rejected. Run `e2fsck -fn` after each unmounted-image test.
 
 ```sh
-truncate -s 2G ext4-meta-bg-ro.img
-mke2fs -F -t ext4 -b 4096 -O extent,meta_bg,^has_journal ext4-meta-bg-ro.img
+# 32-byte descriptors (2 descriptor blocks for 256 block groups)
+truncate -s 1G ext4-meta-bg-32bit-ro.img
+mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,meta_bg,^64bit,^resize_inode,^has_journal \
+  ext4-meta-bg-32bit-ro.img
 
-e2fsck -fn ext4-meta-bg-ro.img
+# 64-byte descriptors (4 descriptor blocks for 256 block groups)
+truncate -s 1G ext4-meta-bg-64bit-ro.img
+mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,64bit,meta_bg,^resize_inode,^has_journal \
+  ext4-meta-bg-64bit-ro.img
+
+e2fsck -fn ext4-meta-bg-32bit-ro.img
+e2fsck -fn ext4-meta-bg-64bit-ro.img
 ```
 
 A baseline host-side test image can be prepared with e2fsprogs. It disables
@@ -433,7 +443,8 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The META_BG read-only layout, extended timestamp, 64 KiB directory-record, `huge_file`, `metadata_csum`,
-bounded external-extent-leaf update, and writable legacy `gdt_csum` changes
-have not yet been compiled or runtime-tested in a MINIX build environment. Treat this
-as a review candidate and test it on disposable images only.
+The META_BG read-only layout, extended timestamp, 64 KiB directory-record,
+`huge_file`, `metadata_csum`, bounded external-extent-leaf update, and writable
+legacy `gdt_csum` changes have not yet been compiled or runtime-tested in a
+MINIX build environment. Treat this as a review candidate and test it on
+disposable images only.
