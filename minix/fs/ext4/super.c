@@ -221,8 +221,7 @@ ext4_data_overlaps_reserved_clusters(struct super_block *sp, block64_t block)
 {
 	block64_t cluster_first, cluster_end;
 	u64_t cluster_index, start, end;
-	unsigned int i;
-	struct group_desc *gd;
+	unsigned int lo, hi, mid;
 
 	if (block == NO_BLOCK)
 		return(FALSE);
@@ -250,16 +249,25 @@ ext4_data_overlaps_reserved_clusters(struct super_block *sp, block64_t block)
 	    cluster_end))
 		return(TRUE);
 
-	for (i = 0; i < sp->s_groups_count; i++) {
-		gd = &sp->s_group_desc[i];
-		if ((gd->block_bitmap >= cluster_first &&
-		    gd->block_bitmap < cluster_end) ||
-		    (gd->inode_bitmap >= cluster_first &&
-		    gd->inode_bitmap < cluster_end) ||
-		    (gd->inode_table < cluster_end &&
-		    cluster_first < gd->inode_table + sp->s_itb_per_group))
-			return(TRUE);
+	/*
+	 * Ranges are sorted and disjoint by verify_group_descriptor_block_ranges.
+	 * Find the first range whose end exceeds this cluster's first block.
+	 */
+	if (sp->s_metadata_range_count != 0 &&
+	    sp->s_metadata_ranges == NULL)
+		return(TRUE);
+	lo = 0;
+	hi = sp->s_metadata_range_count;
+	while (lo < hi) {
+		mid = lo + (hi - lo) / 2;
+		if (sp->s_metadata_ranges[mid].end <= cluster_first)
+			lo = mid + 1;
+		else
+			hi = mid;
 	}
+	if (lo < sp->s_metadata_range_count &&
+	    sp->s_metadata_ranges[lo].first < cluster_end)
+		return(TRUE);
 	return(FALSE);
 }
 
@@ -1222,12 +1230,6 @@ ext4_check_rw_mount(struct super_block *sp)
 	return(OK);
 }
 
-struct ext4_metadata_range {
-	block64_t first;
-	block64_t end; /* exclusive */
-	unsigned int group;
-};
-
 static int compare_ext4_metadata_ranges(const void *left, const void *right)
 {
 	const struct ext4_metadata_range *a = left;
@@ -1369,7 +1371,12 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		}
 	}
 
-	free(ranges);
+	/*
+	 * Keep the sorted, non-overlapping ranges for O(log groups) BIGALLOC
+	 * data-cluster checks. They remain valid for the life of this mount.
+	 */
+	sp->s_metadata_ranges = ranges;
+	sp->s_metadata_range_count = (u32_t)range_count;
 	return(OK);
 }
 
