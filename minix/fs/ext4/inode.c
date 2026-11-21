@@ -416,6 +416,7 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	rip->i_inline_value_size_offset = 0;
 	rip->i_inline_value_size = 0;
 	rip->i_inline_value_capacity = 0;
+	rip->i_inline_parent = 0;
 	memset(rip->i_inline_data, 0, sizeof(rip->i_inline_data));
 	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
 		return(OK);
