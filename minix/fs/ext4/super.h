@@ -65,7 +65,7 @@ EXTERN struct super_block {
      */
     u8_t    s_prealloc_blocks;      /* Nr of blocks to try to preallocate*/
     u8_t    s_prealloc_dir_blocks;  /* Nr to preallocate for dirs */
-    u16_t   s_padding1;
+    u16_t   s_reserved_gdt_blocks; /* Reserved blocks following the GDT */
     /*
      * Journaling support valid if EXT3_FEATURE_COMPAT_HAS_JOURNAL set.
      */
