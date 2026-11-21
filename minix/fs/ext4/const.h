@@ -114,6 +114,7 @@
 #define COMPAT_EXT_ATTR            0x0008
 #define COMPAT_RESIZE_INO          0x0010
 #define COMPAT_DIR_INDEX           0x0020
+#define COMPAT_SPARSE_SUPER2       0x0200
 #define COMPAT_ORPHAN_FILE         0x1000
 #define RO_COMPAT_SPARSE_SUPER     0x0001
 #define RO_COMPAT_LARGE_FILE       0x0002
@@ -159,8 +160,8 @@
 /* LARGEDIR is read-only: directory blocks are scanned linearly. */
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
-                                     INCOMPAT_CSUM_SEED | INCOMPAT_LARGEDIR | \
-                                     INCOMPAT_INLINE_DATA)
+                                     INCOMPAT_META_BG | INCOMPAT_CSUM_SEED | \
+                                     INCOMPAT_LARGEDIR | INCOMPAT_INLINE_DATA)
 #define SUPPORTED_RO_COMPAT_FEATURES (RO_COMPAT_SPARSE_SUPER | \
                                       RO_COMPAT_LARGE_FILE | \
                                       RO_COMPAT_BTREE_DIR | \
