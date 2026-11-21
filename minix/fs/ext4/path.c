@@ -244,14 +244,14 @@ ext4_dx_str2hashbuf(const char *name, int len, u32_t *buf, int num,
 
 	while (len >= 4) {
 		if (use_unsigned) {
-			value = ((u32_t)(unsigned char)name[0] << 24) |
-			    ((u32_t)(unsigned char)name[1] << 16) |
-			    ((u32_t)(unsigned char)name[2] << 8) |
+			value = ((u32_t)(unsigned char)name[0] << 24) +
+			    ((u32_t)(unsigned char)name[1] << 16) +
+			    ((u32_t)(unsigned char)name[2] << 8) +
 			    (u32_t)(unsigned char)name[3];
 		} else {
-			value = ((u32_t)(long)(signed char)name[0] << 24) |
-			    ((u32_t)(long)(signed char)name[1] << 16) |
-			    ((u32_t)(long)(signed char)name[2] << 8) |
+			value = ((u32_t)(long)(signed char)name[0] << 24) +
+			    ((u32_t)(long)(signed char)name[1] << 16) +
+			    ((u32_t)(long)(signed char)name[2] << 8) +
 			    (u32_t)(long)(signed char)name[3];
 		}
 		*buf++ = value;
@@ -609,7 +609,7 @@ ext4_htree_search_block(struct inode *dir, const char *name, unsigned int len,
 	}
 
 	block_limit = block_size;
-	for (block_off = 0; block_off < block_limit; block_off += rec_len) {
+	for (block_off = 0; block_off < block_limit;) {
 		dp = (struct ext2_disk_dir_desc *)(b_data(bp) + block_off);
 		if (!ext4_valid_dirent(dp, block_off, block_size)) {
 			put_block(bp);
@@ -634,6 +634,7 @@ ext4_htree_search_block(struct inode *dir, const char *name, unsigned int len,
 				return(OK);
 			}
 		}
+		block_off += rec_len;
 	}
 	put_block(bp);
 	return(ENOENT);
