@@ -257,6 +257,11 @@ static void free_inode_bit(struct super_block *sp, bit_t bit_returned,
 	panic("can't get group_desc to alloc block");
 
   bp = get_block(sp->s_dev, gd->inode_bitmap, NORMAL);
+  if (ext4_init_group_bitmap(sp, (unsigned int)group, bp,
+      TRUE) != OK) {
+	put_block(bp);
+	panic("ext4: cannot initialize inode bitmap for group %d", group);
+  }
 
   if (unsetbit(b_bitmap(bp), bit))
 	panic("Tried to free unused inode %d", bit_returned);
