@@ -89,6 +89,91 @@ struct inode *advance(struct inode *dirp, const char *string)
 }
 
 
+/*
+ * Search the two independent dirent areas of an ext4 inline directory.
+ * "." and ".." are implicit: only the parent inode number is stored in
+ * i_block[0..4]. Inline directory mutation is deliberately unsupported.
+ */
+static int
+ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
+	int flag)
+{
+	const unsigned char *areas[2];
+	unsigned int lengths[2], area, offset, rec_len, name_len;
+	struct ext2_disk_dir_desc *dp;
+	ino_t child;
+	int empty;
+
+	if (flag == ENTER || flag == DELETE)
+		return(EOPNOTSUPP);
+	if (dir->i_inline_size < EXT4_INLINE_DATA_MIN ||
+	    dir->i_inline_size > EXT4_INLINE_DATA_MAX ||
+	    dir->i_inline_size != EXT4_INLINE_DATA_MIN +
+	    dir->i_inline_value_size ||
+	    dir->i_inline_parent == 0 ||
+	    dir->i_inline_parent > dir->i_sp->s_inodes_count)
+		return(EIO);
+
+	if (flag == LOOK_UP) {
+		if (strcmp(string, ".") == 0) {
+			*numb = dir->i_num;
+			return(OK);
+		}
+		if (strcmp(string, "..") == 0) {
+			*numb = (ino_t)dir->i_inline_parent;
+			return(OK);
+		}
+	}
+
+	areas[0] = dir->i_inline_data + sizeof(u32_t);
+	lengths[0] = EXT4_INLINE_DATA_MIN - sizeof(u32_t);
+	areas[1] = dir->i_inline_data + EXT4_INLINE_DATA_MIN;
+	lengths[1] = dir->i_inline_value_size;
+	empty = TRUE;
+
+	for (area = 0; area < 2; area++) {
+		if (lengths[area] == 0)
+			continue;
+		if (lengths[area] < MIN_DIR_ENTRY_SIZE ||
+		    (lengths[area] & (DIR_ENTRY_ALIGN - 1)) != 0)
+			return(EIO);
+		for (offset = 0; offset < lengths[area]; offset += rec_len) {
+			dp = (struct ext2_disk_dir_desc *)(areas[area] + offset);
+			if (!ext4_valid_dirent(dp, offset, lengths[area]))
+				return(EIO);
+			rec_len = ext4_dir_rec_len(dp, lengths[area]);
+			if (rec_len > lengths[area] - offset)
+				return(EIO);
+			if (dp->d_ino == NO_ENTRY)
+				continue;
+
+			name_len = dp->d_name_len;
+			if (name_len > EXT2_NAME_MAX || name_len > NAME_MAX)
+				return(EIO);
+			if ((name_len == 1 && dp->d_name[0] == '.') ||
+			    (name_len == 2 && dp->d_name[0] == '.' &&
+			    dp->d_name[1] == '.'))
+				return(EIO);
+
+			child = (ino_t)conv4(le_CPU, dp->d_ino);
+			if (child == NO_ENTRY ||
+			    child > dir->i_sp->s_inodes_count)
+				return(EIO);
+
+			empty = FALSE;
+			if (flag == LOOK_UP &&
+			    ansi_strcmp(dp->d_name, string, name_len) == 0) {
+				*numb = child;
+				return(OK);
+			}
+			if (flag == IS_EMPTY)
+				return(ENOTEMPTY);
+		}
+	}
+
+	return(flag == IS_EMPTY ? OK : ENOENT);
+}
+
 /*===========================================================================*
  *				search_dir				     *
  *				ldir_ptr: ptr to inode for dir to search
@@ -130,6 +215,11 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 
   if ((string_len = strlen(string)) > EXT2_NAME_MAX)
 	return(ENAMETOOLONG);
+
+  if (ldir_ptr->i_sp->s_is_ext4 &&
+      HAS_INCOMPAT_FEATURE(ldir_ptr->i_sp, INCOMPAT_INLINE_DATA) &&
+      (ldir_ptr->i_flags & EXT4_INLINE_DATA_FL))
+	return(ext4_search_inline_dir(ldir_ptr, string, numb, flag));
 
   if (flag == ENTER) {
 	required_space = MIN_DIR_ENTRY_SIZE + string_len;
