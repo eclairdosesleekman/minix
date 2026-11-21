@@ -392,10 +392,10 @@ ext4_inode_read32(const unsigned char *raw, size_t offset)
 }
 
 /*
- * Decode the bounded read-only subset of ext4 inline data. The first 60
- * bytes are stored in i_block; any additional bytes are in the value of
- * the inode-body xattr "system.data". Inline directories use a different
- * on-disk layout and are deliberately rejected here.
+ * Decode ext4 inline regular files, symlinks, and the read-only inline
+ * directory format. For directories, i_block[0..4] is the parent inode and
+ * i_block[4..60] is a separate dirent area; system.data, when nonempty, is a
+ * second independent dirent area in the inode-body xattr.
  */
 static int
 ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
@@ -426,9 +426,10 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 		return(EIO);
 
 	type = rip->i_mode & I_TYPE;
-	if (type == I_DIRECTORY)
+	if (type != I_REGULAR && type != I_SYMBOLIC_LINK &&
+	    type != I_DIRECTORY)
 		return(EOPNOTSUPP);
-	if (type != I_REGULAR && type != I_SYMBOLIC_LINK)
+	if (type == I_DIRECTORY && (rip->i_flags & EXT2_INDEX_FL))
 		return(EOPNOTSUPP);
 	/* EA inodes store xattr values as file data, not inline file contents. */
 	if (rip->i_flags & EXT4_EA_INODE_FL)
@@ -528,6 +529,10 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	if (rip->i_size < 0 ||
 	    (u64_t)rip->i_size > EXT4_INLINE_DATA_MIN + value_size)
 		return(EIO);
+	if (type == I_DIRECTORY &&
+	    ((u64_t)rip->i_size != EXT4_INLINE_DATA_MIN + value_size ||
+	    rip->i_size < EXT4_INLINE_DATA_MIN))
+		return(EIO);
 	if (value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
 		return(EOPNOTSUPP);
 	if (value_capacity > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
@@ -544,6 +549,20 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	rip->i_inline_value_size = value_size;
 	rip->i_inline_value_capacity = (u32_t)value_capacity;
 	rip->i_inline_size = EXT4_INLINE_DATA_MIN + (u16_t)value_capacity;
+	rip->i_inline_parent = 0;
+	if (type == I_DIRECTORY) {
+		rip->i_inline_parent = ext4_inode_read32(rip->i_inline_data, 0);
+		if (rip->i_inline_parent == 0 ||
+		    rip->i_inline_parent > rip->i_sp->s_inodes_count)
+			return(EIO);
+		/*
+		 * An inline directory's i_size tracks the actual two dirent
+		 * areas, not the spare capacity that regular inline files may
+		 * retain after truncation.
+		 */
+		rip->i_inline_size = EXT4_INLINE_DATA_MIN + (u16_t)value_size;
+		rip->i_inline_value_capacity = value_size;
+	}
 	return(OK);
 }
 
