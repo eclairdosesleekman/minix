@@ -7,6 +7,7 @@
 
 #include "fs.h"
 #include <assert.h>
+#include <limits.h>
 #include <string.h>
 #include <sys/param.h>
 #include "buf.h"
@@ -355,6 +356,9 @@ ext4_dx_name_hash(struct inode *dir, const char *name, unsigned int len,
 	if (len == 0 || len > EXT2_NAME_MAX)
 		return(EINVAL);
 	use_unsigned = FALSE;
+	/* Match Linux ext4's architecture-dependent signed-char hash mode. */
+	if (CHAR_MIN == 0 && version <= EXT4_DX_HASH_TEA)
+		version += 3;
 	switch (version) {
 	case EXT4_DX_HASH_LEGACY:
 		break;
@@ -468,7 +472,7 @@ ext4_dx_choose_block(struct inode *dir, const unsigned char *data,
 		} else {
 			key = ext4_dx_read32(entry);
 			raw_block = ext4_dx_read32(entry + 4);
-			if (key <= previous_hash)
+			if (key < previous_hash)
 				return(EIO);
 		}
 		previous_hash = key;
