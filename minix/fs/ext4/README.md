@@ -17,7 +17,9 @@ read-write mode.
 - 64-bit regular-file sizes using the inode size-high field.
 - Read-only support for ext4 `meta_bg` group-descriptor placement. The
   descriptor table is assembled in logical order from the classic contiguous
-  prefix and the primary descriptor blocks in later metablock groups.
+  prefix and the primary descriptor blocks in later metablock groups. A
+  `resize_inode` + `meta_bg` combination is rejected, matching the
+  e2fsprogs restriction.
   Descriptor checksums are verified after all descriptor blocks are gathered.
   Primary and backup descriptor blocks in the first, second, and last groups
   of each metablock group are reserved against group bitmap/inode-table
@@ -30,9 +32,11 @@ read-write mode.
 - Read-only support for ext4 `sparse_super2` backup placement. The two
   `s_backup_bgs` values are validated and used to locate backup superblocks
   and classic GDT copies; the same group-selection rules are applied to
-  META_BG descriptor backups. Reserved superblock/GDT blocks are protected
-  from group bitmap/inode-table pointers, file extents, indirect mappings,
-  external extent-tree nodes, and external xattr pointers. Writable mounts
+  META_BG descriptor backups. The selected backup groups may be in either
+  `s_backup_bgs` slot (zero slots are optional). Superblock, GDT, and
+  `resize_inode` reserved-GDT blocks are protected from group bitmap/inode-table
+  pointers, file extents, indirect mappings, external extent-tree nodes, and
+  external xattr pointers. Writable mounts
   remain disabled because the current writer does not update backup copies.
 - Read-only compatibility for quota (`quota`) and project-quota (`project`)
   feature flags, and for `RO_COMPAT_READONLY`. Quota metadata is left
@@ -125,12 +129,13 @@ implementation.
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level
   `large_dir` indexes.
-- **META_BG is read-only:** primary descriptor blocks are loaded from their
-  metablock-group locations, while redundant copies are treated as reserved
-  metadata. Writable mounts are rejected because descriptor writes still use
-  the classic contiguous GDT layout. `SPARSE_SUPER2` + `META_BG` and alternate
-  superblock selection are rejected rather than guessing at descriptor
-  locations.
+- **META_BG and sparse_super2 are read-only:** primary descriptor blocks
+  are loaded from their metablock-group locations, and backup superblock,
+  classic GDT-prefix, and META_BG descriptor blocks are reserved using the
+  actual sparse-super or sparse_super2 group selection. Writable mounts are
+  rejected because descriptor writes still use the classic contiguous GDT
+  layout and do not update backup copies. Alternate-superblock selection is
+  rejected for META_BG and sparse_super2.
 - **Quota metadata is read-only:** filesystems with `quota` or `project`
   enabled can be mounted read-only, but writable mounts are rejected because
   create, link, unlink, truncate, and allocation paths do not update user,
