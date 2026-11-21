@@ -134,7 +134,7 @@ read-write mode.
 - Read-write support for clean filesystems without a journal or indexed
   directories. Lazy `BLOCK_UNINIT` and `INODE_UNINIT` bitmaps are synthesized
   from backup-super/GDT locations and each group's block bitmap, inode bitmap,
-and inode-table range, checked against group free counters, and
+  and inode-table range, checked against group free counters, and
   persisted before their group-descriptor flags are cleared. The
   block and inode bitmaps, group free counters, inode table, superblock
   counters, and data blocks are updated.
