@@ -198,6 +198,11 @@ static block64_t alloc_block_bit(struct super_block *sp, block64_t goal,
 	}
 
 	bp = get_block(sp->s_dev, gd->block_bitmap, NORMAL);
+	if (ext4_init_group_bitmap(sp, (unsigned int)group, bp,
+	    FALSE) != OK) {
+		put_block(bp);
+		panic("ext4: cannot initialize block bitmap for group %d", group);
+	}
 
 	if (rip->i_preallocation &&
 	    gd->free_blocks_count >= (EXT2_PREALLOC_BLOCKS * 4) ) {
@@ -324,6 +329,11 @@ void free_block(struct super_block *sp, block64_t bit_returned)
   }
 
   bp = get_block(sp->s_dev, gd->block_bitmap, NORMAL);
+  if (ext4_init_group_bitmap(sp, (unsigned int)group, bp,
+      FALSE) != OK) {
+	put_block(bp);
+	panic("ext4: cannot initialize block bitmap for group %d", group);
+  }
 
   if (unsetbit(b_bitmap(bp), bit))
 	panic("Tried to free unused block %llu",
