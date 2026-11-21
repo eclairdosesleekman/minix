@@ -33,9 +33,12 @@ read-write mode.
   cluster size and clusters-per-group fields are validated against the block
   geometry; block-bitmap checksum coverage uses one bit per cluster, while
   inode bitmap checksums continue to cover one bit per inode. Extent physical
-  block mapping remains in filesystem-block units. Writable mounts are
-  rejected because the current allocator and truncate paths are not
-  cluster-granular.
+  block mapping remains in filesystem-block units. File-data mappings are
+  rejected when their cluster contains a backup superblock/GDT block or a
+  group block bitmap, inode bitmap, or inode-table block. Metadata pointers
+  are checked at block granularity because multiple metadata blocks may share
+  a cluster. Writable mounts are rejected because the current allocator and
+  truncate paths are not cluster-granular.
 - Read-only support for ext4 `sparse_super2` backup placement. The two
   `s_backup_bgs` values are validated and used to locate backup superblocks
   and classic GDT copies; the same group-selection rules are applied to
@@ -232,8 +235,9 @@ On MINIX, verify pathname lookup, stat, file reads, and directory enumeration
 on each read-only mount, including a BIGALLOC volume with metadata checksums.
 Check that a block bitmap checksum over the cluster-bit length is accepted and
 that a deliberately corrupted checksum is rejected. Writable BIGALLOC mounts
-must fail before the volume is marked unclean. Confirm all attempted writable mounts fail before
-the filesystem is marked unclean. After unmount, run `e2fsck -fn` on each
+must fail before the volume is marked unclean. Confirm all attempted writable
+mounts fail before the filesystem is marked unclean. After unmount, run
+`e2fsck -fn` on each
 image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
 using disposable copies with the relevant superblock bit changed and its
 metadata checksum recomputed when `metadata_csum` is enabled.
