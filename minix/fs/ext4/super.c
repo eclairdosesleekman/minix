@@ -1303,7 +1303,8 @@ ext4_initialize_uninit_bitmaps(struct super_block *sp)
 				ext4_bitmap_set(bitmap, bit);
 
 			if (free_count != gd->free_blocks_count) {
-				printf("ext4: initialized block bitmap count mismatch in group %u (%u != %u)\n",
+				printf("ext4: initialized block bitmap count mismatch "
+				    "in group %u (%u != %u)\n",
 				    group, free_count, gd->free_blocks_count);
 				r = EIO;
 				goto out;
@@ -1347,7 +1348,8 @@ ext4_initialize_uninit_bitmaps(struct super_block *sp)
 				ext4_bitmap_set(bitmap, bit);
 
 			if (free_count != gd->free_inodes_count) {
-				printf("ext4: initialized inode bitmap count mismatch in group %u (%u != %u)\n",
+				printf("ext4: initialized inode bitmap count mismatch "
+				    "in group %u (%u != %u)\n",
 				    group, free_count, gd->free_inodes_count);
 				r = EIO;
 				goto out;
