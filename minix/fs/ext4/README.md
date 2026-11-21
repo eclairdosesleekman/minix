@@ -93,6 +93,9 @@ read-write mode.
   initialize lazy allocation bitmaps safely.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
+  Live entries must also have nonempty names without NUL or slash bytes, and
+  ext4 `file_type` values must be one of the eight defined encodings. Empty
+  inode-zero slots and HTree placeholders remain valid.
 - Directory enumeration maps every ext4 directory `file_type`, including
   Unix-domain sockets (`EXT2_FT_SOCK` to `DT_SOCK`). Filesystems without the
   file-type incompat feature continue to report `DT_UNKNOWN`.
@@ -536,6 +539,14 @@ Also construct descriptors whose pointers are individually in range but alias
 another group's bitmap or inode-table extent; confirm the mount rejects these
 cross-group overlaps without rejecting a valid `flex_bg` layout.
 Use `e2fsck -fn` on the unmounted image after each test.
+
+For directory-entry validation, test ordinary and inline directories with
+valid names at the minimum and maximum supported lengths. On disposable image
+copies, corrupt one live entry at a time with an empty name, an embedded NUL,
+a slash, and reserved ext4 `file_type` values (for example 8 and 255). Lookup
+and `getdents` must fail with `EIO`; inode-zero unused entries and HTree
+placeholders with empty names must remain skippable. Run `e2fsck -fn` on the
+unmounted images after testing.
 
 For directory-entry type coverage, populate a disposable ext4 image on Linux
 with regular files, directories, symlinks, FIFOs, block/character devices,
