@@ -18,9 +18,9 @@ EXTERN struct super_block {
     u32_t  s_free_inodes_count;    /* Free inodes count */
     u32_t  s_first_data_block;     /* First Data Block */
     u32_t  s_log_block_size;       /* Block size */
-    u32_t  s_log_frag_size;        /* Fragment size */
+    u32_t  s_log_frag_size;        /* ext4 s_log_cluster_size */
     u32_t  s_blocks_per_group;     /* # Blocks per group */
-    u32_t  s_frags_per_group;      /* # Clusters per group with BIGALLOC */
+    u32_t  s_frags_per_group;      /* ext4 s_clusters_per_group */
     u32_t  s_inodes_per_group;     /* # Inodes per group */
     u32_t  s_mtime;                /* Mount time */
     u32_t  s_wtime;                /* Write time */
