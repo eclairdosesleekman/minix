@@ -212,10 +212,17 @@ rejected even read-only because recovery is pending. An image carrying
 `RO_COMPAT_READONLY` must likewise reject a writable mount.
 
 ```sh
-truncate -s 1G ext4-bigalloc-ro.img
-mke2fs -F -t ext4 -b 4096 -C 16384 -O bigalloc,^has_journal ext4-bigalloc-ro.img
-dumpe2fs -h ext4-bigalloc-ro.img | grep -E 'Filesystem features|Cluster size|Block size'
-e2fsck -fn ext4-bigalloc-ro.img
+truncate -s 1G ext4-bigalloc-csum-ro.img
+mke2fs -F -t ext4 -b 4096 -C 16384 \
+  -O bigalloc,metadata_csum,^has_journal ext4-bigalloc-csum-ro.img
+dumpe2fs -h ext4-bigalloc-csum-ro.img | grep -E 'Filesystem features|Cluster size|Block size'
+e2fsck -fn ext4-bigalloc-csum-ro.img
+
+truncate -s 1G ext4-bigalloc-nocsum-ro.img
+mke2fs -F -t ext4 -b 4096 -C 65536 \
+  -O bigalloc,^metadata_csum,^has_journal ext4-bigalloc-nocsum-ro.img
+dumpe2fs -h ext4-bigalloc-nocsum-ro.img | grep -E 'Filesystem features|Cluster size|Block size'
+e2fsck -fn ext4-bigalloc-nocsum-ro.img
 
 truncate -s 256M ext4-quota-ro.img
 mke2fs -F -t ext4 -O quota,^has_journal ext4-quota-ro.img
