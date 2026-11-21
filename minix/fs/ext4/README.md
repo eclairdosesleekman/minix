@@ -102,8 +102,11 @@ read-write mode.
   validated before the payload is exposed. Regular-file writes and truncation
   update the existing inline payload in place, but cannot grow the on-disk
   `system.data` value or exceed the capacity already present in the inode.
-  Inline directories, EA-inode-backed values, and VM page mapping remain
-  unsupported.
+  Inline directories can be searched and enumerated read-only. Their
+  implicit `.` and `..` entries are synthesized; the 56-byte dirent area
+  after the parent inode and the `system.data` continuation are validated as
+  separate regions. Inline-directory mutation, EA-inode-backed values, and
+  VM page mapping remain unsupported.
 - Read-write support for clean filesystems without a journal or indexed
   directories, provided every allocation bitmap is already initialized. The
   block and inode bitmaps, group free counters, inode table, superblock
@@ -437,10 +440,17 @@ already allocated inline payload capacity, and shrink/extend it with
 truncate. Writes or truncates beyond the current inline capacity must fail
 without changing the inode. Corrupt the inode-body xattr header, entry
 terminator, duplicate `system.data` entry, value offset/size, or inode size
-independently and confirm the inode is rejected with `EIO`. Inline directories, payloads larger than the in-core 256-byte bound, external
-xattr-inode values, growth requiring a larger `system.data` xattr value, and
-page mapping must remain unsupported. Run
-`e2fsck -fn` on the unmounted image after testing.
+independently and confirm the inode is rejected with `EIO`. Payloads larger
+than the in-core 256-byte bound, external xattr-inode values, growth requiring
+a larger `system.data` xattr value, and page mapping must remain unsupported.
+For inline-directory coverage, create nested small directories so some entries
+remain in the 56-byte inode area and others spill into `system.data`. Verify
+lookup of ordinary names, `.`, and `..`, plus repeated getdents calls with
+small output buffers and seeks to returned cookies. Corrupt the stored parent
+inode and each dirent area's record lengths, inode numbers, and names; lookup
+or readdir must report `EIO`. Inline-directory create, unlink, rename, and
+rmdir mutations must fail without partially changing the inode or parent
+directory. Run `e2fsck -fn` on the unmounted image after testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
 `metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:
