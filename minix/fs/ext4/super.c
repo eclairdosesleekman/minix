@@ -456,6 +456,9 @@ int read_super(register struct super_block *sp)
 	if (dev == NO_DEV)
 		panic("request for super_block of NO_DEV");
 
+	/* Do not carry pending descriptor writes across failed mount attempts. */
+	group_descriptors_dirty = 0;
+
 	if (opt.block_with_super == 0)
 		super_block_offset = SUPER_BLOCK_BYTES;
 	else
