@@ -102,7 +102,6 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 	unsigned int lengths[2], area, offset, rec_len, name_len;
 	struct ext2_disk_dir_desc *dp;
 	ino_t child;
-	int empty;
 
 	if (flag == ENTER || flag == DELETE)
 		return(EOPNOTSUPP);
@@ -129,7 +128,6 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 	lengths[0] = EXT4_INLINE_DATA_MIN - sizeof(u32_t);
 	areas[1] = dir->i_inline_data + EXT4_INLINE_DATA_MIN;
 	lengths[1] = dir->i_inline_value_size;
-	empty = TRUE;
 
 	for (area = 0; area < 2; area++) {
 		if (lengths[area] == 0)
@@ -160,7 +158,6 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 			    child > dir->i_sp->s_inodes_count)
 				return(EIO);
 
-			empty = FALSE;
 			if (flag == LOOK_UP &&
 			    ansi_strcmp(dp->d_name, string, name_len) == 0) {
 				*numb = child;
