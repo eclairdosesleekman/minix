@@ -1208,10 +1208,11 @@ verify_group_bitmap_checksums(dev_t dev, struct super_block *sp,
 }
 
 /*
- * The allocator operates directly on on-disk bitmaps. It cannot yet
- * synthesize the bitmap contents represented by BLOCK_UNINIT/INODE_UNINIT,
- * so a writable mount must reject such groups rather than allocating from an
- * uninitialized bitmap.
+ * Lazy bitmap initialization is supported for ordinary (non-BIGALLOC)
+ * writable filesystems. The synthesized bitmap is validated against the
+ * free counter in its group descriptor before the uninitialized flag is
+ * cleared, so a bad descriptor cannot silently turn reserved blocks into
+ * allocatable space.
  */
 int
 ext4_check_rw_mount(struct super_block *sp)
@@ -1220,13 +1221,158 @@ ext4_check_rw_mount(struct super_block *sp)
 	u16_t flags;
 	const unsigned char *desc;
 
-	/* Check all filesystems: the allocator cannot initialize lazy bitmaps. */
 	for (i = 0; i < sp->s_groups_count; i++) {
 		desc = ondisk_group_descs + (size_t)i * sp->s_desc_size;
 		flags = ext4_read16(desc + 18);
-		if (flags & (EXT4_BG_BLOCK_UNINIT | EXT4_BG_INODE_UNINIT))
+
+		/* Linux ext4 treats an uninitialized inode bitmap in group 0
+		 * as filesystem corruption: reserved inodes live there.
+		 */
+		if (i == 0 && (flags & EXT4_BG_INODE_UNINIT))
+			return(EIO);
+		if ((flags & EXT4_BG_BLOCK_UNINIT) &&
+		    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
 			return(EOPNOTSUPP);
+		if ((flags & (EXT4_BG_BLOCK_UNINIT |
+		    EXT4_BG_INODE_UNINIT)) &&
+		    (sp->s_metadata_ranges == NULL ||
+		    sp->s_metadata_range_count == 0))
+			return(EIO);
 	}
+	return(OK);
+}
+
+/*
+ * Materialize one ext4 lazy allocation bitmap on first use.
+ *
+ * BLOCK_UNINIT means that the on-disk bitmap is not authoritative. Rebuild
+ * it from every reserved super/GDT range and from all group metadata
+ * pointers. Looking at all groups' metadata ranges is important for FLEX_BG,
+ * where a bitmap or inode table can be physically stored in another group.
+ *
+ * INODE_UNINIT means every valid inode bit is free (except for group zero,
+ * which is rejected by ext4_check_rw_mount); bits beyond the final group's
+ * inode count are marked used.
+ *
+ * The free-bit count must match the descriptor before its uninit flag is
+ * cleared. A mismatch is corruption, not a reason to trust either value.
+ */
+int
+ext4_init_group_bitmap(struct super_block *sp, unsigned int group,
+	struct buf *bp, int inode_bitmap)
+{
+	struct group_desc *gd;
+	struct ext4_metadata_range *range;
+	unsigned char *bitmap, *desc;
+	u64_t group_start, group_end, valid_bits, bit, free_bits;
+	u64_t range_first, range_end;
+	u16_t flags, uninit_flag;
+	size_t n;
+	unsigned int bitmap_bits;
+	int r;
+
+	if (sp == NULL || bp == NULL || group >= sp->s_groups_count ||
+	    sp->s_desc_size < 32)
+		return(EINVAL);
+
+	desc = ondisk_group_descs + (size_t)group * sp->s_desc_size;
+	flags = ext4_read16(desc + 18);
+	uninit_flag = inode_bitmap ? EXT4_BG_INODE_UNINIT :
+	    EXT4_BG_BLOCK_UNINIT;
+	if (!(flags & uninit_flag))
+		return(OK);
+
+	gd = get_group_desc(group);
+	if (gd == NULL)
+		return(EIO);
+	bitmap = (unsigned char *)b_data(bp);
+	bitmap_bits = sp->s_block_size * 8;
+	memset(bitmap, 0, sp->s_block_size);
+
+	if (inode_bitmap) {
+		group_start = (u64_t)group * sp->s_inodes_per_group;
+		if (sp->s_inodes_per_group == 0 ||
+		    group_start >= sp->s_inodes_count || group == 0)
+			return(EIO);
+		valid_bits = sp->s_inodes_count - group_start;
+		if (valid_bits > sp->s_inodes_per_group)
+			valid_bits = sp->s_inodes_per_group;
+
+		/* No inode in a nonzero uninitialized group is allocated. */
+		for (bit = valid_bits; bit < bitmap_bits; bit++)
+			bitmap[bit >> 3] |= (unsigned char)(1U << (bit & 7));
+		free_bits = valid_bits;
+		if (free_bits != gd->free_inodes_count)
+			return(EIO);
+	} else {
+		if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC) ||
+		    sp->s_blocks_per_group == 0 ||
+		    sp->s_metadata_ranges == NULL ||
+		    sp->s_metadata_range_count == 0)
+			return(EOPNOTSUPP);
+
+		group_start = (u64_t)sp->s_first_data_block +
+		    (u64_t)group * sp->s_blocks_per_group;
+		if (group_start >= sp->s_blocks_count)
+			return(EIO);
+		valid_bits = sp->s_blocks_count - group_start;
+		if (valid_bits > sp->s_blocks_per_group)
+			valid_bits = sp->s_blocks_per_group;
+		group_end = group_start + valid_bits;
+
+		/* Bits outside the filesystem, including unused bitmap tail,
+		 * must never be returned by the allocator.
+		 */
+		for (bit = valid_bits; bit < bitmap_bits; bit++)
+			bitmap[bit >> 3] |= (unsigned char)(1U << (bit & 7));
+
+		/* Mark backup superblocks, classic GDT and reserved GDT copies. */
+		for (bit = 0; bit < valid_bits; bit++) {
+			if (ext4_overlaps_super_and_descriptor_blocks(sp,
+			    (block64_t)(group_start + bit),
+			    (block64_t)(group_start + bit + 1)))
+				bitmap[bit >> 3] |=
+				    (unsigned char)(1U << (bit & 7));
+		}
+
+		/* Reserve every block/inode bitmap and inode table, including
+		 * FLEX_BG metadata whose physical location is in this group.
+		 * Ranges are sorted and non-overlapping at mount time.
+		 */
+		for (n = 0; n < sp->s_metadata_range_count; n++) {
+			range = &sp->s_metadata_ranges[n];
+			if (range->end <= group_start)
+				continue;
+			if (range->first >= group_end)
+				break;
+			range_first = range->first > group_start ?
+			    range->first : group_start;
+			range_end = range->end < group_end ?
+			    range->end : group_end;
+			for (bit = range_first; bit < range_end; bit++) {
+				u64_t index = bit - group_start;
+				bitmap[index >> 3] |=
+				    (unsigned char)(1U << (index & 7));
+			}
+		}
+
+		free_bits = 0;
+		for (bit = 0; bit < valid_bits; bit++) {
+			if (!(bitmap[bit >> 3] & (1U << (bit & 7))))
+				free_bits++;
+		}
+		if (free_bits != gd->free_blocks_count)
+			return(EIO);
+	}
+
+	r = ext4_update_bitmap_checksum(sp, group, bitmap, inode_bitmap);
+	if (r != OK)
+		return(r);
+
+	/* Persist the synthesized bitmap before describing it as initialized. */
+	lmfs_markdirty(bp);
+	ext4_store16(desc + 18, flags & ~uninit_flag);
+	group_descriptors_dirty = 1;
 	return(OK);
 }
 
