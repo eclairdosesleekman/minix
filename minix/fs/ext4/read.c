@@ -337,9 +337,8 @@ static block64_t ext4_extent_map(struct inode *rip, u32_t logical)
 					physical += (u64_t)logical - first;
 					if (physical == 0 ||
 					    physical >= rip->i_sp->s_blocks_count ||
-					    ext4_overlaps_super_and_descriptor_blocks(
-					    rip->i_sp, (block64_t)physical,
-					    (block64_t)physical + 1))
+					    ext4_data_overlaps_reserved_clusters(
+					    rip->i_sp, (block64_t)physical))
 						goto corrupt;
 					if (bp != NULL)
 						put_block(bp);
@@ -465,7 +464,7 @@ block64_t read_map(register struct inode *rip, off_t position,
 
 	if (block_pos < EXT2_NDIR_BLOCKS) {
 		b = rip->i_block[block_pos];
-		if (ext4_reserved_metadata_block(rip, b)) {
+		if (ext4_data_overlaps_reserved_clusters(rip->i_sp, b)) {
 			err_code = EIO;
 			return(NO_BLOCK);
 		}
@@ -514,7 +513,7 @@ block64_t read_map(register struct inode *rip, off_t position,
 	if (bp == NULL) return(NO_BLOCK);
 	b = rd_indir(bp, mindex);
 	put_block(bp);
-	if (ext4_reserved_metadata_block(rip, b)) {
+	if (ext4_data_overlaps_reserved_clusters(rip->i_sp, b)) {
 		err_code = EIO;
 		return(NO_BLOCK);
 	}

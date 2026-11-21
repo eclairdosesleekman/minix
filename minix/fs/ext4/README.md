@@ -29,6 +29,16 @@ read-write mode.
   Writable mounts remain disabled because the current writer emits a classic
   contiguous descriptor table. Alternate-superblock selection and malformed
   `s_first_meta_bg` values are rejected.
+- Read-only support for ext4 `bigalloc` clustered allocation. The superblock's
+  cluster size and clusters-per-group fields are validated against the block
+  geometry; block-bitmap checksum coverage uses one bit per cluster, while
+  inode bitmap checksums continue to cover one bit per inode. Extent physical
+  block mapping remains in filesystem-block units. File-data mappings are
+  rejected when their cluster contains a backup superblock/GDT block or a
+  group block bitmap, inode bitmap, or inode-table block. Metadata pointers
+  are checked at block granularity because multiple metadata blocks may share
+  a cluster. Writable mounts are rejected because the current allocator and
+  truncate paths are not cluster-granular.
 - Read-only support for ext4 `sparse_super2` backup placement. The two
   `s_backup_bgs` values are validated and used to locate backup superblocks
   and classic GDT copies; the same group-selection rules are applied to
@@ -129,6 +139,9 @@ implementation.
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level
   `large_dir` indexes.
+- **BIGALLOC is read-only:** block bitmap interpretation and read-only
+  extent mapping understand clusters, but allocation, release, and truncation
+  still operate in individual blocks. Writable mounts are therefore rejected.
 - **META_BG and sparse_super2 are read-only:** primary descriptor blocks
   are loaded from their metablock-group locations, and backup superblock,
   classic GDT-prefix, and META_BG descriptor blocks are reserved using the
@@ -156,8 +169,7 @@ implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, inline
-  directories, inline-data xattr growth, encryption, casefold, bigalloc,
-  and unsupported feature flags are rejected. The filesystem must be clean,
+  directories, inline-data xattr growth, encryption, casefold, and unsupported feature flags are rejected. The filesystem must be clean,
   with an empty legacy orphan list. `orphan_file` is supported only on
   read-only mounts with no pending orphan recovery, as described above.
 - Without `huge_file`, inode writes fail with `EFBIG` rather than silently
@@ -192,14 +204,26 @@ mount -t ext4 /dev/c0d0p1 /mnt
 ```
 
 Read-only feature compatibility can be tested with disposable images made
-by e2fsprogs. Create separate quota, project-quota, and orphan-file images;
-all should mount read-only. The quota and project images, and the clean
+by e2fsprogs. The BIGALLOC, quota, project-quota, and orphan-file images
+described below should all mount read-only. The quota and project images, and the clean
 orphan-file image, must be rejected for read-write mounts. For the orphan-file
 case, also test a copy with `RO_COMPAT_ORPHAN_PRESENT` set: it must be
 rejected even read-only because recovery is pending. An image carrying
 `RO_COMPAT_READONLY` must likewise reject a writable mount.
 
 ```sh
+truncate -s 1G ext4-bigalloc-csum-ro.img
+mke2fs -F -t ext4 -b 4096 -C 16384 \
+  -O bigalloc,metadata_csum,^has_journal ext4-bigalloc-csum-ro.img
+dumpe2fs -h ext4-bigalloc-csum-ro.img | grep -E 'Filesystem features|Cluster size|Block size'
+e2fsck -fn ext4-bigalloc-csum-ro.img
+
+truncate -s 1G ext4-bigalloc-nocsum-ro.img
+mke2fs -F -t ext4 -b 4096 -C 65536 \
+  -O bigalloc,^metadata_csum,^has_journal ext4-bigalloc-nocsum-ro.img
+dumpe2fs -h ext4-bigalloc-nocsum-ro.img | grep -E 'Filesystem features|Cluster size|Block size'
+e2fsck -fn ext4-bigalloc-nocsum-ro.img
+
 truncate -s 256M ext4-quota-ro.img
 mke2fs -F -t ext4 -O quota,^has_journal ext4-quota-ro.img
 
@@ -215,11 +239,22 @@ e2fsck -fn ext4-orphan-ro.img
 ```
 
 On MINIX, verify pathname lookup, stat, file reads, and directory enumeration
-on each read-only mount. Confirm all attempted writable mounts fail before
-the filesystem is marked unclean. After unmount, run `e2fsck -fn` on each
-image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
+on each read-only mount, including a BIGALLOC volume with metadata checksums.
+Check that a block bitmap checksum over the cluster-bit length is accepted and
+that a deliberately corrupted checksum is rejected. Writable BIGALLOC mounts
+must fail before the volume is marked unclean. After unmount, run
+`e2fsck -fn` on each image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
 using disposable copies with the relevant superblock bit changed and its
 metadata checksum recomputed when `metadata_csum` is enabled.
+
+For BIGALLOC, also test at least two cluster ratios (for example, 4 and 16
+filesystem blocks per cluster), with and without `metadata_csum`. Confirm
+that a block bitmap checksum is computed over
+`s_clusters_per_group / 8` bytes, not `s_blocks_per_group / 8`, while inode
+bitmap checksum coverage remains `s_inodes_per_group / 8`. Malformed cluster
+logs, zero clusters-per-group, and a cluster geometry that does not multiply
+back to `s_blocks_per_group` must fail the mount. Writable BIGALLOC mounts
+must be rejected without changing the clean filesystem state.
 
 For read-only sparse_super2 coverage, prepare a disposable image and inspect its
 backup-group list with `dumpe2fs -h`. Confirm that the two listed groups (and

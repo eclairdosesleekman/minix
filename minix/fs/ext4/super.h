@@ -9,6 +9,12 @@
 #ifndef EXT4_SUPER_H
 #define EXT4_SUPER_H
 
+struct ext4_metadata_range {
+    block64_t first;
+    block64_t end; /* exclusive */
+    unsigned int group;
+};
+
 /* super_block (on-disk part) was taken from linux/include/linux/ext2_fs.h */
 EXTERN struct super_block {
     u32_t  s_inodes_count;         /* Inodes count */
@@ -18,9 +24,9 @@ EXTERN struct super_block {
     u32_t  s_free_inodes_count;    /* Free inodes count */
     u32_t  s_first_data_block;     /* First Data Block */
     u32_t  s_log_block_size;       /* Block size */
-    u32_t  s_log_frag_size;        /* Fragment size */
+    u32_t  s_log_frag_size;        /* ext4 s_log_cluster_size */
     u32_t  s_blocks_per_group;     /* # Blocks per group */
-    u32_t  s_frags_per_group;      /* # Fragments per group */
+    u32_t  s_frags_per_group;      /* ext4 s_clusters_per_group */
     u32_t  s_inodes_per_group;     /* # Inodes per group */
     u32_t  s_mtime;                /* Mount time */
     u32_t  s_wtime;                /* Write time */
@@ -107,6 +113,10 @@ EXTERN struct super_block {
     int     s_igsearch; /* all groups below this one have no free inodes */
     u32_t   s_dirs_counter;
     u32_t   s_csum_seed;          /* CRC32C seed for metadata_csum */
+    u32_t   s_cluster_ratio;      /* Filesystem blocks per allocation cluster */
+    u32_t   s_clusters_per_group; /* Allocation clusters per block group */
+    struct ext4_metadata_range *s_metadata_ranges;
+    u64_t   s_metadata_range_count;
 
 } *superblock, *ondisk_superblock;
 
@@ -130,5 +140,7 @@ struct group_desc
 
 int ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	block64_t first, block64_t end);
+int ext4_data_overlaps_reserved_clusters(struct super_block *sp,
+	block64_t block);
 
 #endif /* EXT4_SUPER_H */
