@@ -432,7 +432,7 @@ ext4_set_dir_rec_len(struct ext2_disk_dir_desc *dp, unsigned int rec_len,
 int ext4_valid_dirent(const struct ext2_disk_dir_desc *dp,
     unsigned int offset, unsigned int block_size)
 {
-    unsigned int rec_len;
+    unsigned int rec_len, i;
 
     if (offset > block_size || block_size - offset < MIN_DIR_ENTRY_SIZE)
         return FALSE;
@@ -443,6 +443,31 @@ int ext4_valid_dirent(const struct ext2_disk_dir_desc *dp,
         rec_len > block_size - offset ||
         DIR_ENTRY_ACTUAL_SIZE(dp) > rec_len)
         return FALSE;
+
+    /*
+     * Inode-zero records are unused slots or HTree placeholders. Their
+     * name/type bytes are not live namespace data and may be empty.
+     */
+    if (dp->d_ino != 0) {
+        if (dp->d_name_len == 0)
+            return FALSE;
+
+        /* A POSIX filename cannot contain NUL or slash. */
+        for (i = 0; i < dp->d_name_len; i++) {
+            if (dp->d_name[i] == '\\0' || dp->d_name[i] == '/')
+                return FALSE;
+        }
+
+        /*
+         * ext4's file_type field has only the eight defined values
+         * UNKNOWN through SYMLINK. Reject reserved encodings instead of
+         * silently exposing a corrupt live dirent as DT_UNKNOWN.
+         */
+        if (superblock != NULL && superblock->s_is_ext4 &&
+            HAS_INCOMPAT_FEATURE(superblock, INCOMPAT_FILETYPE) &&
+            dp->d_file_type >= EXT2_FT_MAX)
+            return FALSE;
+    }
 
     return TRUE;
 }
