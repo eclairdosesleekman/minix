@@ -758,6 +758,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 			done = TRUE;
 		} else {
 			pos = 12;
+			r = 0;
 		}
 	}
 	if (!done && pos < 24) {
@@ -768,6 +769,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 			done = TRUE;
 		} else {
 			pos = 24;
+			r = 0;
 		}
 	}
 
