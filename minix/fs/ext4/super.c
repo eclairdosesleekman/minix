@@ -210,6 +210,58 @@ ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
 }
 
 /*
+ * BIGALLOC reserves allocation clusters, not individual blocks. File-data
+ * mappings must not expose another block in a cluster containing a backup
+ * superblock/GDT copy or any group's allocation bitmap/inode table. Metadata
+ * pointers themselves are checked separately at block granularity because
+ * ext4 may place multiple metadata blocks in one cluster.
+ */
+int
+ext4_data_overlaps_reserved_clusters(struct super_block *sp, block64_t block)
+{
+	block64_t cluster_first, cluster_end;
+	u64_t cluster_index, start, end;
+	unsigned int i;
+	struct group_desc *gd;
+
+	if (block >= sp->s_blocks_count)
+		return(TRUE);
+	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
+		return(ext4_overlaps_super_and_descriptor_blocks(sp, block,
+		    block + 1));
+	if (block < sp->s_first_data_block || sp->s_cluster_ratio == 0)
+		return(TRUE);
+
+	cluster_index = (block - sp->s_first_data_block) /
+	    sp->s_cluster_ratio;
+	start = (u64_t)sp->s_first_data_block +
+	    cluster_index * sp->s_cluster_ratio;
+	end = start + sp->s_cluster_ratio;
+	if (end > sp->s_blocks_count)
+		end = sp->s_blocks_count;
+	if (start >= end || end > ((u64_t)~(u64_t)0 >> 1))
+		return(TRUE);
+	cluster_first = (block64_t)start;
+	cluster_end = (block64_t)end;
+
+	if (ext4_overlaps_super_and_descriptor_blocks(sp, cluster_first,
+	    cluster_end))
+		return(TRUE);
+
+	for (i = 0; i < sp->s_groups_count; i++) {
+		gd = &sp->s_group_desc[i];
+		if ((gd->block_bitmap >= cluster_first &&
+		    gd->block_bitmap < cluster_end) ||
+		    (gd->inode_bitmap >= cluster_first &&
+		    gd->inode_bitmap < cluster_end) ||
+		    (gd->inode_table < cluster_end &&
+		    cluster_first < gd->inode_table + sp->s_itb_per_group))
+			return(TRUE);
+	}
+	return(FALSE);
+}
+
+/*
  * Test a physical half-open range against backup superblocks and all group
  * descriptor copies. Classic GDT copies are present in every backup group
  * selected by sparse_super/sparse_super2; META_BG keeps its classic prefix
