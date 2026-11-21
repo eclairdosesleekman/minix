@@ -25,9 +25,15 @@ read-write mode.
   pointers. Classic-prefix descriptor copies in the primary and sparse-super
   backup groups are reserved as well.
   Writable mounts remain disabled because the current writer emits a classic
-  contiguous descriptor table. `sparse_super2` combined with `meta_bg`,
-  alternate-superblock selection, and malformed `s_first_meta_bg` values are
-  rejected.
+  contiguous descriptor table. Alternate-superblock selection and malformed
+  `s_first_meta_bg` values are rejected.
+- Read-only support for ext4 `sparse_super2` backup placement. The two
+  `s_backup_bgs` values are validated and used to locate backup superblocks
+  and classic GDT copies; the same group-selection rules are applied to
+  META_BG descriptor backups. Reserved superblock/GDT blocks are protected
+  from group bitmap/inode-table pointers, file extents, indirect mappings,
+  external extent-tree nodes, and external xattr pointers. Writable mounts
+  remain disabled because the current writer does not update backup copies.
 - Read-only compatibility for quota (`quota`) and project-quota (`project`)
   feature flags, and for `RO_COMPAT_READONLY`. Quota metadata is left
   untouched, so quota-enabled filesystems require read-only mounts.
@@ -209,6 +215,25 @@ the filesystem is marked unclean. After unmount, run `e2fsck -fn` on each
 image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
 using disposable copies with the relevant superblock bit changed and its
 metadata checksum recomputed when `metadata_csum` is enabled.
+
+For read-only sparse_super2 coverage, prepare a disposable image and inspect its
+backup-group list with `dumpe2fs -h`. Confirm that the two listed groups (and
+group zero) are the only groups whose superblock/GDT copies are reserved.
+Also test malformed lists: a nonzero second entry after a zero first entry,
+duplicate backup groups, and out-of-range group numbers must fail the mount.
+Writable mounts must fail before the filesystem is marked unclean.
+
+```sh
+truncate -s 1G ext4-sparse-super2.img
+mke2fs -F -t ext4 -O sparse_super2,^has_journal ext4-sparse-super2.img
+dumpe2fs -h ext4-sparse-super2.img | grep -E 'Filesystem features|Backup block groups'
+e2fsck -fn ext4-sparse-super2.img
+```
+
+Test sparse_super2 with and without META_BG where supported by the installed
+e2fsprogs, including 32-byte and 64-byte descriptors and both checksum modes.
+Run pathname lookup, file reads, directory enumeration, and `e2fsck -fn` after
+unmount on disposable images.
 
 For read-only META_BG coverage, prepare disposable images with e2fsprogs.
 Test both 32-byte and 64-byte group descriptors, classic GDT prefixes with
