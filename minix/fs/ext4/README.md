@@ -15,6 +15,12 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Read-only compatibility for quota (`quota`) and project-quota (`project`)
+  feature flags, and for `RO_COMPAT_READONLY`. Quota metadata is left
+  untouched, so quota-enabled filesystems require read-only mounts.
+  Filesystems with `orphan_file` are accepted read-only only when
+  `RO_COMPAT_ORPHAN_PRESENT` is clear; pending orphan recovery is rejected.
+  Orphan-file maintenance and recovery are not implemented.
 - Linux ext4 extended inode timestamps are decoded and stored using ext4's
   34-bit seconds and nanosecond fields when present in `i_extra_isize`.
   `stat` reports atime/mtime/ctime nanoseconds and the inode creation time
@@ -100,6 +106,17 @@ implementation.
   and `large_dir`; htree directory updates are not implemented. Both
   features can be read on a read-only mount, including multi-level
   `large_dir` indexes.
+- **Quota metadata is read-only:** filesystems with `quota` or `project`
+  enabled can be mounted read-only, but writable mounts are rejected because
+  create, link, unlink, truncate, and allocation paths do not update user,
+  group, or project quota records.
+- **Orphan files are read-only:** a clean `orphan_file` filesystem can be
+  mounted read-only only while `RO_COMPAT_ORPHAN_PRESENT` is clear. When
+  that bit is set, mounting is rejected because orphan-file recovery is not
+  implemented. Writable mounts are rejected because namespace and truncate
+  operations do not maintain the orphan file.
+- **Explicit read-only feature:** `RO_COMPAT_READONLY` always rejects a
+  writable mount, independent of the requested mount mode.
 - **Bounded extent-tree mutation:** an external leaf can be edited only when
   the operation fits in its existing slots and does not change its first
   logical-block key. Operations that need a new node, split/rebalance a node,
@@ -110,8 +127,9 @@ implementation.
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, meta_bg, MMP, inline
   directories, inline-data xattr growth, encryption, casefold, bigalloc,
-  orphan_file, and unsupported feature flags are rejected. The filesystem
-  must be clean, with an empty legacy orphan list.
+  and unsupported feature flags are rejected. The filesystem must be clean,
+  with an empty legacy orphan list. `orphan_file` is supported only on
+  read-only mounts with no pending orphan recovery, as described above.
 - Without `huge_file`, inode writes fail with `EFBIG` rather than silently
   truncating an `i_blocks` value that exceeds 32 bits. With `huge_file`, ext4
   can store a 48-bit sector count, or a 48-bit filesystem-block count when
@@ -142,6 +160,36 @@ may vary):
 service up /service/ext4
 mount -t ext4 /dev/c0d0p1 /mnt
 ```
+
+Read-only feature compatibility can be tested with disposable images made
+by e2fsprogs. Create separate quota, project-quota, and orphan-file images;
+all should mount read-only. The quota and project images, and the clean
+orphan-file image, must be rejected for read-write mounts. For the orphan-file
+case, also test a copy with `RO_COMPAT_ORPHAN_PRESENT` set: it must be
+rejected even read-only because recovery is pending. An image carrying
+`RO_COMPAT_READONLY` must likewise reject a writable mount.
+
+```sh
+truncate -s 256M ext4-quota-ro.img
+mke2fs -F -t ext4 -O quota,^has_journal ext4-quota-ro.img
+
+truncate -s 256M ext4-project-ro.img
+mke2fs -F -t ext4 -O project,^has_journal ext4-project-ro.img
+
+truncate -s 256M ext4-orphan-ro.img
+mke2fs -F -t ext4 -O orphan_file,^has_journal ext4-orphan-ro.img
+
+e2fsck -fn ext4-quota-ro.img
+e2fsck -fn ext4-project-ro.img
+e2fsck -fn ext4-orphan-ro.img
+```
+
+On MINIX, verify pathname lookup, stat, file reads, and directory enumeration
+on each read-only mount. Confirm all attempted writable mounts fail before
+the filesystem is marked unclean. After unmount, run `e2fsck -fn` on each
+image. The pending-orphan and `RO_COMPAT_READONLY` cases should be tested
+using disposable copies with the relevant superblock bit changed and its
+metadata checksum recomputed when `metadata_csum` is enabled.
 
 A baseline host-side test image can be prepared with e2fsprogs. It disables
 journaling, indexed directories, and checksums so basic write operations can
