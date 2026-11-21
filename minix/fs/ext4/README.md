@@ -98,9 +98,10 @@ read-write mode.
   descriptors, initialized allocation bitmaps, Linux inodes, ordinary
   directory leaves, and external extent-tree nodes. External xattr blocks are
   verified on read but are not modified by the current filesystem operations.
-  Indexed-directory mutation remains unsupported. Writable mounts reject
-  groups with `BLOCK_UNINIT` or `INODE_UNINIT`; the allocator cannot yet
-  initialize lazy allocation bitmaps safely.
+  Indexed-directory mutation remains unsupported. Writable mounts now
+  materialize groups carrying `BLOCK_UNINIT` or `INODE_UNINIT`, verify the
+  generated free-bit counts, update bitmap checksums, flush bitmap blocks, and
+  clear the descriptor flags before enabling writes.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
   Live entries must also have nonempty names without NUL or slash bytes, and
@@ -131,7 +132,9 @@ read-write mode.
   separate regions. Inline-directory mutation, EA-inode-backed values, and
   VM page mapping remain unsupported.
 - Read-write support for clean filesystems without a journal or indexed
-  directories, provided every allocation bitmap is already initialized. The
+  directories. Lazy `BLOCK_UNINIT` and `INODE_UNINIT` bitmaps are synthesized
+  from validated metadata ranges, checked against group free counters, and
+  persisted before their group-descriptor flags are cleared. The
   block and inode bitmaps, group free counters, inode table, superblock
   counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
@@ -156,9 +159,10 @@ implementation.
   currently supported write paths: superblock, group descriptors, initialized
   allocation bitmaps, inodes, ordinary directory leaves, and external extent
   nodes. External xattr blocks are verified but have no write/update path in
-  the current server. Writable mounts reject any group with
-  `BLOCK_UNINIT` or `INODE_UNINIT`, because the allocator does not yet
-  synthesize the lazy-initialized bitmaps represented by those flags. Legacy
+  the current server. Lazy block/inode bitmap initialization is supported for
+  non-BIGALLOC writable filesystems: generated bitmaps are checked against the
+  descriptor's free counters, their checksums are updated, and bitmap blocks
+  are flushed before the lazy-init flags are cleared. Legacy
   `gdt_csum` without `metadata_csum` remains supported for read-write mounts;
   its CRC16 checksum is regenerated whenever group descriptors are written.
 - **No indexed-directory updates:** writable mounts reject `dir_index`
