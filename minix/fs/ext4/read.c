@@ -270,7 +270,9 @@ ext4_extent_range_reserved(struct super_block *sp, block64_t first,
 
 	if (first == 0 || first >= end || end > sp->s_blocks_count)
 		return(TRUE);
-	if (ext4_overlaps_super_and_descriptor_blocks(sp, first, end))
+	if (ext4_overlaps_super_and_descriptor_blocks(sp, first, end) ||
+	    ext4_data_overlaps_reserved_clusters(sp, first) ||
+	    ext4_data_overlaps_reserved_clusters(sp, end - 1))
 		return(TRUE);
 	if (sp->s_metadata_range_count != 0 &&
 	    sp->s_metadata_ranges == NULL)
