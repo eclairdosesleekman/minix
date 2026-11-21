@@ -198,7 +198,7 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	root_node->fn_dev = NO_DEV;
 
 	if (!readonly && ext4_initialize_uninit_bitmaps(sp) != OK) {
-		printf("ext4: cannot safely initialize lazy allocation bitmaps\\n");
+		printf("ext4: cannot safely initialize lazy allocation bitmaps\n");
 		put_inode(root_ip);
 		goto bad_mount;
 	}
