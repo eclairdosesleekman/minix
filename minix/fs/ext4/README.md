@@ -376,8 +376,7 @@ the mount or first allocation fails without clearing the flag.
 Unmount cleanly and run `e2fsck -fn`; verify the superblock, group descriptor,
 bitmap, inode, directory-leaf, and extent-node checksums all validate.
 Corrupt one checksum at a time on copies of the image and confirm the mount is
-rejected or the corresponding read reports `EIO`, as appropriate. Do not use
-indexed directories or lazy allocation bitmaps in the writable test.
+rejected or the corresponding read reports `EIO`, as appropriate. Do not use indexed directories in the writable test.
 
 For extended timestamp coverage, use a disposable Linux-created ext4 image
 with 256-byte inodes (so the normal `i_extra_isize` timestamp fields fit):
