@@ -232,9 +232,10 @@ mke2fs -F -t ext4 -b 4096 -g 1024 \
   -O extent,meta_bg,^64bit,^resize_inode,^has_journal \
   ext4-meta-bg-32bit-ro.img
 
-# 64-byte descriptors (4 descriptor blocks for 256 block groups)
+# 64-byte descriptors (4 descriptor blocks for 256 block groups),
+# keeping the first descriptor block in the classic GDT prefix.
 truncate -s 1G ext4-meta-bg-64bit-ro.img
-mke2fs -F -t ext4 -b 4096 -g 1024 \
+MKE2FS_FIRST_META_BG=1 mke2fs -F -t ext4 -b 4096 -g 1024 \
   -O extent,64bit,meta_bg,^resize_inode,^has_journal \
   ext4-meta-bg-64bit-ro.img
 
