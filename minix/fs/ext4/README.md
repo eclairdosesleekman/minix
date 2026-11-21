@@ -219,11 +219,15 @@ numbers are powers of 3, 5, or 7. Verify pathname lookup, file reads, and
 external extent-tree traversal. Corrupt a descriptor checksum and confirm the
 mount fails before any bitmap or inode-table pointer from that descriptor is
 followed. Corrupt bitmap/inode-table pointers to alias primary or backup
-META_BG descriptor blocks and confirm mount rejects them. Construct extent
-records and external extent-node pointers that target each reserved
-META_BG descriptor block and confirm reads fail with `EIO`. Confirm writable
-mounts, `sparse_super2` + `meta_bg`, and alternate-superblock META_BG mounts
-are rejected. Run `e2fsck -fn` after each unmounted-image test.
+META_BG descriptor blocks and confirm mount rejects them. Construct direct
+and legacy-indirect data pointers, extent records, external extent-node
+pointers, and external xattr pointers that target descriptor blocks in both
+the classic prefix/backups and META_BG groups; reads must fail with `EIO`.
+Use an image whose group count ends part-way through a metablock group to
+confirm that the final partial group does not cause out-of-range backup
+descriptor reads. Confirm writable mounts, `sparse_super2` + `meta_bg`,
+and alternate-superblock META_BG mounts are rejected. Run `e2fsck -fn` after
+each unmounted-image test.
 
 ```sh
 # 32-byte descriptors (2 descriptor blocks for 256 block groups)
@@ -239,8 +243,15 @@ MKE2FS_FIRST_META_BG=1 mke2fs -F -t ext4 -b 4096 -g 1024 \
   -O extent,64bit,meta_bg,^resize_inode,^has_journal \
   ext4-meta-bg-64bit-ro.img
 
+# Optional: non-multiple group count to exercise a partial final metablock.
+truncate -s 1100M ext4-meta-bg-partial-ro.img
+MKE2FS_FIRST_META_BG=1 mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,64bit,meta_bg,^resize_inode,^has_journal \
+  ext4-meta-bg-partial-ro.img
+
 e2fsck -fn ext4-meta-bg-32bit-ro.img
 e2fsck -fn ext4-meta-bg-64bit-ro.img
+e2fsck -fn ext4-meta-bg-partial-ro.img
 ```
 
 A baseline host-side test image can be prepared with e2fsprogs. It disables
