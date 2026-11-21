@@ -1230,14 +1230,20 @@ ext4_check_rw_mount(struct super_block *sp)
 		 */
 		if (i == 0 && (flags & EXT4_BG_INODE_UNINIT))
 			return(EIO);
-		if ((flags & EXT4_BG_BLOCK_UNINIT) &&
-		    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
-			return(EOPNOTSUPP);
-		if ((flags & (EXT4_BG_BLOCK_UNINIT |
-		    EXT4_BG_INODE_UNINIT)) &&
-		    (sp->s_metadata_ranges == NULL ||
-		    sp->s_metadata_range_count == 0))
-			return(EIO);
+		if (flags & (EXT4_BG_BLOCK_UNINIT | EXT4_BG_INODE_UNINIT)) {
+			/* The group flags are only trustworthy when their descriptor
+			 * checksum format is enabled and verified at mount time.
+			 */
+			if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_GDT_CSUM) &&
+			    !HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM))
+				return(EOPNOTSUPP);
+			if ((flags & EXT4_BG_BLOCK_UNINIT) &&
+			    HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_BIGALLOC))
+				return(EOPNOTSUPP);
+			if (sp->s_metadata_ranges == NULL ||
+			    sp->s_metadata_range_count == 0)
+				return(EIO);
+		}
 	}
 	return(OK);
 }
@@ -1369,7 +1375,7 @@ ext4_init_group_bitmap(struct super_block *sp, unsigned int group,
 	if (r != OK)
 		return(r);
 
-	/* Persist the synthesized bitmap before describing it as initialized. */
+	/* Dirty the synthesized bitmap before describing it as initialized. */
 	lmfs_markdirty(bp);
 	ext4_store16(desc + 18, flags & ~uninit_flag);
 	group_descriptors_dirty = 1;
