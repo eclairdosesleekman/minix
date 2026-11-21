@@ -212,10 +212,6 @@ ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
 }
 
 /*
- * Test a physical half-open range against primary and backup META_BG
- * descriptor blocks. Iterate by metablock group, not by filesystem block.
- */
-/*
  * Test a physical half-open range against backup superblocks and all group
  * descriptor copies. Classic GDT copies are present in every backup group
  * selected by sparse_super/sparse_super2; META_BG keeps its classic prefix
@@ -230,14 +226,16 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	u64_t first_index, last_index, index, meta_first;
 	u64_t classic_group_count, classic_last_group;
 	u64_t descriptor_start, descriptor_end, max_value;
+	u64_t span_groups, backup_first_group;
 	u64_t candidates[3];
 	unsigned int i, copy_blocks;
 	block64_t descriptor;
 	int meta_bg;
 
 	if (first >= end || sp->s_blocks_per_group == 0 ||
-	    sp->s_groups_count == 0 || first < sp->s_first_data_block &&
-	    end <= sp->s_first_data_block)
+	    sp->s_groups_count == 0 ||
+	    (first < sp->s_first_data_block &&
+	    end <= sp->s_first_data_block))
 		return(FALSE);
 
 	first_group = first <= sp->s_first_data_block ? 0 :
@@ -267,47 +265,73 @@ ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	}
 
 	/*
-	 * Classic GDT copies occupy the blocks immediately after each backup
-	 * superblock. In META_BG filesystems only the prefix before
-	 * s_first_meta_bg remains in this layout.
+	 * The primary classic GDT starts immediately after the primary
+	 * superblock and can extend across a block-group boundary.
+	 */
+	if (meta_bg)
+		copy_blocks = sp->s_first_meta_bg;
+	else
+		copy_blocks = sp->s_gdb_count;
+	descriptor_start = (u64_t)sp->s_first_data_block + 1;
+	if (sp->s_block_size == 1024 && sp->s_first_data_block == 0)
+		descriptor_start++;
+	if (copy_blocks != 0 && descriptor_start < sp->s_blocks_count) {
+		if (copy_blocks > sp->s_blocks_count - descriptor_start)
+			descriptor_end = sp->s_blocks_count;
+		else
+			descriptor_end = descriptor_start + copy_blocks;
+		if (descriptor_start < end && first < descriptor_end)
+			return(TRUE);
+	}
+
+	/*
+	 * Classic backup GDT copies occupy the blocks immediately after each
+	 * backup superblock. In META_BG filesystems only the prefix before
+	 * s_first_meta_bg remains in this layout. Include preceding backup
+	 * groups whose copy can extend into the queried physical group.
 	 */
 	if (meta_bg) {
 		classic_group_count = (u64_t)sp->s_first_meta_bg *
 		    sp->s_desc_per_block;
 		if (classic_group_count > sp->s_groups_count)
 			classic_group_count = sp->s_groups_count;
-		copy_blocks = sp->s_first_meta_bg;
 	} else {
 		classic_group_count = sp->s_groups_count;
-		copy_blocks = sp->s_gdb_count;
 	}
-	if (copy_blocks != 0 && first_group < classic_group_count) {
-		classic_last_group = last_group;
-		if (classic_last_group >= classic_group_count)
-			classic_last_group = classic_group_count - 1;
-		for (group = first_group; group <= classic_last_group; group++) {
-			if (!ext4_group_has_super(sp, (u32_t)group))
-				continue;
-			if (group > (max_value - sp->s_first_data_block) /
-			    sp->s_blocks_per_group)
-				return(FALSE);
-			group_start = (u64_t)sp->s_first_data_block +
-			    group * sp->s_blocks_per_group;
-			if (group_start >= sp->s_blocks_count)
-				continue;
-			descriptor_start = group_start + 1;
-			/* Preserve the 1 KiB first-group layout special case. */
-			if (sp->s_block_size == 1024 && group == 0 &&
-			    sp->s_first_data_block == 0)
-				descriptor_start++;
-			if (descriptor_start >= sp->s_blocks_count)
-				continue;
-			if (copy_blocks > sp->s_blocks_count - descriptor_start)
-				descriptor_end = sp->s_blocks_count;
-			else
-				descriptor_end = descriptor_start + copy_blocks;
-			if (descriptor_start < end && first < descriptor_end)
-				return(TRUE);
+	if (copy_blocks != 0) {
+		span_groups = (u64_t)copy_blocks / sp->s_blocks_per_group + 1;
+		backup_first_group = first_group > span_groups ?
+		    first_group - span_groups : 0;
+		if (backup_first_group < classic_group_count) {
+			classic_last_group = last_group;
+			if (classic_last_group >= classic_group_count)
+				classic_last_group = classic_group_count - 1;
+			for (group = backup_first_group;
+			    group <= classic_last_group; group++) {
+				if (!ext4_group_has_super(sp, (u32_t)group))
+					continue;
+				if (group > (max_value - sp->s_first_data_block) /
+				    sp->s_blocks_per_group)
+					return(FALSE);
+				group_start = (u64_t)sp->s_first_data_block +
+				    group * sp->s_blocks_per_group;
+				if (group_start >= sp->s_blocks_count)
+					continue;
+				descriptor_start = group_start + 1;
+				/* Preserve the 1 KiB first-group layout special case. */
+				if (sp->s_block_size == 1024 && group == 0 &&
+				    sp->s_first_data_block == 0)
+					descriptor_start++;
+				if (descriptor_start >= sp->s_blocks_count)
+					continue;
+				if (copy_blocks >
+				    sp->s_blocks_count - descriptor_start)
+					descriptor_end = sp->s_blocks_count;
+				else
+					descriptor_end = descriptor_start + copy_blocks;
+				if (descriptor_start < end && first < descriptor_end)
+					return(TRUE);
+			}
 		}
 	}
 
