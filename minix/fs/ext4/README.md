@@ -81,9 +81,14 @@ read-write mode.
   descriptors, initialized allocation bitmaps, Linux inodes, ordinary
   directory leaves, and external extent-tree nodes. External xattr blocks are
   verified on read but are not modified by the current filesystem operations.
-  Indexed-directory mutation remains unsupported. Writable mounts reject
-  groups with `BLOCK_UNINIT` or `INODE_UNINIT`; the allocator cannot yet
-  initialize lazy allocation bitmaps safely.
+  Indexed-directory mutation remains unsupported. Groups marked
+  `BLOCK_UNINIT` or `INODE_UNINIT` are initialized on first allocation: the
+  block bitmap is synthesized from backup super/GDT and all group metadata
+  ranges (including `flex_bg` placements), while an uninitialized inode
+  bitmap starts with all valid inode bits free. Tail bits are marked used,
+  synthesized free-bit counts must match the group descriptor, bitmap
+  checksums are regenerated, and the matching uninitialized flag is cleared.
+  An uninitialized inode bitmap in group zero is rejected as corrupt.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
@@ -108,9 +113,10 @@ read-write mode.
   separate regions. Inline-directory mutation, EA-inode-backed values, and
   VM page mapping remain unsupported.
 - Read-write support for clean filesystems without a journal or indexed
-  directories, provided every allocation bitmap is already initialized. The
-  block and inode bitmaps, group free counters, inode table, superblock
-  counters, and data blocks are updated.
+  directories, including groups with lazy `BLOCK_UNINIT`/`INODE_UNINIT`
+  allocation bitmaps. Lazy maps are synthesized and verified against group
+  free counters when first used. The block and inode bitmaps, group free
+  counters, inode table, superblock counters, and data blocks are updated.
 - 64-bit physical block allocation and release.
 - Inline extent roots and existing external extent-tree leaves can be updated
   in place while allocating, writing, and truncating files. External-leaf
@@ -131,12 +137,13 @@ implementation.
 - **Metadata checksums:** `metadata_csum` checksums are verified on
   mount/read and regenerated for every metadata structure modified by the
   currently supported write paths: superblock, group descriptors, initialized
-  allocation bitmaps, inodes, ordinary directory leaves, and external extent
+  allocation bitmaps (including maps synthesized from `BLOCK_UNINIT` and
+  `INODE_UNINIT`), inodes, ordinary directory leaves, and external extent
   nodes. External xattr blocks are verified but have no write/update path in
-  the current server. Writable mounts reject any group with
-  `BLOCK_UNINIT` or `INODE_UNINIT`, because the allocator does not yet
-  synthesize the lazy-initialized bitmaps represented by those flags. Legacy
-  `gdt_csum` without `metadata_csum` remains supported for read-write mounts;
+  the current server. Lazy bitmaps are generated on first allocation, checked
+  against descriptor free counters, and have their metadata checksums
+  regenerated before the descriptor flag is cleared. Legacy `gdt_csum`
+  without `metadata_csum` remains supported for read-write mounts;
   its CRC16 checksum is regenerated whenever group descriptors are written.
 - **No indexed-directory updates:** writable mounts reject `dir_index`
   and `large_dir`; htree directory updates are not implemented. Both
@@ -171,8 +178,9 @@ implementation.
   entries without a complete tree-rebalancing implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
-- Existing restrictions still apply: recovery, MMP, inline
-  directories, inline-data xattr growth, encryption, casefold, and unsupported feature flags are rejected. The filesystem must be clean,
+- Existing restrictions still apply: recovery, MMP, inline-directory
+  mutation, inline-data xattr growth, encryption, casefold, and unsupported
+  feature flags are rejected. The filesystem must be clean,
   with an empty legacy orphan list. `orphan_file` is supported only on
   read-only mounts with no pending orphan recovery, as described above.
 - Without `huge_file`, inode writes fail with `EFBIG` rather than silently
@@ -335,23 +343,36 @@ mke2fs -F -t ext4 -b 4096 \
 e2fsck -fn ext4-rw-test.img
 ```
 
-For writable `metadata_csum` coverage, prepare a separate disposable image
-with initialized allocation bitmaps, no journal, and no indexed directories.
-The mount path rejects groups that still carry `BLOCK_UNINIT` or
-`INODE_UNINIT`; ensure the group flags are clear before attaching the image:
+For writable `metadata_csum` and lazy-bitmap coverage, prepare separate
+disposable images with no journal and no indexed directories. Keep one image
+with the default lazy-initialization policy so at least one group carries
+`BLOCK_UNINIT` or `INODE_UNINIT`; inspect the group flags before mounting.
+Use a second image with eager initialization as a control:
 
 ```sh
-truncate -s 512M ext4-metadata-csum-rw-test.img
-mke2fs -F -t ext4 -b 4096 \
-  -O extent,64bit,metadata_csum,^has_journal,^dir_index,^orphan_file,\
-^uninit_bg -E lazy_itable_init=0 ext4-metadata-csum-rw-test.img
-e2fsck -fy ext4-metadata-csum-rw-test.img
-e2fsck -fn ext4-metadata-csum-rw-test.img
+truncate -s 512M ext4-metadata-csum-lazy-rw-test.img
+mke2fs -F -t ext4 -b 4096 -I 256 \
+  -O extent,64bit,metadata_csum,^has_journal,^dir_index,^orphan_file \
+  -E lazy_itable_init=1,lazy_journal_init=0 \
+  ext4-metadata-csum-lazy-rw-test.img
+dumpe2fs -g ext4-metadata-csum-lazy-rw-test.img
+e2fsck -fn ext4-metadata-csum-lazy-rw-test.img
+
+truncate -s 512M ext4-metadata-csum-eager-rw-test.img
+mke2fs -F -t ext4 -b 4096 -I 256 \
+  -O extent,64bit,metadata_csum,^has_journal,^dir_index,^orphan_file \
+  -E lazy_itable_init=0,lazy_journal_init=0 \
+  ext4-metadata-csum-eager-rw-test.img
+e2fsck -fn ext4-metadata-csum-eager-rw-test.img
 ```
 
-Mount it read-write on MINIX and create/remove files and directories. Exercise
-block/inode allocation and release, file data writes, ordinary directory
-entry insertion/deletion, and writes into an existing external extent leaf.
+Mount the lazy image read-write on MINIX. Create files until allocation selects
+a group marked `BLOCK_UNINIT`, and create enough files to allocate an inode
+from a group marked `INODE_UNINIT`. Confirm that each bit is cleared only
+after its synthesized bitmap matches the group's free counter. Repeat with
+`flex_bg` enabled so metadata for one group resides in another group's range.
+Also test a partial last group and corrupt descriptor free counters to ensure
+the mount or first allocation fails without clearing the flag.
 Unmount cleanly and run `e2fsck -fn`; verify the superblock, group descriptor,
 bitmap, inode, directory-leaf, and extent-node checksums all validate.
 Corrupt one checksum at a time on copies of the image and confirm the mount is
