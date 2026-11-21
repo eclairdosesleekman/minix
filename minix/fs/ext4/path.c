@@ -172,6 +172,473 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 	return(flag == IS_EMPTY ? OK : ENOENT);
 }
 
+
+/* ext4 HTree hash versions stored in dx_root_info.hash_version. */
+#define EXT4_DX_HASH_LEGACY          0
+#define EXT4_DX_HASH_HALF_MD4        1
+#define EXT4_DX_HASH_TEA             2
+#define EXT4_DX_HASH_LEGACY_UNSIGNED 3
+#define EXT4_DX_HASH_HALF_MD4_UNSIGNED 4
+#define EXT4_DX_HASH_TEA_UNSIGNED    5
+
+static u16_t
+ext4_dx_read16(const unsigned char *p)
+{
+	u16_t value;
+
+	memcpy(&value, p, sizeof(value));
+	return((u16_t)conv2(le_CPU, value));
+}
+
+static u32_t
+ext4_dx_read32(const unsigned char *p)
+{
+	u32_t value;
+
+	memcpy(&value, p, sizeof(value));
+	return((u32_t)conv4(le_CPU, value));
+}
+
+static u32_t
+ext4_dx_rol32(u32_t value, unsigned int shift)
+{
+	return((value << shift) | (value >> (32 - shift)));
+}
+
+static u32_t
+ext4_dx_legacy_hash(const char *name, unsigned int len, int use_unsigned)
+{
+	u32_t hash0 = 0x12a3fe2dU, hash1 = 0x37abe8f9U;
+	u32_t hash;
+	int ch;
+
+	while (len-- != 0) {
+		ch = use_unsigned ? (unsigned char)*name :
+		    (signed char)*name;
+		name++;
+		hash = hash1 + (hash0 ^ (u32_t)(ch * 7152373));
+		if (hash & 0x80000000U)
+			hash -= 0x7fffffffU;
+		hash1 = hash0;
+		hash0 = hash;
+	}
+	return(hash0 << 1);
+}
+
+/*
+ * Convert up to num * 4 name bytes into the big-endian words used by ext4's
+ * half-MD4 and TEA directory hashes. Signed and unsigned hash variants
+ * differ only in how bytes with their high bit set are extended.
+ */
+static void
+ext4_dx_str2hashbuf(const char *name, int len, u32_t *buf, int num,
+	int use_unsigned)
+{
+	u32_t pad, value, ch;
+	int i;
+
+	pad = (u32_t)len | ((u32_t)len << 8);
+	pad |= pad << 16;
+	if (len > num * 4)
+		len = num * 4;
+
+	while (len >= 4) {
+		if (use_unsigned) {
+			value = ((u32_t)(unsigned char)name[0] << 24) |
+			    ((u32_t)(unsigned char)name[1] << 16) |
+			    ((u32_t)(unsigned char)name[2] << 8) |
+			    (u32_t)(unsigned char)name[3];
+		} else {
+			value = ((u32_t)(long)(signed char)name[0] << 24) |
+			    ((u32_t)(long)(signed char)name[1] << 16) |
+			    ((u32_t)(long)(signed char)name[2] << 8) |
+			    (u32_t)(long)(signed char)name[3];
+		}
+		*buf++ = value;
+		name += 4;
+		len -= 4;
+		num--;
+	}
+
+	value = pad;
+	for (i = 0; i < len; i++) {
+		ch = use_unsigned ? (u32_t)(unsigned char)name[i] :
+		    (u32_t)(long)(signed char)name[i];
+		value = ch + (value << 8);
+	}
+	if (--num >= 0)
+		*buf++ = value;
+	while (--num >= 0)
+		*buf++ = pad;
+}
+
+#define EXT4_DX_F(x, y, z) ((z) ^ ((x) & ((y) ^ (z))))
+#define EXT4_DX_G(x, y, z) (((x) & (y)) + (((x) ^ (y)) & (z)))
+#define EXT4_DX_H(x, y, z) ((x) ^ (y) ^ (z))
+#define EXT4_DX_ROUND(f, a, b, c, d, x, shift) do { \
+	(a) += f((b), (c), (d)) + (x); \
+	(a) = ext4_dx_rol32((a), (shift)); \
+} while (0)
+
+static void
+ext4_dx_half_md4_transform(u32_t buf[4], const u32_t in[8])
+{
+	u32_t a = buf[0], b = buf[1], c = buf[2], d = buf[3];
+
+	EXT4_DX_ROUND(EXT4_DX_F, a, b, c, d, in[0], 3);
+	EXT4_DX_ROUND(EXT4_DX_F, d, a, b, c, in[1], 7);
+	EXT4_DX_ROUND(EXT4_DX_F, c, d, a, b, in[2], 11);
+	EXT4_DX_ROUND(EXT4_DX_F, b, c, d, a, in[3], 19);
+	EXT4_DX_ROUND(EXT4_DX_F, a, b, c, d, in[4], 3);
+	EXT4_DX_ROUND(EXT4_DX_F, d, a, b, c, in[5], 7);
+	EXT4_DX_ROUND(EXT4_DX_F, c, d, a, b, in[6], 11);
+	EXT4_DX_ROUND(EXT4_DX_F, b, c, d, a, in[7], 19);
+
+	EXT4_DX_ROUND(EXT4_DX_G, a, b, c, d, in[1] + 0x5a827999U, 3);
+	EXT4_DX_ROUND(EXT4_DX_G, d, a, b, c, in[3] + 0x5a827999U, 5);
+	EXT4_DX_ROUND(EXT4_DX_G, c, d, a, b, in[5] + 0x5a827999U, 9);
+	EXT4_DX_ROUND(EXT4_DX_G, b, c, d, a, in[7] + 0x5a827999U, 13);
+	EXT4_DX_ROUND(EXT4_DX_G, a, b, c, d, in[0] + 0x5a827999U, 3);
+	EXT4_DX_ROUND(EXT4_DX_G, d, a, b, c, in[2] + 0x5a827999U, 5);
+	EXT4_DX_ROUND(EXT4_DX_G, c, d, a, b, in[4] + 0x5a827999U, 9);
+	EXT4_DX_ROUND(EXT4_DX_G, b, c, d, a, in[6] + 0x5a827999U, 13);
+
+	EXT4_DX_ROUND(EXT4_DX_H, a, b, c, d, in[3] + 0x6ed9eba1U, 3);
+	EXT4_DX_ROUND(EXT4_DX_H, d, a, b, c, in[7] + 0x6ed9eba1U, 9);
+	EXT4_DX_ROUND(EXT4_DX_H, c, d, a, b, in[2] + 0x6ed9eba1U, 11);
+	EXT4_DX_ROUND(EXT4_DX_H, b, c, d, a, in[6] + 0x6ed9eba1U, 15);
+	EXT4_DX_ROUND(EXT4_DX_H, a, b, c, d, in[1] + 0x6ed9eba1U, 3);
+	EXT4_DX_ROUND(EXT4_DX_H, d, a, b, c, in[5] + 0x6ed9eba1U, 9);
+	EXT4_DX_ROUND(EXT4_DX_H, c, d, a, b, in[0] + 0x6ed9eba1U, 11);
+	EXT4_DX_ROUND(EXT4_DX_H, b, c, d, a, in[4] + 0x6ed9eba1U, 15);
+
+	buf[0] += a;
+	buf[1] += b;
+	buf[2] += c;
+	buf[3] += d;
+}
+
+static void
+ext4_dx_tea_transform(u32_t buf[4], const u32_t in[4])
+{
+	u32_t sum = 0, b0 = buf[0], b1 = buf[1];
+	int rounds = 16;
+
+	do {
+		sum += 0x9e3779b9U;
+		b0 += ((b1 << 4) + in[0]) ^ (b1 + sum) ^
+		    ((b1 >> 5) + in[1]);
+		b1 += ((b0 << 4) + in[2]) ^ (b0 + sum) ^
+		    ((b0 >> 5) + in[3]);
+	} while (--rounds != 0);
+	buf[0] += b0;
+	buf[1] += b1;
+}
+
+#undef EXT4_DX_ROUND
+#undef EXT4_DX_F
+#undef EXT4_DX_G
+#undef EXT4_DX_H
+
+/*
+ * Calculate the 32-bit major HTree hash. Encrypted/casefolded directories
+ * and the newer SipHash encoding are not supported by this server; those
+ * directories continue to use the established linear lookup path.
+ */
+static int
+ext4_dx_name_hash(struct inode *dir, const char *name, unsigned int len,
+	u8_t version, u32_t *hashp)
+{
+	u32_t seed[4], input[8], hash;
+	int i, use_unsigned;
+
+	if (len == 0 || len > EXT2_NAME_MAX)
+		return(EINVAL);
+	use_unsigned = FALSE;
+	switch (version) {
+	case EXT4_DX_HASH_LEGACY:
+		break;
+	case EXT4_DX_HASH_HALF_MD4:
+	case EXT4_DX_HASH_TEA:
+		break;
+	case EXT4_DX_HASH_LEGACY_UNSIGNED:
+	case EXT4_DX_HASH_HALF_MD4_UNSIGNED:
+	case EXT4_DX_HASH_TEA_UNSIGNED:
+		use_unsigned = TRUE;
+		break;
+	default:
+		return(EOPNOTSUPP);
+	}
+
+	seed[0] = 0x67452301U;
+	seed[1] = 0xefcdab89U;
+	seed[2] = 0x98badcfeU;
+	seed[3] = 0x10325476U;
+	for (i = 0; i < 4; i++) {
+		u32_t v = (u32_t)conv4(le_CPU, dir->i_sp->s_hash_seed[i]);
+		if (v != 0) {
+			seed[0] = (u32_t)conv4(le_CPU,
+			    dir->i_sp->s_hash_seed[0]);
+			seed[1] = (u32_t)conv4(le_CPU,
+			    dir->i_sp->s_hash_seed[1]);
+			seed[2] = (u32_t)conv4(le_CPU,
+			    dir->i_sp->s_hash_seed[2]);
+			seed[3] = (u32_t)conv4(le_CPU,
+			    dir->i_sp->s_hash_seed[3]);
+			break;
+		}
+	}
+
+	switch (version) {
+	case EXT4_DX_HASH_LEGACY:
+	case EXT4_DX_HASH_LEGACY_UNSIGNED:
+		hash = ext4_dx_legacy_hash(name, len, use_unsigned);
+		break;
+	case EXT4_DX_HASH_HALF_MD4:
+	case EXT4_DX_HASH_HALF_MD4_UNSIGNED:
+		while (len > 0) {
+			ext4_dx_str2hashbuf(name, (int)len, input, 8,
+			    use_unsigned);
+			ext4_dx_half_md4_transform(seed, input);
+			if (len > 32)
+				len -= 32;
+			else
+				len = 0;
+			name += 32;
+		}
+		hash = seed[1];
+		break;
+	case EXT4_DX_HASH_TEA:
+	case EXT4_DX_HASH_TEA_UNSIGNED:
+		while (len > 0) {
+			ext4_dx_str2hashbuf(name, (int)len, input, 4,
+			    use_unsigned);
+			ext4_dx_tea_transform(seed, input);
+			if (len > 16)
+				len -= 16;
+			else
+				len = 0;
+			name += 16;
+		}
+		hash = seed[0];
+		break;
+	default:
+		return(EOPNOTSUPP);
+	}
+
+	hash &= ~1U;
+	if (hash == 0xfffffffeU)
+		hash = 0xfffffffcU;
+	*hashp = hash;
+	return(OK);
+}
+
+/*
+ * Validate a dx count/limit array and choose the last entry whose hash does
+ * not exceed the target. Entry zero has an implicit hash of zero; its first
+ * word is the count/limit overlay and its second word is the logical block.
+ */
+static int
+ext4_dx_choose_block(struct inode *dir, const unsigned char *data,
+	unsigned int entries_offset, u32_t hash, u64_t dir_blocks,
+	u32_t *blockp)
+{
+	unsigned int block_size, limit, count, expected_limit, i;
+	u32_t previous_hash = 0, key, raw_block, block;
+	const unsigned char *entry;
+	int selected = FALSE;
+
+	block_size = dir->i_sp->s_block_size;
+	if (entries_offset > block_size ||
+	    block_size - entries_offset < 8)
+		return(EIO);
+	expected_limit = (block_size - entries_offset -
+	    (HAS_RO_COMPAT_FEATURE(dir->i_sp, RO_COMPAT_METADATA_CSUM) ?
+	    8 : 0)) / 8;
+	limit = ext4_dx_read16(data + entries_offset);
+	count = ext4_dx_read16(data + entries_offset + 2);
+	if (limit != expected_limit || count == 0 || count > limit)
+		return(EIO);
+
+	for (i = 0; i < count; i++) {
+		entry = data + entries_offset + i * 8;
+		if (i == 0) {
+			key = 0;
+			raw_block = ext4_dx_read32(entry + 4);
+		} else {
+			key = ext4_dx_read32(entry);
+			raw_block = ext4_dx_read32(entry + 4);
+			if (key <= previous_hash)
+				return(EIO);
+		}
+		previous_hash = key;
+		if ((raw_block & 0xf0000000U) != 0)
+			return(EIO);
+		block = raw_block & 0x0fffffffU;
+		if (block == 0 || (u64_t)block >= dir_blocks)
+			return(EIO);
+		if (key <= hash) {
+			*blockp = block;
+			selected = TRUE;
+		}
+	}
+	return(selected ? OK : EIO);
+}
+
+/*
+ * Use the read-only ext4 HTree to select the first leaf for a name. The
+ * returned leaf is only a fast-path candidate: a miss falls back to the
+ * complete linear scan below, which also handles equal-hash continuation
+ * leaves without risking false ENOENT results.
+ */
+static int
+ext4_htree_search_block(struct inode *dir, const char *name, unsigned int len,
+	ino_t *numb)
+{
+	struct buf *bp = NULL;
+	const unsigned char *data;
+	const struct ext2_disk_dir_desc *dot, *dotdot, *fake;
+	u64_t dir_blocks;
+	u32_t hash, child, path_blocks[4];
+	u32_t parent_ino;
+	unsigned int depth, level, entries_offset, block_size, block_off;
+	unsigned int rec_len, block_limit;
+	struct ext2_disk_dir_desc *dp;
+	ino_t child_ino;
+	int r;
+
+	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+		return(ENOENT);
+	if (dir->i_size <= 0)
+		return(EIO);
+	block_size = dir->i_sp->s_block_size;
+	dir_blocks = ((u64_t)dir->i_size + block_size - 1) / block_size;
+	if (dir_blocks < 2)
+		return(EIO);
+
+	bp = get_block_map(dir, 0);
+	if (bp == NULL)
+		return(err_code != OK ? err_code : EIO);
+	data = (const unsigned char *)b_data(bp);
+	if (!ext4_verify_dir_block(dir, data, 0)) {
+		put_block(bp);
+		return(EIO);
+	}
+	dot = (const struct ext2_disk_dir_desc *)data;
+	dotdot = (const struct ext2_disk_dir_desc *)(data + 12);
+	if (!ext4_valid_dirent(dot, 0, block_size) ||
+	    !ext4_valid_dirent(dotdot, 12, block_size) ||
+	    conv4(le_CPU, dot->d_ino) != dir->i_num ||
+	    dot->d_name_len != 1 || dot->d_name[0] != '.' ||
+	    dotdot->d_name_len != 2 || dotdot->d_name[0] != '.' ||
+	    dotdot->d_name[1] != '.' ||
+	    (parent_ino = (u32_t)conv4(le_CPU, dotdot->d_ino)) == 0 ||
+	    parent_ino > dir->i_sp->s_inodes_count) {
+		put_block(bp);
+		return(EIO);
+	}
+
+	if (ext4_dx_read32(data + 24) != 0 || data[29] != 8 ||
+	    data[31] != 0) {
+		put_block(bp);
+		return(EOPNOTSUPP);
+	}
+	depth = data[30];
+	if (depth > (HAS_INCOMPAT_FEATURE(dir->i_sp, INCOMPAT_LARGEDIR) ?
+	    3U : 2U)) {
+		put_block(bp);
+		return(EIO);
+	}
+	r = ext4_dx_name_hash(dir, name, len, data[28], &hash);
+	if (r != OK) {
+		put_block(bp);
+		return(r);
+	}
+
+	path_blocks[0] = 0;
+	for (level = 0; level <= depth; level++) {
+		entries_offset = level == 0 ? 32 : 8;
+		if (level != 0) {
+			fake = (const struct ext2_disk_dir_desc *)data;
+			if (conv4(le_CPU, fake->d_ino) != 0 ||
+			    ext4_dir_rec_len(fake, block_size) != block_size ||
+			    fake->d_name_len != 0 || fake->d_file_type != 0 ||
+			    !ext4_verify_dir_block(dir, data, path_blocks[level])) {
+				put_block(bp);
+				return(EIO);
+			}
+		}
+
+		r = ext4_dx_choose_block(dir, data, entries_offset, hash,
+		    dir_blocks, &child);
+		if (r != OK) {
+			put_block(bp);
+			return(r);
+		}
+		{
+			unsigned int j;
+			for (j = 0; j <= level; j++) {
+				if (path_blocks[j] == child) {
+					put_block(bp);
+					return(EIO);
+				}
+			}
+		}
+
+		if (level == depth)
+			break;
+		path_blocks[level + 1] = child;
+		put_block(bp);
+		bp = get_block_map(dir, (u64_t)child * block_size);
+		if (bp == NULL)
+			return(err_code != OK ? err_code : EIO);
+		data = (const unsigned char *)b_data(bp);
+	}
+	if (child == 0 || (u64_t)child >= dir_blocks) {
+		put_block(bp);
+		return(EIO);
+	}
+	put_block(bp);
+	bp = get_block_map(dir, (u64_t)child * block_size);
+	if (bp == NULL)
+		return(err_code != OK ? err_code : EIO);
+	data = (const unsigned char *)b_data(bp);
+	if (!ext4_verify_dir_block(dir, data, child)) {
+		put_block(bp);
+		return(EIO);
+	}
+
+	block_limit = block_size;
+	for (block_off = 0; block_off < block_limit; block_off += rec_len) {
+		dp = (struct ext2_disk_dir_desc *)(b_data(bp) + block_off);
+		if (!ext4_valid_dirent(dp, block_off, block_size)) {
+			put_block(bp);
+			return(EIO);
+		}
+		rec_len = ext4_dir_rec_len(dp, block_size);
+		if (rec_len > block_limit - block_off) {
+			put_block(bp);
+			return(EIO);
+		}
+		if (dp->d_ino != NO_ENTRY) {
+			child_ino = (ino_t)conv4(le_CPU, dp->d_ino);
+			if (child_ino == NO_ENTRY ||
+			    child_ino > dir->i_sp->s_inodes_count) {
+				put_block(bp);
+				return(EIO);
+			}
+			if (ansi_strcmp(dp->d_name, name,
+			    dp->d_name_len) == 0) {
+				*numb = child_ino;
+				put_block(bp);
+				return(OK);
+			}
+		}
+	}
+	put_block(bp);
+	return(ENOENT);
+}
+
 /*===========================================================================*
  *				search_dir				     *
  *				ldir_ptr: ptr to inode for dir to search
@@ -218,6 +685,21 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
       HAS_INCOMPAT_FEATURE(ldir_ptr->i_sp, INCOMPAT_INLINE_DATA) &&
       (ldir_ptr->i_flags & EXT4_INLINE_DATA_FL))
 	return(ext4_search_inline_dir(ldir_ptr, string, numb, flag));
+
+  /*
+   * Indexed ext4 directories use their HTree to find the likely leaf first.
+   * On a valid index miss, keep the linear fallback for hash-collision
+   * continuation leaves and for names not covered by the index candidate.
+   */
+  if (flag == LOOK_UP && ldir_ptr->i_sp->s_is_ext4 &&
+      (ldir_ptr->i_flags & EXT2_INDEX_FL)) {
+	r = ext4_htree_search_block(ldir_ptr, string,
+	    (unsigned int)string_len, numb);
+	if (r == OK)
+		return(OK);
+	if (r != ENOENT && r != EOPNOTSUPP)
+		return(r);
+  }
 
   if (flag == ENTER) {
 	required_space = MIN_DIR_ENTRY_SIZE + string_len;
