@@ -89,16 +89,61 @@ ext4_meta_bg_is_power(u32_t group, u32_t base)
 	return(group == 1);
 }
 
+/*
+ * Return whether a block group contains a superblock copy. sparse_super2
+ * takes precedence over sparse_super and lists its backup groups in the raw
+ * superblock's s_backup_bgs[2] field at offsets 0x24c and 0x250.
+ */
 static int
-ext4_meta_bg_group_has_super(struct super_block *sp, u32_t group)
+ext4_group_has_super(struct super_block *sp, u32_t group)
 {
+	const unsigned char *raw = (const unsigned char *)ondisk_superblock;
+	u32_t backup0, backup1;
+
+	if (group == 0)
+		return(TRUE);
+	if (HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2)) {
+		backup0 = ext4_read32(raw + 0x24c);
+		backup1 = ext4_read32(raw + 0x250);
+		return(group == backup0 || group == backup1);
+	}
 	if (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_SPARSE_SUPER))
 		return(TRUE);
-	if (group <= 1 || ext4_meta_bg_is_power(group, 3) ||
+	if (group == 1 || ext4_meta_bg_is_power(group, 3) ||
 	    ext4_meta_bg_is_power(group, 5) ||
 	    ext4_meta_bg_is_power(group, 7))
 		return(TRUE);
 	return(FALSE);
+}
+
+static int
+ext4_meta_bg_group_has_super(struct super_block *sp, u32_t group)
+{
+	return(ext4_group_has_super(sp, group));
+}
+
+/*
+ * Validate the two optional sparse_super2 backup group numbers before they
+ * are used to calculate any on-disk metadata locations. Zero means that an
+ * entry is unused; either slot may therefore be zero independently.
+ */
+static int
+ext4_validate_sparse_super2(struct super_block *sp)
+{
+	const unsigned char *raw = (const unsigned char *)ondisk_superblock;
+	u32_t backup0, backup1;
+
+	if (!HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2))
+		return(OK);
+	if (opt.block_with_super != 0)
+		return(EOPNOTSUPP);
+
+	backup0 = ext4_read32(raw + 0x24c);
+	backup1 = ext4_read32(raw + 0x250);
+	if ((backup0 != 0 && backup0 >= sp->s_groups_count) ||
+	    (backup1 != 0 && backup1 >= sp->s_groups_count))
+		return(EINVAL);
+	return(OK);
 }
 
 static int
@@ -165,81 +210,140 @@ ext4_meta_bg_descriptor_block(struct super_block *sp, unsigned int index,
 }
 
 /*
- * Test a physical half-open range against primary and backup META_BG
- * descriptor blocks. Iterate by metablock group, not by filesystem block.
+ * Test a physical half-open range against backup superblocks and all group
+ * descriptor copies. Classic GDT copies are present in every backup group
+ * selected by sparse_super/sparse_super2; META_BG keeps its classic prefix
+ * there and places later descriptor blocks in the first, second, and last
+ * groups of each metablock group.
  */
 int
-ext4_meta_bg_overlaps_descriptor_blocks(struct super_block *sp,
+ext4_overlaps_super_and_descriptor_blocks(struct super_block *sp,
 	block64_t first, block64_t end)
 {
-	u64_t first_group, last_group, first_index, last_index;
-	u64_t index, meta_first, candidates[3];
+	u64_t first_group, last_group, group, group_start;
+	u64_t first_index, last_index, index, meta_first;
+	u64_t classic_group_count, classic_last_group;
+	u64_t descriptor_start, descriptor_end, max_value;
+	u64_t span_groups, backup_first_group;
+	u64_t candidates[3];
 	unsigned int i;
+	u64_t classic_reserved_blocks;
 	block64_t descriptor;
+	int meta_bg;
 
-	if (!HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG) || first >= end ||
-	    sp->s_desc_per_block == 0 || sp->s_blocks_per_group == 0 ||
-	    first < sp->s_first_data_block || end <= sp->s_first_data_block)
+	if (first >= end || sp->s_blocks_per_group == 0 ||
+	    sp->s_groups_count == 0 ||
+	    (first < sp->s_first_data_block &&
+	    end <= sp->s_first_data_block))
 		return(FALSE);
 
-	first_group = (first - sp->s_first_data_block) /
-	    sp->s_blocks_per_group;
-	last_group = (end - 1 - sp->s_first_data_block) /
-	    sp->s_blocks_per_group;
+	first_group = first <= sp->s_first_data_block ? 0 :
+	    (first - sp->s_first_data_block) / sp->s_blocks_per_group;
+	last_group = end - 1 <= sp->s_first_data_block ? 0 :
+	    (end - 1 - sp->s_first_data_block) / sp->s_blocks_per_group;
 	if (first_group >= sp->s_groups_count)
 		return(FALSE);
 	if (last_group >= sp->s_groups_count)
 		last_group = sp->s_groups_count - 1;
 
-	/*
-	 * Descriptor blocks before s_first_meta_bg retain the classic GDT
-	 * placement. Their primary copy and copies in sparse-super backup
-	 * groups must be reserved too; only subsequent metablock groups use
-	 * the first/second/last-group META_BG locations below.
-	 */
-	{
-		u64_t classic_group_count, classic_last_group, group;
-		u64_t group_start, descriptor_start, descriptor_end;
-		u64_t max_value = ((u64_t)~(u64_t)0) >> 1;
-		unsigned int has_super;
+	max_value = ((u64_t)~(u64_t)0) >> 1; /* signed off_t limit */
+	meta_bg = HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG);
 
+	/* Every backup superblock occupies the first block of its group. */
+	for (group = first_group; group <= last_group; group++) {
+		if (!ext4_group_has_super(sp, (u32_t)group))
+			continue;
+		if (group > (max_value - sp->s_first_data_block) /
+		    sp->s_blocks_per_group)
+			return(FALSE);
+		group_start = (u64_t)sp->s_first_data_block +
+		    group * sp->s_blocks_per_group;
+		if (group_start < sp->s_blocks_count &&
+		    group_start >= first && group_start < end)
+			return(TRUE);
+	}
+
+	/*
+	 * The primary classic GDT starts immediately after the primary
+	 * superblock and can extend across a block-group boundary.
+	 */
+	if (meta_bg)
+		classic_reserved_blocks = sp->s_first_meta_bg;
+	else
+		classic_reserved_blocks = sp->s_gdb_count;
+	/* resize_inode reserves additional blocks after each classic GDT copy. */
+	classic_reserved_blocks += sp->s_reserved_gdt_blocks;
+	descriptor_start = (u64_t)sp->s_first_data_block + 1;
+	if (sp->s_block_size == 1024 && sp->s_first_data_block == 0)
+		descriptor_start++;
+	if (classic_reserved_blocks != 0 &&
+	    descriptor_start < sp->s_blocks_count) {
+		if (classic_reserved_blocks > sp->s_blocks_count - descriptor_start)
+			descriptor_end = sp->s_blocks_count;
+		else
+			descriptor_end = descriptor_start + classic_reserved_blocks;
+		if (descriptor_start < end && first < descriptor_end)
+			return(TRUE);
+	}
+
+	/*
+	 * Classic backup GDT copies and any reserved resize_inode GDT blocks
+	 * occupy the blocks immediately after each backup superblock. In
+	 * META_BG filesystems only the prefix before s_first_meta_bg remains
+	 * in this layout. Include preceding backup groups whose reserved
+	 * range can extend into the queried physical group.
+	 */
+	if (meta_bg) {
 		classic_group_count = (u64_t)sp->s_first_meta_bg *
 		    sp->s_desc_per_block;
 		if (classic_group_count > sp->s_groups_count)
 			classic_group_count = sp->s_groups_count;
-		if (first_group < classic_group_count) {
+	} else {
+		classic_group_count = sp->s_groups_count;
+	}
+	if (classic_reserved_blocks != 0) {
+		span_groups = (u64_t)classic_reserved_blocks /
+		    sp->s_blocks_per_group + 1;
+		backup_first_group = first_group > span_groups ?
+		    first_group - span_groups : 0;
+		if (backup_first_group < classic_group_count) {
 			classic_last_group = last_group;
 			if (classic_last_group >= classic_group_count)
 				classic_last_group = classic_group_count - 1;
-			for (group = first_group; group <= classic_last_group;
-			    group++) {
+			for (group = backup_first_group;
+			    group <= classic_last_group; group++) {
+				if (!ext4_group_has_super(sp, (u32_t)group))
+					continue;
 				if (group > (max_value - sp->s_first_data_block) /
 				    sp->s_blocks_per_group)
 					return(FALSE);
 				group_start = (u64_t)sp->s_first_data_block +
 				    group * sp->s_blocks_per_group;
-				has_super = ext4_meta_bg_group_has_super(sp,
-				    (u32_t)group);
+				if (group_start >= sp->s_blocks_count)
+					continue;
+				descriptor_start = group_start + 1;
+				/* Preserve the 1 KiB first-group layout special case. */
 				if (sp->s_block_size == 1024 && group == 0 &&
 				    sp->s_first_data_block == 0)
-					has_super++;
-				if (group_start > max_value - has_super)
-					return(FALSE);
-				descriptor_start = group_start + has_super;
+					descriptor_start++;
 				if (descriptor_start >= sp->s_blocks_count)
 					continue;
-				if ((u64_t)sp->s_first_meta_bg >
+				if (classic_reserved_blocks >
 				    sp->s_blocks_count - descriptor_start)
 					descriptor_end = sp->s_blocks_count;
 				else
 					descriptor_end = descriptor_start +
-					    sp->s_first_meta_bg;
+					    classic_reserved_blocks;
 				if (descriptor_start < end && first < descriptor_end)
 					return(TRUE);
 			}
 		}
 	}
 
+	if (!meta_bg)
+		return(FALSE);
+
+	/* Later META_BG descriptor blocks live at three locations per metablock. */
 	first_index = first_group / sp->s_desc_per_block;
 	if (first_index < sp->s_first_meta_bg)
 		first_index = sp->s_first_meta_bg;
@@ -265,7 +369,6 @@ ext4_meta_bg_overlaps_descriptor_blocks(struct super_block *sp,
 	}
 	return(FALSE);
 }
-
 
 /*===========================================================================*
  *                              read_super                                   *
@@ -403,15 +506,20 @@ int read_super(register struct super_block *sp)
 	    sp->s_desc_per_block;
 
 	/*
-	 * s_first_meta_bg is the first descriptor-block index stored using
-	 * META_BG placement. Earlier descriptor blocks retain the classic GDT
-	 * prefix. Alternate-superblock and SPARSE_SUPER2 META_BG layouts need
-	 * separate backup-location rules and are rejected rather than guessed.
+	 * sparse_super2 backup groups are read from s_backup_bgs[2]. Validate
+	 * their indices before using them when checking reserved metadata.
+	 * Alternate-superblock selection remains unsupported for sparse_super2
+	 * and META_BG because this server reads the primary descriptor layout.
 	 */
+	r = ext4_validate_sparse_super2(sp);
+	if (r != OK)
+		return(r);
 	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG)) {
+		/* e2fsprogs/Linux do not support resize_inode with META_BG. */
+		if (HAS_COMPAT_FEATURE(sp, COMPAT_RESIZE_INO))
+			return(EOPNOTSUPP);
 		if (sp->s_first_meta_bg > sp->s_gdb_count ||
-		    opt.block_with_super != 0 ||
-		    HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2))
+		    opt.block_with_super != 0)
 			return(EOPNOTSUPP);
 		classic_gdb_count = sp->s_first_meta_bg;
 	} else {
@@ -764,7 +872,7 @@ static void super_copy(
 			conv4(le_CPU, source->s_algorithm_usage_bitmap);
   dest->s_prealloc_blocks = source->s_prealloc_blocks;
   dest->s_prealloc_dir_blocks = source->s_prealloc_dir_blocks;
-  dest->s_padding1 = conv2(le_CPU, source->s_padding1);
+  dest->s_reserved_gdt_blocks = conv2(le_CPU, source->s_reserved_gdt_blocks);
 }
 
 
@@ -1109,13 +1217,13 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 		 * Descriptor blocks are reserved metadata, even when META_BG
 		 * places them outside the descriptor's nominal block group.
 		 */
-		if (ext4_meta_bg_overlaps_descriptor_blocks(sp, block_bitmap,
+		if (ext4_overlaps_super_and_descriptor_blocks(sp, block_bitmap,
 		    block_bitmap + 1) ||
-		    ext4_meta_bg_overlaps_descriptor_blocks(sp, inode_bitmap,
+		    ext4_overlaps_super_and_descriptor_blocks(sp, inode_bitmap,
 		    inode_bitmap + 1) ||
-		    ext4_meta_bg_overlaps_descriptor_blocks(sp, inode_table,
+		    ext4_overlaps_super_and_descriptor_blocks(sp, inode_table,
 		    inode_table + table_blocks)) {
-			printf("ext4: group %u metadata overlaps META_BG descriptors\\n",
+			printf("ext4: group %u metadata overlaps reserved superblock/GDT blocks\\n",
 			    i);
 			free(ranges);
 			return(EIO);

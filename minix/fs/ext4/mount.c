@@ -139,11 +139,15 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: large_dir is supported only on read-only mounts\\n");
 		goto bad_mount;
 	}
-	/* META_BG descriptor blocks are scattered across metablock groups.
-	 * write_super() still emits a classic contiguous descriptor table.
+	/* META_BG and sparse_super2 move backup descriptor copies away from
+	 * the single primary GDT. write_super() updates only primary metadata.
 	 */
 	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG)) {
 		printf("ext4: meta_bg is supported only on read-only mounts\\n");
+		goto bad_mount;
+	}
+	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2)) {
+		printf("ext4: sparse_super2 is supported only on read-only mounts\\n");
 		goto bad_mount;
 	}
 	/*
