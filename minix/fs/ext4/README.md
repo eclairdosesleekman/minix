@@ -93,6 +93,9 @@ read-write mode.
   initialize lazy allocation bitmaps safely.
 - Directory record lengths, names, and inode numbers are bounds-checked before
   use.
+- Directory enumeration maps every ext4 directory `file_type`, including
+  Unix-domain sockets (`EXT2_FT_SOCK` to `DT_SOCK`). Filesystems without the
+  file-type incompat feature continue to report `DT_UNKNOWN`.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
@@ -533,6 +536,14 @@ Also construct descriptors whose pointers are individually in range but alias
 another group's bitmap or inode-table extent; confirm the mount rejects these
 cross-group overlaps without rejecting a valid `flex_bg` layout.
 Use `e2fsck -fn` on the unmounted image after each test.
+
+For directory-entry type coverage, populate a disposable ext4 image on Linux
+with regular files, directories, symlinks, FIFOs, block/character devices,
+and a bound Unix-domain socket. Mount it read-only on MINIX and inspect the
+`d_type` values returned by `readdir`/`getdents`: the socket entry must report
+`DT_SOCK` (not `DT_UNKNOWN`). Repeat with an image whose directory entry type
+field is set to `EXT2_FT_UNKNOWN`; it must continue to report `DT_UNKNOWN`.
+Run `e2fsck -fn` after testing the unmounted image.
 
 For read-only `large_dir` coverage, create an ext4 image with
 `large_dir` and `dir_index` enabled (and `orphan_file` disabled), populate
