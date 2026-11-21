@@ -224,8 +224,9 @@ metadata checksum recomputed when `metadata_csum` is enabled.
 For read-only sparse_super2 coverage, prepare a disposable image and inspect its
 backup-group list with `dumpe2fs -h`. Confirm that the two listed groups (and
 group zero) are the only groups whose superblock/GDT copies are reserved.
-Also test malformed lists: a nonzero second entry after a zero first entry,
-duplicate backup groups, and out-of-range group numbers must fail the mount.
+Also test an unused zero in either list slot, including a zero first entry
+followed by a valid second entry. Nonzero out-of-range group numbers must fail
+the mount; alternate-superblock selection is rejected.
 Writable mounts must fail before the filesystem is marked unclean.
 
 ```sh
@@ -487,7 +488,7 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The META_BG read-only layout, extended timestamp, 64 KiB directory-record,
+The META_BG and sparse_super2 read-only layouts, extended timestamp, 64 KiB directory-record,
 `huge_file`, `metadata_csum`, bounded external-extent-leaf update, and writable
 legacy `gdt_csum` changes have not yet been compiled or runtime-tested in a
 MINIX build environment. Treat this as a review candidate and test it on
