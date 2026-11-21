@@ -177,6 +177,11 @@ static bit_t alloc_inode_bit(struct super_block *sp, struct inode *parent,
   ASSERT(gd->free_inodes_count);
 
   bp = get_block(sp->s_dev, gd->inode_bitmap, NORMAL);
+  if (ext4_init_group_bitmap(sp, (unsigned int)group, bp,
+      TRUE) != OK) {
+	put_block(bp);
+	panic("ext4: cannot initialize inode bitmap for group %d", group);
+  }
   bit = setbit(b_bitmap(bp), sp->s_inodes_per_group, 0);
   ASSERT(bit != -1); /* group definitly contains free inode */
 
