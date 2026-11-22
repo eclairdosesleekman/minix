@@ -680,15 +680,14 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   }
 
   /*
-   * COMPAT_DIR_INDEX only says that the filesystem can contain indexed
-   * directories.  This server can search and enumerate HTree directories,
-   * but its generic directory writer does not maintain HTree index blocks.
-   * Refuse namespace changes on an indexed inode before touching any dirent;
-   * ordinary, non-indexed directories remain writable.
+   * Inserting into an indexed directory requires an HTree update, which is
+   * not implemented. Deleting a live leaf entry does not change the index,
+   * but dot entries and the dx root metadata must remain untouched.
    */
   if (ldir_ptr->i_sp->s_is_ext4 &&
       (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
-      (flag == ENTER || flag == DELETE))
+      (flag == ENTER || (flag == DELETE &&
+      (strcmp(string, ".") == 0 || strcmp(string, "..") == 0))))
 	return(EOPNOTSUPP);
 
   block_size = ldir_ptr->i_sp->s_block_size;
@@ -824,7 +823,8 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 					ext4_set_dir_rec_len(prev_dp, temp, block_size);
 				}
 				r = ext4_update_dir_block_csum(ldir_ptr,
-				    (unsigned char *)b_data(bp));
+				    (unsigned char *)b_data(bp),
+				    (u64_t)(pos / block_size));
 				if (r != OK) {
 					put_block(bp);
 					return(r);
@@ -871,13 +871,11 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 
 		prev_dp = dp;
 
-		/* In an indexed ext4 directory, the dx root info follows ".."
-		 * in logical block zero. It is index metadata, not a dirent.
-		 * Leaf blocks are still scanned linearly by this read-only server.
-		 */
-		if (flag == LOOK_UP && pos == 0 &&
+		/* The indexed root's dx info follows ".." in block zero. */
+		if (flag != ENTER && pos == 0 &&
 		    (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
-		    ansi_strcmp(dp->d_name, "..", dp->d_name_len) == 0)
+		    dp->d_name_len == 2 && dp->d_name[0] == '.' &&
+		    dp->d_name[1] == '.')
 			break;
 
 		block_off += rec_len;
@@ -950,7 +948,7 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   }
   entry_rec_len = ext4_dir_rec_len(dp, block_size);
   r = ext4_update_dir_block_csum(ldir_ptr,
-      (unsigned char *)b_data(bp));
+      (unsigned char *)b_data(bp), (u64_t)(pos / block_size));
   if (r != OK) {
 	put_block(bp);
 	return(r);

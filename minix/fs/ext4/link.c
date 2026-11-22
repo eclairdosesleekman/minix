@@ -347,6 +347,21 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 	}
   }
 
+  /*
+   * Rename changes two directory entries and may perform them in separate
+   * steps. Keep it out of indexed parents until both HTree insertion and
+   * transactional rename handling are implemented.
+   */
+  if ((old_dirp->i_sp->s_is_ext4 &&
+      (old_dirp->i_flags & EXT2_INDEX_FL)) ||
+      (new_dirp->i_sp->s_is_ext4 &&
+      (new_dirp->i_flags & EXT2_INDEX_FL))) {
+	put_inode(old_ip);
+	put_inode(old_dirp);
+	put_inode(new_dirp);
+	return(EOPNOTSUPP);
+  }
+
   new_ip = advance(new_dirp, new_name); /* not required to exist */
 
   /* If the node does exist, make sure it's not a mountpoint. */
