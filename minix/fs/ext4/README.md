@@ -8,6 +8,12 @@ read-write mode.
 
 - Extent trees stored in the inode and in external extent nodes (read path,
   depth up to 5).
+- Writable extent-tree root growth for a full depth-one inode root. When
+  splitting a full external leaf requires a fifth inode-root index entry, the
+  four existing entries and new leaf entry are moved into a new external
+  depth-one index node and the inode root is promoted to depth two. The new
+  index checksum (when enabled) and inode `i_blocks` are updated. Splitting
+  full external index nodes and cascading growth remain unsupported.
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock. Group descriptor bitmap and inode-table
@@ -574,6 +580,20 @@ that cannot merge with either neighboring extent. The write should split the
 leaf, add a root index entry, and remain readable after unmount/remount.
 Verify the resulting extent tree with `debugfs`/ `filefrag` and `e2fsck -fn`,
 both with and without `metadata_csum`.
+
+For root-growth coverage, first prepare a depth-one file whose inode-resident
+extent root uses all four index entries and whose selected external leaf is
+full. Write one block into a hole in that leaf, choosing a physical allocation
+that cannot merge with its neighbors. The operation must split the leaf,
+copy the four old root entries plus the new leaf entry into a newly allocated
+depth-one external index node, and change the inode root to depth two with one
+child. Verify the root key, all five child keys/pointers, both leaf checksums,
+the new index-node checksum when `metadata_csum` is enabled, and `i_blocks`
+(accounting for the data block, new leaf, and new index node). Repeat without
+`metadata_csum`. The new external index node must have room for the fifth
+entry; further growth or splitting a full external index node remains
+unsupported and must fail without changing the tree. Unmount and run
+`e2fsck -fn`.
 
 For depth-two and deeper coverage, prepare fragmented files whose inode roots
 have depths two and three (and greater, when the host tools can generate them).
