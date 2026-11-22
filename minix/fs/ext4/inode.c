@@ -929,7 +929,7 @@ int rw_inode(
 	 */
 	if (ext4_validate_inode_xattrs(sp, rip->i_dev, rip->i_num,
 	    (const unsigned char *)dip, EXT2_INODE_SIZE(sp)) != OK) {
-		printf("ext4: invalid inode-body xattrs for inode %llu\\n",
+		printf("ext4: invalid inode-body xattrs for inode %llu\n",
 		    (unsigned long long)rip->i_num);
 		put_block(bp);
 		return(EIO);
