@@ -312,6 +312,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 	size_t node_size = sizeof(rip->i_block);
 	struct buf *bp = NULL;
 	u32_t expected_first_key = 0;
+	u64_t expected_upper_bound = 0x100000000ULL;
 	int expected_depth = -1, have_expected_first = FALSE;
 
 	for (;;) {
@@ -399,6 +400,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 
 				if (length == 0 ||
 				    (have_previous && (u64_t)first < previous_end) ||
+				    logical_end > expected_upper_bound ||
 				    logical_end > 0x100000000ULL ||
 				    physical == 0 ||
 				    physical >= rip->i_sp->s_blocks_count ||
@@ -429,8 +431,10 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 		{
 			block64_t selected_child = 0, child;
 			u32_t previous_key = 0, logical_first, child_lo;
-			u32_t selected_key = 0;
+			u32_t selected_key = 0, next_key;
+			u64_t selected_upper_bound;
 			u16_t child_hi;
+			unsigned int selected_index = 0;
 			int have_previous = FALSE, found = FALSE;
 
 			for (i = 0; i < entries; i++) {
@@ -445,6 +449,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 
 				if ((have_previous &&
 				    logical_first <= previous_key) ||
+				    (u64_t)logical_first >= expected_upper_bound ||
 				    ext4_extent_range_reserved(rip->i_sp, child,
 				    child + 1, FALSE))
 					goto corrupt;
@@ -454,6 +459,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 				if (logical_first <= logical) {
 					selected_child = child;
 					selected_key = logical_first;
+					selected_index = i;
 					found = TRUE;
 				}
 			}
@@ -462,6 +468,23 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 					put_block(bp);
 				return(NO_BLOCK);
 			}
+			/*
+			 * The next index key is the exclusive logical-block limit
+			 * for this child subtree. The final child inherits its
+			 * parent's upper bound.
+			 */
+			if (selected_index + 1 < entries) {
+				memcpy(&next_key, node + 12 +
+				    (selected_index + 1) * 12, sizeof(next_key));
+				next_key = (u32_t)conv4(le_CPU, next_key);
+				selected_upper_bound = next_key;
+			} else {
+				selected_upper_bound = expected_upper_bound;
+			}
+			if (selected_upper_bound <= selected_key ||
+			    selected_upper_bound > expected_upper_bound)
+				goto corrupt;
+
 			if (bp != NULL) {
 				put_block(bp);
 				bp = NULL;
@@ -473,6 +496,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 			node_size = rip->i_sp->s_block_size;
 			expected_depth = depth - 1;
 			expected_first_key = selected_key;
+			expected_upper_bound = selected_upper_bound;
 			have_expected_first = TRUE;
 		}
 	}
