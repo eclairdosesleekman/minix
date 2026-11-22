@@ -924,6 +924,18 @@ int rw_inode(
 	}
 
 	/*
+	 * EA inode references may also be stored in the inode-body xattr area.
+	 * Validate that entry table before following any embedded inode number.
+	 */
+	if (ext4_validate_inode_xattrs(sp, rip->i_dev, rip->i_num,
+	    (const unsigned char *)dip, EXT2_INODE_SIZE(sp)) != OK) {
+		printf("ext4: invalid inode-body xattrs for inode %llu\n",
+		    (unsigned long long)rip->i_num);
+		put_block(bp);
+		return(EIO);
+	}
+
+	/*
 	 * i_file_acl is a 48-bit block pointer on 64-bit Linux ext4 filesystems.
 	 * META_BG descriptor blocks must never be accepted as external xattr
 	 * blocks, even when metadata_csum is disabled.

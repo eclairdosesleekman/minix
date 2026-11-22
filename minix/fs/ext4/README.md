@@ -49,15 +49,18 @@ read-write mode.
   external xattr pointers. Writable mounts
   remain disabled because the current writer does not update backup copies.
 - Read-only compatibility with the ext4 `ea_inode` incompat feature.
-  EA-inode-backed values referenced from external xattr blocks are validated
-  on inode read: the referenced inode checksum, regular-file type, link and
-  reference counts, absence of nested xattrs, exact value size, complete data
-  allocation, CRC32C value hash, and xattr entry hash are checked. Legacy
+  EA-inode-backed values referenced from external xattr blocks and inode-body
+  xattr entries are validated on inode read: the referenced inode checksum,
+  regular-file type, link and reference counts, absence of nested xattrs,
+  exact value size, complete data allocation, CRC32C value hash, and xattr
+  entry hash are checked. Inode-body xattr entry tables and inline value
+  offsets are bounded before EA inode references are followed. Legacy
   Lustre-style EA inode backpointers are recognized. EA storage inodes remain
   outside the pathname namespace, and attribute values are not exposed through
-  a get/list-xattr API. EA inode values in inode-body xattrs are not yet
-  resolved. Writable mounts are rejected because xattr reference counts and
-  EA inode lifetimes are not maintained.
+  a get/list-xattr API. Inline-data `system.data` values stored in EA inodes
+  are still unsupported by the inline-data decoder. Writable mounts are
+  rejected because xattr reference counts and EA inode lifetimes are not
+  maintained.
 
 - External xattr blocks are structurally validated before an inode is exposed,
   even when `metadata_csum` is disabled. The 32-byte header, reference count,
@@ -313,7 +316,10 @@ e2fsck -fn ext4-ea-inode-ro.img
 
 On MINIX, verify pathname lookup, stat, file reads, and directory enumeration
 on each read-only mount, including a BIGALLOC volume with metadata checksums
-and an `ea_inode` volume containing large xattr values. Confirm ordinary file
+and an `ea_inode` volume containing large xattr values. Exercise EA-inode
+references in both external xattr blocks and inode-body xattr entries where
+the test image places them. Corrupt each stored inode number, value size, or
+entry hash and verify that inode loading returns `EIO`. Confirm ordinary file
 contents remain readable, and that EA-inode storage objects cannot be reached
 as directory entries. EA-inode-backed xattr get/list operations are not
 implemented and must not be inferred to work.
