@@ -6,8 +6,7 @@
  * has room. Full depth-one inode roots can grow to depth two; full external
  * depth-one index nodes can split under depth-two ancestors with space, and
  * a full depth-two ancestor can split under a depth-three inode root or a
- * depth-three external ancestor with space under a depth-four root. Deeper
- * Further cascades and root rebalancing remain unsupported.
+ * depth-three external ancestor with space under a depth-four root. Deeper cascades and root rebalancing remain unsupported.
  */
 
 #include "fs.h"
@@ -810,8 +809,9 @@ extent_prepare_ancestor_detach(struct inode *rip,
  * its selected child entry. The inode root has no ancestor, so depth-one
  * roots can update or remove any entry. At greater depths, in-place changes
  * require a non-first entry because changing entry zero alters an ancestor
- * key. The depth-two sole-child detach is safe because it removes the entire
- * intermediate node from the inode root instead of changing its first key.
+ * key. A depth-two sole-child node can be detached from the inode root, and
+ * at root depth four it can also be detached from a non-first depth-three
+ * ancestor while preserving that ancestor's first key.
  */
 static int
 extent_prepare_parent_index(struct inode *rip,
@@ -1840,6 +1840,8 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    ancestor_block == block_to_free ||
 			    grandparent_key != parent_key ||
 			    ancestor_key != grandparent_key ||
+			    ancestor_key <= ancestor_first_key ||
+			    (u64_t)ancestor_key >= ancestor_upper_bound ||
 			    ancestor_upper_bound <= ancestor_first_key ||
 			    ancestor_upper_bound > (u64_t)UINT32_MAX + 1 ||
 			    (root_index + 1 < root_entries &&
