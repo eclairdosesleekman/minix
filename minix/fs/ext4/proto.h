@@ -65,6 +65,8 @@ int fs_lookup(ino_t dir_nr, char *name, struct fsdriver_node *node,
 struct inode *advance(struct inode *dirp, const char *string);
 int search_dir(struct inode *ldir_ptr, const char *string, ino_t *numb,
 	int flag, int ftype);
+int ext4_rename_inline_dirent(struct inode *dir, const char *old_name,
+	const char *new_name, ino_t old_ino);
 
 /* protect.c */
 int fs_chmod(ino_t ino_nr, mode_t *mode);
