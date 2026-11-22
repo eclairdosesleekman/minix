@@ -795,7 +795,7 @@ static struct buf *rahead(register struct inode *rip, block64_t baseblock,
 /*===========================================================================*
  *				get_dtype				     *
  *===========================================================================*/
-static unsigned int get_dtype(struct ext2_disk_dir_desc *dp)
+static unsigned int get_dtype(const struct ext2_disk_dir_desc *dp)
 {
 /* Return the type of the file identified by the given directory entry. */
 
@@ -832,7 +832,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 	const unsigned char *areas[2];
 	unsigned int lengths[2], area, offset, rec_len, name_len;
 	off_t pos, new_pos, cookie, dir_end;
-	struct ext2_disk_dir_desc *dp;
+	const struct ext2_disk_dir_desc *dp;
 	ino_t child;
 	int r, done;
 
@@ -903,7 +903,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 		offset = 0;
 		/* An lseek into a record resumes at that record's start. */
 		while (offset < lengths[area]) {
-			dp = (struct ext2_disk_dir_desc *)(areas[area] + offset);
+			dp = (const struct ext2_disk_dir_desc *)(areas[area] + offset);
 			if (!ext4_valid_dirent(dp, offset, lengths[area])) {
 				r = EIO;
 				break;
@@ -923,7 +923,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 
 		for (; offset < lengths[area]; offset += rec_len,
 		    cookie += rec_len) {
-			dp = (struct ext2_disk_dir_desc *)(areas[area] + offset);
+			dp = (const struct ext2_disk_dir_desc *)(areas[area] + offset);
 			if (!ext4_valid_dirent(dp, offset, lengths[area])) {
 				r = EIO;
 				break;
