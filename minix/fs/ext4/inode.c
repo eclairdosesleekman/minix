@@ -571,8 +571,7 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	}
 
 	inline_size = EXT4_INLINE_DATA_MIN + value_capacity;
-	if (inline_size > EXT4_INLINE_DATA_TOTAL_MAX ||
-	    inline_size > UINT32_MAX)
+	if (inline_size > EXT4_INLINE_DATA_TOTAL_MAX)
 		return(EIO);
 	inline_data = malloc(inline_size);
 	if (inline_data == NULL)
@@ -608,6 +607,7 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	rip->i_inline_parent = inline_parent;
 	return(OK);
 }
+
 static void
 ext4_inode_write32(unsigned char *raw, size_t offset, u32_t value)
 {

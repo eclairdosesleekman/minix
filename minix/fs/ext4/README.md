@@ -776,7 +776,8 @@ referencing inode must fail with `EIO` before returning payload bytes. Also
 verify that an `ea_inode` filesystem is rejected for read-write mounting.
 On the ordinary inline-data image, overwrite bytes in short files and in
 existing `system.data` payloads, extend a file only up to its already
-allocated inline payload capacity, and shrink/extend it with truncate. Writes or truncates beyond the current inline capacity must fail
+allocated inline payload capacity, and shrink/extend it with truncate. Writes or truncates beyond the current
+inline capacity must fail
 without changing the inode. Corrupt the inode-body xattr header, entry
 terminator, duplicate `system.data` entry, value offset/size, or inode size
 independently and confirm the inode is rejected with `EIO`. Payloads larger
