@@ -147,15 +147,19 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	 * remain safe to update, so this feature does not by itself require a
 	 * read-only mount.
 	 */
-	/* META_BG and sparse_super2 move backup descriptor copies away from
-	 * the single primary GDT. write_super() updates only primary metadata.
+	/*
+	 * META_BG places primary descriptor blocks outside the classic
+	 * contiguous GDT written by write_super(), so it remains read-only.
+	 *
+	 * sparse_super2 only changes which groups contain backup copies. Its
+	 * primary superblock and GDT retain their classic locations, and the
+	 * metadata-range checks reserve the selected backup super/GDT blocks
+	 * from allocation. As with sparse_super, normal operations update the
+	 * primary metadata; online resize and backup-copy regeneration are not
+	 * implemented by this server.
 	 */
 	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG)) {
 		printf("ext4: meta_bg is supported only on read-only mounts\\n");
-		goto bad_mount;
-	}
-	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_SPARSE_SUPER2)) {
-		printf("ext4: sparse_super2 is supported only on read-only mounts\\n");
 		goto bad_mount;
 	}
 	/*
