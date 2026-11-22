@@ -1848,11 +1848,14 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	u16_t root_index, root_depth, parent_entries, parent_max;
 	u16_t parent_index, grandparent_entries, grandparent_max;
 	u16_t grandparent_index, ancestor_entries, ancestor_max;
-	u16_t ancestor_index;
-	block64_t parent_block, grandparent_block, ancestor_block, leaf_block;
+	u16_t ancestor_index, greatgrandparent_entries, greatgrandparent_max;
+	u16_t greatgrandparent_index;
+	block64_t parent_block, grandparent_block, ancestor_block;
+	block64_t greatgrandparent_block, leaf_block;
 	u32_t parent_key, grandparent_key, ancestor_key, ancestor_first_key;
+	u32_t greatgrandparent_key, greatgrandparent_first_key;
 	u64_t logical64, physical, grandparent_upper_bound;
-	u64_t ancestor_upper_bound;
+	u64_t ancestor_upper_bound, greatgrandparent_upper_bound;
 	u64_t parent_upper_bound, leaf_upper_bound;
 	u32_t logical, offset, new_length;
 	unsigned int i, insert;
@@ -1876,7 +1879,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	    &grandparent_key, &ancestor_block, &ancestor_entries,
 	    &ancestor_max, &ancestor_index, &ancestor_key,
 	    &ancestor_first_key, &ancestor_upper_bound,
-	    &grandparent_upper_bound,
+	    &greatgrandparent_block, &greatgrandparent_entries,
+	    &greatgrandparent_max, &greatgrandparent_index,
+	    &greatgrandparent_key, &greatgrandparent_first_key,
+	    &greatgrandparent_upper_bound, &grandparent_upper_bound,
 	    &parent_upper_bound, &leaf_upper_bound, &leaf_block)) != OK)
 		return(r);
 	(void)node_size;	/* The selected node has already been bounded. */
