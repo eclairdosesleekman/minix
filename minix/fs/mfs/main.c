@@ -1,6 +1,7 @@
 #include "fs.h"
 #include "buf.h"
 #include "inode.h"
+#include <stdio.h>
 
 
 /* SEF functions and variables. */
@@ -59,9 +60,8 @@ static int sef_cb_init_fresh(int UNUSED(type), sef_init_info_t *UNUSED(info))
 	
   init_inode_cache();
 
-  lmfs_buf_pool(DEFAULT_NR_BUFS);
+  return lmfs_buf_pool_err(DEFAULT_NR_BUFS);
 
-  return(OK);
 }
 
 /*===========================================================================*
@@ -72,7 +72,15 @@ static void sef_cb_signal_handler(int signo)
   /* Only check for termination signal, ignore anything else. */
   if (signo != SIGTERM) return;
 
-  fs_sync();
+  {
+	int r = fs_sync();
+
+	if (r != OK) {
+		printf("MFS: sync failed during shutdown (%d); keeping service alive\n",
+		    r);
+		return;
+	}
+  }
 
   fsdriver_terminate();
 }

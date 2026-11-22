@@ -476,7 +476,7 @@ int unmount(
 {
   struct vnode *vp;
   struct vmnt *vmp_i = NULL, *vmp = NULL;
-  int count, locks, r;
+  int count, locks, r, old_max_reqs, had_canstat;
 
   /* Find vmnt that is to be unmounted */
   for (vmp_i = &vmnt[0]; vmp_i < &vmnt[NR_MNTS]; ++vmp_i) {
@@ -505,25 +505,31 @@ int unmount(
 	return(EBUSY);    /* can't umount a busy file system */
   }
 
-  /* This FS will now disappear, so stop listing it in statistics. */
+  /* This FS may disappear; stop listing it in statistics while the
+   * unmount request is in flight.
+   */
+  had_canstat = (vmp->m_flags & VMNT_CANSTAT) != 0;
   vmp->m_flags &= ~VMNT_CANSTAT;
 
   /* Tell FS to drop all inode references for root inode except 1. */
   vnode_clean_refs(vmp->m_root_node);
 
+  old_max_reqs = vmp->m_comm.c_max_reqs;
+  vmp->m_comm.c_max_reqs = 1; /* Do not send concurrent requests after unmount. */
+
+  /* A failed filesystem sync/unmount must leave the mount active. */
+  if ((r = req_unmount(vmp->m_fs_e)) != OK) {
+	if (had_canstat)
+		vmp->m_flags |= VMNT_CANSTAT;
+	vmp->m_comm.c_max_reqs = old_max_reqs;
+	unlock_vmnt(vmp);
+	return r;
+  }
+
   if (vmp->m_mounted_on) {
 	put_vnode(vmp->m_mounted_on);
 	vmp->m_mounted_on = NULL;
   }
-
-  vmp->m_comm.c_max_reqs = 1;	/* Force max concurrent reqs to just one, so
-				 * we won't send any messages after the
-				 * unmount request */
-
-  /* Tell FS to unmount */
-  if ((r = req_unmount(vmp->m_fs_e)) != OK)              /* Not recoverable. */
-	printf("VFS: ignoring failed umount attempt FS endpoint: %d (%d)\n",
-	       vmp->m_fs_e, r);
 
   if (is_nonedev(vmp->m_dev)) free_nonedev(vmp->m_dev);
 

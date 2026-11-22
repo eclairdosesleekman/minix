@@ -73,15 +73,22 @@ int fsdriver_unmount(const struct fsdriver * __restrict fdp,
 	const message * __restrict __unused m_in,
 	message * __restrict __unused m_out)
 {
+	int r = OK;
 
-	if (fdp->fdr_unmount != NULL)
+	/* Prefer the status-returning hook, but keep existing filesystems working. */
+	if (fdp->fdr_unmount_err != NULL)
+		r = fdp->fdr_unmount_err();
+	else if (fdp->fdr_unmount != NULL)
 		fdp->fdr_unmount();
+
+	if (r != OK)
+		return r;
 
 	/* If we used mmap emulation, clear any cached blocks from VM. */
 	if (fsdriver_vmcache)
 		vm_clear_cache(fsdriver_device);
 
-	/* Update library-local state. */
+	/* Update library-local state only after a successful unmount. */
 	fsdriver_mounted = FALSE;
 
 	return OK;
@@ -830,6 +837,8 @@ int fsdriver_sync(const struct fsdriver * __restrict fdp,
 	const message * __restrict __unused m_in,
 	message * __restrict __unused m_out)
 {
+	if (fdp->fdr_sync_err != NULL)
+		return fdp->fdr_sync_err();
 
 	if (fdp->fdr_sync != NULL)
 		fdp->fdr_sync();
@@ -971,6 +980,9 @@ int fsdriver_flush(const struct fsdriver * __restrict fdp,
 	dev_t dev;
 
 	dev = m_in->m_vfs_fs_flush.device;
+
+	if (fdp->fdr_bflush_err != NULL)
+		return fdp->fdr_bflush_err(dev);
 
 	if (fdp->fdr_bflush != NULL)
 		fdp->fdr_bflush(dev);

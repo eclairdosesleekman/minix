@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <assert.h>
 
 #define VND_BUF_SIZE	65536
@@ -490,7 +491,8 @@ static int vnd_ioctl(devminor_t UNUSED(minor), unsigned long request, endpoint_t
 		if (state.fd == -1)
 			return ENXIO;
 
-		fsync(state.fd);
+		if (fsync(state.fd) < 0)
+			return errno != 0 ? errno : EIO;
 
 		return OK;
 	}

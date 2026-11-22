@@ -36,6 +36,7 @@
 #include <minix/partition.h>
 #include <sys/ioctl.h>
 #include <assert.h>
+#include <stdio.h>
 
 #include "inc.h"
 
@@ -248,12 +249,22 @@ ssize_t lmfs_bio(dev_t dev, struct fsdriver_data * data, size_t bytes, off_t pos
  * This operation is called after a block device is closed and must prevent
  * that stale copies of blocks remain in any cache.
  */
+int lmfs_bflush_err(dev_t dev)
+{
+	int r;
+
+	/* Never invalidate cached data if writing it to disk failed. */
+	if ((r = lmfs_flushdev_err(dev)) != OK)
+		return r;
+
+	lmfs_invalidate(dev);
+	return OK;
+}
+
 void lmfs_bflush(dev_t dev)
 {
+	int r = lmfs_bflush_err(dev);
 
-	/* First flush any dirty blocks on this device to disk. */
-	lmfs_flushdev(dev);
-
-	/* Then purge any blocks associated with the device. */
-	lmfs_invalidate(dev);
+	if (r != OK)
+		printf("libminixfs: block flush failed (%d)\n", r);
 }

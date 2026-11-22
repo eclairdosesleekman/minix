@@ -102,6 +102,10 @@ struct fsdriver {
 	void (*fdr_bflush)(dev_t dev);
 	void (*fdr_postcall)(void);
 	void (*fdr_other)(const message *m_ptr, int ipc_status);
+	/* Optional error-reporting callbacks. Legacy void hooks remain supported. */
+	int (*fdr_unmount_err)(void);
+	int (*fdr_sync_err)(void);
+	int (*fdr_bflush_err)(dev_t dev);
 };
 
 /* Functions defined by libfsdriver. */
