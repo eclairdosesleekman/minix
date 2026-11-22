@@ -106,6 +106,12 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	u16_t *ancestor_maxp, u16_t *ancestor_indexp,
 	u32_t *ancestor_keyp, u32_t *ancestor_first_keyp,
 	u64_t *ancestor_upper_boundp,
+	block64_t *greatgrandparent_blockp,
+	u16_t *greatgrandparent_entriesp, u16_t *greatgrandparent_maxp,
+	u16_t *greatgrandparent_indexp,
+	u32_t *greatgrandparent_keyp,
+	u32_t *greatgrandparent_first_keyp,
+	u64_t *greatgrandparent_upper_boundp,
 	u64_t *grandparent_upper_boundp, u64_t *parent_upper_boundp,
 	u64_t *leaf_upper_boundp,
 	block64_t *leaf_blockp)
@@ -145,6 +151,13 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	*ancestor_keyp = 0;
 	*ancestor_first_keyp = 0;
 	*ancestor_upper_boundp = upper_bound;
+	*greatgrandparent_blockp = NO_BLOCK;
+	*greatgrandparent_entriesp = 0;
+	*greatgrandparent_maxp = 0;
+	*greatgrandparent_indexp = 0;
+	*greatgrandparent_keyp = 0;
+	*greatgrandparent_first_keyp = 0;
+	*greatgrandparent_upper_boundp = upper_bound;
 	*grandparent_upper_boundp = upper_bound;
 	*leaf_blockp = NO_BLOCK;
 	expected_depth = -1;
@@ -299,6 +312,16 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				goto corrupt;
 			if (depth == 2)
 				*grandparent_upper_boundp = upper_bound;
+			if (depth == 4 && bp != NULL) {
+				*greatgrandparent_blockp = current_block;
+				*greatgrandparent_entriesp = entries;
+				*greatgrandparent_maxp = max_entries;
+				*greatgrandparent_indexp = (u16_t)selected_index;
+				*greatgrandparent_keyp = selected_key;
+				*greatgrandparent_first_keyp =
+				    extent_get32(node + 12);
+				*greatgrandparent_upper_boundp = upper_bound;
+			}
 			if (depth == 3 && bp != NULL) {
 				*ancestor_blockp = current_block;
 				*ancestor_entriesp = entries;
@@ -589,6 +612,37 @@ extent_root_ancestor_matches(struct inode *rip, unsigned char *root_node,
 }
 
 /*
+ * Revalidate the depth-five inode root's depth-four child before detaching
+ * the selected depth-three subtree from that external node.
+ */
+static int
+extent_root_greatgrandparent_matches(struct inode *rip,
+	unsigned char *root_node, u16_t root_entries, u16_t root_max,
+	u16_t root_index, block64_t greatgrandparent_block,
+	u32_t greatgrandparent_first_key)
+{
+	const unsigned char *entry;
+	block64_t selected_block;
+
+	if (root_node == NULL || greatgrandparent_block == NO_BLOCK ||
+	    greatgrandparent_block >= rip->i_sp->s_blocks_count ||
+	    root_entries == 0 || root_index >= root_entries ||
+	    root_max < root_entries || root_max == 0 ||
+	    root_max > (sizeof(rip->i_block) - 12) / 12)
+		return(FALSE);
+	if (extent_get16(root_node) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(root_node + 2) != root_entries ||
+	    extent_get16(root_node + 4) != root_max ||
+	    extent_get16(root_node + 6) != 5)
+		return(FALSE);
+
+	entry = root_node + 12 + (size_t)root_index * 12;
+	selected_block = ((u64_t)extent_get16(entry + 8) << 32) |
+	    extent_get32(entry + 4);
+	return(selected_block == greatgrandparent_block &&
+	    extent_get32(entry) == greatgrandparent_first_key);
+}
+/*
  * Reacquire a depth-two ancestor before inserting a sibling index node.
  * The old child retains its first key, so adding a later sibling is safe even
  * when the old child occupies entry zero.
@@ -805,6 +859,74 @@ extent_prepare_ancestor_detach(struct inode *rip,
 	return(OK);
 }
 
+/*
+ * Reacquire a depth-four external ancestor before removing its selected
+ * depth-three child. The child must be non-first and a sibling must remain.
+ */
+static int
+extent_prepare_greatgrandparent_detach(struct inode *rip,
+	block64_t greatgrandparent_block, block64_t ancestor_block,
+	u16_t entries, u16_t max_entries, u16_t index, u32_t key,
+	u32_t first_key, struct buf **bpp, unsigned char **nodep)
+{
+	struct buf *bp;
+	unsigned char *node, *entry;
+	block64_t selected_block;
+	size_t tail_offset;
+
+	*bpp = NULL;
+	*nodep = NULL;
+	if (greatgrandparent_block == NO_BLOCK ||
+	    greatgrandparent_block >= rip->i_sp->s_blocks_count ||
+	    ancestor_block == NO_BLOCK ||
+	    ancestor_block >= rip->i_sp->s_blocks_count ||
+	    ancestor_block == greatgrandparent_block ||
+	    entries <= 1 || entries > max_entries ||
+	    index == 0 || index >= entries || max_entries == 0 ||
+	    max_entries > (rip->i_sp->s_block_size - 12) / 12)
+		return(EOPNOTSUPP);
+
+	bp = get_block(rip->i_dev, greatgrandparent_block, NORMAL);
+	if (bp == NULL)
+		return(EIO);
+	node = (unsigned char *)b_data(bp);
+	if (extent_get16(node) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(node + 2) != entries ||
+	    extent_get16(node + 4) != max_entries ||
+	    extent_get16(node + 6) != 4 ||
+	    extent_get32(node + 12) != first_key) {
+		extent_release_leaf(rip, bp, FALSE);
+		return(EIO);
+	}
+	if (HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM)) {
+		u32_t stored, calculated;
+
+		tail_offset = 12 + (size_t)max_entries * 12;
+		if (tail_offset > rip->i_sp->s_block_size - sizeof(stored)) {
+			extent_release_leaf(rip, bp, FALSE);
+			return(EIO);
+		}
+		stored = extent_get32(node + tail_offset);
+		calculated = ext4_crc32c(ext4_inode_csum_seed(rip),
+		    node, tail_offset);
+		if (stored != calculated) {
+			extent_release_leaf(rip, bp, FALSE);
+			return(EIO);
+		}
+	}
+
+	entry = node + 12 + (size_t)index * 12;
+	selected_block = ((u64_t)extent_get16(entry + 8) << 32) |
+	    extent_get32(entry + 4);
+	if (selected_block != ancestor_block || extent_get32(entry) != key) {
+		extent_release_leaf(rip, bp, FALSE);
+		return(EIO);
+	}
+
+	*bpp = bp;
+	*nodep = node;
+	return(OK);
+}
 /*
  * Reacquire and validate the immediate parent index node before changing
  * its selected child entry. The inode root has no ancestor, so depth-one
