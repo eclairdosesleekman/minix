@@ -889,6 +889,8 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    block_to_free == grandparent_block ||
 			    leaf_block == grandparent_block ||
 			    parent_block == grandparent_block ||
+			    (detach_from_grandparent &&
+			    grandparent_key != parent_key) ||
 			    (detach_from_root &&
 			    !extent_root_parent_matches(rip, root_node, root_entries,
 			    root_max, root_index, parent_block, parent_key)) ||
