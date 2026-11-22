@@ -1473,6 +1473,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		if (r != OK) {
 			extent_release_leaf(rip, grandparent_bp, FALSE);
 			extent_release_leaf(rip, new_grandparent_bp, FALSE);
+			free_block(rip->i_sp, new_grandparent_block);
 			free(grandparent_records);
 			extent_release_leaf(rip, new_parent_bp, FALSE);
 			free_block(rip->i_sp, new_parent_block);
@@ -1493,6 +1494,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 			extent_release_leaf(rip, ancestor_bp, FALSE);
 			extent_release_leaf(rip, grandparent_bp, FALSE);
 			extent_release_leaf(rip, new_grandparent_bp, FALSE);
+			free_block(rip->i_sp, new_grandparent_block);
 			free(grandparent_records);
 			extent_release_leaf(rip, new_parent_bp, FALSE);
 			free_block(rip->i_sp, new_parent_block);
