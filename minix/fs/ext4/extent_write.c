@@ -6,7 +6,8 @@
  * has room. Full depth-one inode roots can grow to depth two; full external
  * depth-one index nodes can split under depth-two ancestors with space, and
  * a full depth-two ancestor can split under a depth-three inode root or a
- * depth-three external ancestor with space under a depth-four root. Deeper cascades and root rebalancing remain unsupported.
+ * depth-three external ancestor with space under a depth-four root.
+ * Higher-level cascades and root rebalancing remain unsupported.
  */
 
 #include "fs.h"
