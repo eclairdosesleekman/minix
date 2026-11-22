@@ -1481,11 +1481,10 @@ out:
 	return(r);
 }
 
-static int compare_ext4_metadata_ranges(const void *left, const void *right)
+static int
+compare_ext4_metadata_ranges(const struct ext4_metadata_range *a,
+	const struct ext4_metadata_range *b)
 {
-	const struct ext4_metadata_range *a = left;
-	const struct ext4_metadata_range *b = right;
-
 	if (a->first < b->first)
 		return(-1);
 	if (a->first > b->first)
@@ -1495,6 +1494,59 @@ static int compare_ext4_metadata_ranges(const void *left, const void *right)
 	if (a->end > b->end)
 		return(1);
 	return(0);
+}
+
+/*
+ * Sort metadata ranges in place with heapsort. This server is linked without
+ * the standard C library sorting routine, so use an internal implementation.
+ */
+static void
+ext4_metadata_range_sift_down(struct ext4_metadata_range *ranges,
+	size_t root, size_t count)
+{
+	size_t child;
+	struct ext4_metadata_range tmp;
+
+	while (root < count / 2) {
+		child = root * 2 + 1;
+		if (child + 1 < count &&
+		    compare_ext4_metadata_ranges(&ranges[child],
+		    &ranges[child + 1]) < 0)
+			child++;
+		if (compare_ext4_metadata_ranges(&ranges[root],
+		    &ranges[child]) >= 0)
+			return;
+
+		tmp = ranges[root];
+		ranges[root] = ranges[child];
+		ranges[child] = tmp;
+		root = child;
+	}
+}
+
+static void
+ext4_sort_metadata_ranges(struct ext4_metadata_range *ranges, size_t count)
+{
+	size_t start, end;
+	struct ext4_metadata_range tmp;
+
+	if (count < 2)
+		return;
+
+	/* Build a max heap. */
+	for (start = count / 2; start > 0;) {
+		start--;
+		ext4_metadata_range_sift_down(ranges, start, count);
+	}
+
+	/* Repeatedly move the largest range to the end of the array. */
+	for (end = count; end > 1;) {
+		end--;
+		tmp = ranges[0];
+		ranges[0] = ranges[end];
+		ranges[end] = tmp;
+		ext4_metadata_range_sift_down(ranges, 0, end);
+	}
 }
 
 /*
@@ -1602,8 +1654,7 @@ verify_group_descriptor_block_ranges(struct super_block *sp,
 	}
 
 	/* flex_bg relocates metadata but reservations must remain disjoint. */
-	qsort(ranges, range_count, sizeof(*ranges),
-	    compare_ext4_metadata_ranges);
+	ext4_sort_metadata_ranges(ranges, range_count);
 	previous_end = ranges[0].end;
 	previous_group = ranges[0].group;
 	for (n = 1; n < range_count; n++) {
