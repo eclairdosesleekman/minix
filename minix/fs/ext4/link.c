@@ -149,6 +149,17 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
 	return(EBUSY);
   }
 
+  /* An inline directory can be removed only by its actual parent. */
+  if (call != FSC_UNLINK &&
+      rldirp->i_sp->s_is_ext4 &&
+      HAS_INCOMPAT_FEATURE(rldirp->i_sp, INCOMPAT_INLINE_DATA) &&
+      (rldirp->i_flags & EXT4_INLINE_DATA_FL) &&
+      (strcmp(name, ".") == 0 || strcmp(name, "..") == 0)) {
+	put_inode(rip);
+	put_inode(rldirp);
+	return(EINVAL);
+  }
+
   /* Now test if the call is allowed, separately for unlink() and rmdir(). */
   if (call == FSC_UNLINK) {
 	  if ((rip->i_mode & I_TYPE) == I_DIRECTORY) r = EPERM;
@@ -162,12 +173,9 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
   } else {
 	  if ((rip->i_mode & I_TYPE) != I_DIRECTORY)
 		  r = ENOTDIR;
-	  /* remove_dir() edits "." and ".." after unlinking the parent entry.
-	   * Indexed and inline targets cannot safely update those entries. */
+	  /* remove_dir() handles synthesized inline "." and ".." entries. */
 	  else if (rip->i_sp->s_is_ext4 &&
-	      ((rip->i_flags & EXT2_INDEX_FL) ||
-	      (HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
-	      (rip->i_flags & EXT4_INLINE_DATA_FL))))
+	      (rip->i_flags & EXT2_INDEX_FL))
 		  r = EOPNOTSUPP;
 	  else if (has_external_extent_tree(rip))
 		  r = EOPNOTSUPP;
@@ -252,6 +260,49 @@ static int remove_dir(struct inode *rldirp, struct inode *rip,
 	return r;
 
   if (rip->i_num == ROOT_INODE) return(EBUSY); /* can't remove 'root' */
+
+  /*
+   * ext4 inline directories synthesize "." and ".."; they have no on-disk
+   * entries to unlink. Only remove one when its stored parent and link
+   * counts agree, and when freeing the inode cannot leak block allocations.
+   */
+  if (rip->i_sp->s_is_ext4 &&
+      HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
+      (rip->i_flags & EXT4_INLINE_DATA_FL)) {
+	if (rldirp == rip || strcmp(dir_name, ".") == 0 ||
+	    strcmp(dir_name, "..") == 0)
+		return(EINVAL);
+	if (rip->i_inline_parent != rldirp->i_num ||
+	    rip->i_size < EXT4_INLINE_DATA_MIN ||
+	    (u64_t)rip->i_size != (u64_t)rip->i_inline_size ||
+	    rip->i_links_count != 2)
+		return(EIO);
+	/*
+	 * The current free path does not release an external xattr block or
+	 * external extent tree. Inline directory data itself must be the only
+	 * storage, so require zero allocated sectors and no xattr pointer.
+	 */
+	if (rip->i_blocks != 0 || rip->i_file_acl != 0 ||
+	    (HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_64BIT) &&
+	    rip->osd2.linux2.i_pad1 != 0) ||
+	    has_external_extent_tree(rip) ||
+	    rldirp->i_links_count <= 2)
+		return(EOPNOTSUPP);
+
+	if ((r = unlink_file(rldirp, rip, dir_name)) != OK)
+		return(r);
+
+	/* The parent entry removed one link; "." is the second implicit link. */
+	rip->i_links_count--;
+	rip->i_update |= CTIME;
+	rip->i_dirt = IN_DIRTY;
+
+	/* Removing the implicit ".." drops the parent's directory link count. */
+	rldirp->i_links_count--;
+	rldirp->i_update |= CTIME | MTIME;
+	rldirp->i_dirt = IN_DIRTY;
+	return(OK);
+  }
 
   /* Actually try to unlink the file; fails if parent is mode 0 etc. */
   if ((r = unlink_file(rldirp, rip, dir_name)) != OK) return r;

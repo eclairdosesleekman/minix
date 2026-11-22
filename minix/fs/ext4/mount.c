@@ -156,9 +156,10 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	 * descriptor-copy regeneration are not implemented.
 	 */
 	/*
-	 * Regular-file inline payloads can be updated in place while the write
-	 * remains within the inode's existing system.data value. Inline
-	 * directories, xattr-value growth, and VM page mapping remain unsupported.
+	 * Inline regular files and directories can be updated only within their
+	 * existing inode-body payload. Inline directory entry edits are bounded
+	 * to the current dirent areas; xattr-value growth and VM page mapping
+	 * remain unsupported.
 	 */
 	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_INLINE_DATA) &&
 	    sp->s_creator_os != EXT4_OS_LINUX) {
