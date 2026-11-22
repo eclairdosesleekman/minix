@@ -1,4 +1,4 @@
-SRCS=		mkfs.c
+SRCS=		mkfs.c ${MKFS_EXTRA_SRCS}
 BINDIR?=	/usr/sbin
 MAN?=
 
