@@ -71,15 +71,18 @@ read-write mode.
   are checked at block granularity because multiple metadata blocks may share
   a cluster. Writable mounts are rejected because the current allocator and
   truncate paths are not cluster-granular.
-- Read-only support for ext4 `sparse_super2` backup placement. The two
+- Read-write support for ext4 `sparse_super2` backup placement. The two
   `s_backup_bgs` values are validated and used to locate backup superblocks
   and classic GDT copies; the same group-selection rules are applied to
   META_BG descriptor backups. The selected backup groups may be in either
   `s_backup_bgs` slot (zero slots are optional). Superblock, GDT, and
   `resize_inode` reserved-GDT blocks are protected from group bitmap/inode-table
   pointers, file extents, indirect mappings, external extent-tree nodes, and
-  external xattr pointers. Writable mounts
-  remain disabled because the current writer does not update backup copies.
+  external xattr pointers. The primary superblock and GDT retain their classic
+  locations, so regular allocation and metadata updates can use the existing
+  writer. As with other sparse-super layouts, ordinary writes update primary
+  metadata; online resize and backup-copy regeneration are not implemented.
+  Alternate-superblock selection remains unsupported.
 - Read-only compatibility with the ext4 `ea_inode` incompat feature.
   EA-inode-backed values referenced from external xattr blocks and inode-body
   xattr entries are validated on inode read: the referenced inode checksum,
@@ -268,13 +271,14 @@ implementation.
 - **BIGALLOC is read-only:** block bitmap interpretation and read-only
   extent mapping understand clusters, but allocation, release, and truncation
   still operate in individual blocks. Writable mounts are therefore rejected.
-- **META_BG and sparse_super2 are read-only:** primary descriptor blocks
-  are loaded from their metablock-group locations, and backup superblock,
-  classic GDT-prefix, and META_BG descriptor blocks are reserved using the
-  actual sparse-super or sparse_super2 group selection. Writable mounts are
-  rejected because descriptor writes still use the classic contiguous GDT
-  layout and do not update backup copies. Alternate-superblock selection is
-  rejected for META_BG and sparse_super2.
+- **META_BG is read-only:** primary descriptor blocks are loaded from their
+  metablock-group locations, and backup superblock, classic GDT-prefix, and
+  META_BG descriptor blocks are reserved using the actual sparse-super or
+  sparse_super2 group selection. Writable mounts are rejected because
+  descriptor writes still use the classic contiguous GDT layout. The
+  `sparse_super2` feature without META_BG is writable; its primary GDT remains
+  contiguous and selected backup groups are excluded from allocation.
+  Alternate-superblock selection remains unsupported for both layouts.
 - **Quota metadata is read-only:** filesystems with `quota` or `project`
   enabled can be mounted read-only, but writable mounts are rejected because
   create, link, unlink, truncate, and allocation paths do not update user,
@@ -451,25 +455,27 @@ logs, zero clusters-per-group, and a cluster geometry that does not multiply
 back to `s_blocks_per_group` must fail the mount. Writable BIGALLOC mounts
 must be rejected without changing the clean filesystem state.
 
-For read-only sparse_super2 coverage, prepare a disposable image and inspect its
-backup-group list with `dumpe2fs -h`. Confirm that the two listed groups (and
+For sparse_super2 coverage, prepare disposable images and inspect their
+backup-group lists with `dumpe2fs -h`. Confirm that the two listed groups (and
 group zero) are the only groups whose superblock/GDT copies are reserved.
 Also test an unused zero in either list slot, including a zero first entry
 followed by a valid second entry. Nonzero out-of-range group numbers must fail
 the mount; alternate-superblock selection is rejected.
-Writable mounts must fail before the filesystem is marked unclean.
 
 ```sh
 truncate -s 1G ext4-sparse-super2.img
-mke2fs -F -t ext4 -O sparse_super2,^has_journal ext4-sparse-super2.img
+mke2fs -F -t ext4 -O sparse_super2,^has_journal,^orphan_file ext4-sparse-super2.img
 dumpe2fs -h ext4-sparse-super2.img | grep -E 'Filesystem features|Backup block groups'
 e2fsck -fn ext4-sparse-super2.img
 ```
 
-Test sparse_super2 with and without META_BG where supported by the installed
-e2fsprogs, including 32-byte and 64-byte descriptors and both checksum modes.
-Run pathname lookup, file reads, directory enumeration, and `e2fsck -fn` after
-unmount on disposable images.
+With `sparse_super2` and without META_BG, mount the image read-write on MINIX.
+Create, write, rename, and remove regular files and create/remove ordinary
+directories. Unmount cleanly and run `e2fsck -fn`; repeat with 64-byte group
+descriptors and both `metadata_csum` and legacy `gdt_csum` configurations.
+A `sparse_super2` + META_BG image must remain read-only. Also verify that an
+unused zero in either backup-group slot is accepted, including a zero first
+entry followed by a valid second entry.
 
 For read-only META_BG coverage, prepare disposable images with e2fsprogs.
 Test both 32-byte and 64-byte group descriptors, classic GDT prefixes with
@@ -960,8 +966,9 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The META_BG and sparse_super2 read-only layouts, extended timestamp, 64 KiB directory-record,
+The META_BG read-only layout, extended timestamp, 64 KiB directory-record,
 `huge_file`, `metadata_csum`, bounded external-extent-leaf update, writable
-legacy `gdt_csum`, and writable `large_dir` mount-compatibility changes have
-not yet been compiled or runtime-tested in a MINIX build environment. Treat
-this as a review candidate and test it on disposable images only.
+legacy `gdt_csum`, writable `large_dir`, and writable `sparse_super2`
+mount-compatibility changes have not yet been compiled or runtime-tested in a
+MINIX build environment. Treat this as a review candidate and test it on
+disposable images only.
