@@ -739,12 +739,37 @@ ext4_store32(unsigned char *p, u32_t value)
 /*===========================================================================*
  *                              write_super                                  *
  *===========================================================================*/
+static int
+ext4_write_descriptor_bytes(struct super_block *sp, u64_t disk_offset,
+	const unsigned char *data, size_t length)
+{
+	u64_t max_offset;
+	size_t off, chunk;
+	ssize_t written;
+
+	max_offset = ((u64_t)~(u64_t)0) >> 1;
+	if (disk_offset > max_offset || length > max_offset - disk_offset)
+		return(EINVAL);
+
+	for (off = 0; off < length; off += chunk) {
+		chunk = length - off;
+		if (chunk > PAGE_SIZE)
+			chunk = PAGE_SIZE;
+		written = bdev_write(sp->s_dev, disk_offset + off,
+		    (char *)data + off, chunk, BDEV_NOFLAGS);
+		if (written != (ssize_t)chunk)
+			return(EIO);
+	}
+	return(OK);
+}
+
 void
 write_super(struct super_block *sp)
 {
 	int r;
-	size_t gd_size, off, chunk;
-	u64_t gdt_position;
+	size_t gd_size, classic_gd_size, off;
+	u64_t gdt_position, descriptor_position;
+	block64_t descriptor_block;
 	unsigned int i;
 
 	if (sp->s_rd_only)
@@ -784,16 +809,56 @@ write_super(struct super_block *sp)
 		else
 			gdt_position = ((u64_t)opt.block_with_super + 1) * 1024;
 
-		for (off = 0; off < gd_size; off += chunk) {
-			chunk = gd_size - off;
-			if (chunk > PAGE_SIZE)
-				chunk = PAGE_SIZE;
-			r = bdev_write(sp->s_dev, gdt_position + off,
-			    (char *)ondisk_group_descs + off, chunk,
-			    BDEV_NOFLAGS);
-			if (r != (ssize_t)chunk) {
+		if (!HAS_INCOMPAT_FEATURE(sp, INCOMPAT_META_BG)) {
+			/*
+			 * Classic filesystems keep every primary descriptor block
+			 * in one contiguous table immediately after the superblock.
+			 */
+			r = ext4_write_descriptor_bytes(sp, gdt_position,
+			    ondisk_group_descs, gd_size);
+			if (r != OK) {
 				printf("ext4: cannot write group descriptors\\n");
 				return;
+			}
+		} else {
+			/*
+			 * META_BG keeps only the descriptor prefix before
+			 * s_first_meta_bg in the classic table. Each remaining
+			 * primary descriptor block lives in the first group of its
+			 * metablock group. The in-memory/raw descriptor array stays
+			 * dense, so checksums and descriptor indexing are unchanged.
+			 */
+			classic_gd_size = (size_t)sp->s_first_meta_bg *
+			    sp->s_block_size;
+			if (classic_gd_size > gd_size) {
+				printf("ext4: invalid META_BG descriptor prefix\\n");
+				return;
+			}
+			if (classic_gd_size != 0 &&
+			    ext4_write_descriptor_bytes(sp, gdt_position,
+			    ondisk_group_descs, classic_gd_size) != OK) {
+				printf("ext4: cannot write classic META_BG prefix\\n");
+				return;
+			}
+
+			for (i = sp->s_first_meta_bg; i < sp->s_gdb_count; i++) {
+				if (!ext4_meta_bg_descriptor_block(sp, i,
+				    &descriptor_block)) {
+					printf("ext4: invalid META_BG descriptor block %u\\n",
+					    i);
+					return;
+				}
+				descriptor_position = (u64_t)descriptor_block *
+				    sp->s_block_size;
+				off = (size_t)i * sp->s_block_size;
+				r = ext4_write_descriptor_bytes(sp,
+				    descriptor_position, ondisk_group_descs + off,
+				    sp->s_block_size);
+				if (r != OK) {
+					printf("ext4: cannot write META_BG descriptor block %u\\n",
+					    i);
+					return;
+				}
 			}
 		}
 		group_descriptors_dirty = 0;
