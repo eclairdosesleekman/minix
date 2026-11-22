@@ -2,9 +2,9 @@
  * ext4 extent-tree updates.
  *
  * Inline roots and existing external leaves are edited in place. Full
- * external leaves can also be split when a depth-one inode root has room for
- * another index entry. Deeper-tree growth and root rebalancing remain
- * unsupported and are rejected before modifying the mapping.
+ * external leaves can also be split when their immediate parent index node
+ * has room, at any supported tree depth. Index-node splitting, deeper-tree
+ * growth, and root rebalancing remain unsupported.
  */
 
 #include "fs.h"
@@ -81,10 +81,12 @@ extent_put(unsigned char *p, u32_t logical, u64_t physical,
 
 
 /*
- * Locate the extent leaf which owns logical.  Existing external nodes may be
+ * Locate the extent leaf which owns logical. Existing external nodes may be
  * edited in place, but this routine does not allocate, split, or rebalance
- * nodes.  A key before the first index entry would require changing the tree
- * root, so callers get EOPNOTSUPP in that case.
+ * nodes. Propagate the selected child's exclusive upper bound through every
+ * index level so a later leaf split cannot cross an ancestor boundary. A key
+ * before the first index entry would require changing the tree root, so
+ * callers get EOPNOTSUPP in that case.
  */
 static int
 extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
@@ -94,14 +96,14 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	u16_t *root_depthp, block64_t *parent_blockp,
 	u16_t *parent_entriesp, u16_t *parent_maxp,
 	u16_t *parent_indexp, u32_t *parent_keyp,
-	block64_t *leaf_blockp)
+	u64_t *leaf_upper_boundp, block64_t *leaf_blockp)
 {
 	unsigned char *node;
 	struct buf *bp;
 	size_t node_size;
 	int expected_depth;
 	u16_t magic, entries, max_entries, depth;
-	u64_t previous_end;
+	u64_t previous_end, upper_bound;
 	u32_t expected_key;
 	block64_t current_block;
 	int have_expected_key;
@@ -111,6 +113,8 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	node_size = sizeof(rip->i_block);
 	bp = NULL;
 	current_block = NO_BLOCK;
+	upper_bound = (u64_t)UINT32_MAX + 1;
+	*leaf_upper_boundp = upper_bound;
 	*parent_blockp = NO_BLOCK;
 	*parent_entriesp = 0;
 	*parent_maxp = 0;
@@ -196,8 +200,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				    ex.physical >= rip->i_sp->s_blocks_count ||
 				    ex.length >
 				    rip->i_sp->s_blocks_count - ex.physical ||
-				    (u64_t)ex.logical + ex.length >
-				    ((u64_t)UINT32_MAX + 1) ||
+				    (u64_t)ex.logical + ex.length > upper_bound ||
 				    (i != 0 && ex.logical < previous_end))
 					goto corrupt;
 				previous_end = (u64_t)ex.logical + ex.length;
@@ -221,6 +224,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 		{
 			block64_t child, selected_child;
 			u32_t previous_key, key, selected_key;
+			u64_t child_upper_bound;
 			unsigned int selected_index;
 			int found;
 
@@ -242,6 +246,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 
 				if (child == 0 ||
 				    child >= rip->i_sp->s_blocks_count ||
+				    (u64_t)key >= upper_bound ||
 				    (i != 0 && key <= previous_key))
 					goto corrupt;
 				previous_key = key;
@@ -260,6 +265,14 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				return(EOPNOTSUPP);
 			}
 
+			child_upper_bound = selected_index + 1 < entries ?
+			    extent_get32(node + 12 +
+			    (size_t)(selected_index + 1) * 12) : upper_bound;
+			if (child_upper_bound <= selected_key ||
+			    child_upper_bound > upper_bound)
+				goto corrupt;
+			if (depth == 1)
+				*leaf_upper_boundp = child_upper_bound;
 			if (expected_depth == -1)
 				*root_indexp = (u16_t)selected_index;
 			/*
@@ -274,6 +287,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				*parent_indexp = (u16_t)selected_index;
 				*parent_keyp = selected_key;
 			}
+			upper_bound = child_upper_bound;
 			if (bp != NULL) {
 				put_block(bp);
 				bp = NULL;
@@ -354,17 +368,19 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 }
 
 /*
- * Split a full external leaf under a depth-one inode root. The new leaf and
- * both resulting index keys are prepared only after every bound and capacity
- * check has passed. On failure, the original inode and leaf remain unchanged.
+ * Split a full external leaf when its immediate parent index node has room.
+ * The inherited exclusive upper bound comes from the complete selected path,
+ * so the new leaf remains inside every ancestor's logical-block interval.
+ * On failure, the original inode and leaf remain unchanged.
  */
 static int
 extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	struct buf *leaf_bp, unsigned char *root_node, u16_t root_depth,
 	block64_t parent_block, block64_t leaf_block,
 	u16_t parent_entries, u16_t parent_max,
-	u16_t parent_index, u32_t parent_key, u16_t leaf_entries,
-	u16_t leaf_max, unsigned int insert, u32_t logical, u64_t physical)
+	u16_t parent_index, u32_t parent_key, u64_t leaf_upper_bound,
+	u16_t leaf_entries, u16_t leaf_max, unsigned int insert,
+	u32_t logical, u64_t physical)
 {
 	struct buf *new_bp, *parent_bp;
 	unsigned char *new_node, *new_index, *parent_node;
@@ -380,7 +396,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	parent_bp = NULL;
 	parent_is_external = FALSE;
 	if (leaf_bp == NULL || root_node == NULL || leaf_block == NO_BLOCK ||
-	    (root_depth != 1 && root_depth != 2) ||
+	    root_depth == 0 || root_depth > EXT4_EXTENT_MAX_DEPTH ||
 	    leaf_entries != leaf_max || insert > leaf_entries ||
 	    parent_entries == 0 || parent_index >= parent_entries ||
 	    parent_entries >= parent_max) {
@@ -438,9 +454,13 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		goto corrupt;
 	}
 
-	upper = parent_index + 1 < parent_entries ?
-	    extent_get32(parent_node + 12 + (parent_index + 1) * 12) :
-	    (u64_t)UINT32_MAX + 1;
+	upper = leaf_upper_bound;
+	if (upper <= parent_key ||
+	    upper > (u64_t)UINT32_MAX + 1 ||
+	    (parent_index + 1 < parent_entries &&
+	    upper != extent_get32(parent_node + 12 +
+	    (parent_index + 1) * 12)))
+		goto corrupt;
 	if ((u64_t)logical + 1 > upper)
 		goto corrupt;
 	for (i = 0; i < leaf_entries; i++) {
@@ -568,7 +588,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	u16_t parent_index;
 	block64_t parent_block, leaf_block;
 	u32_t parent_key;
-	u64_t logical64, physical;
+	u64_t logical64, physical, leaf_upper_bound;
 	u32_t logical, offset, new_length;
 	unsigned int i, insert;
 	int r;
@@ -586,7 +606,8 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if ((r = extent_leaf(rip, logical, &root, &node_size, &entries,
 	    &max_entries, &leaf_bp, &root_node, &root_entries, &root_max,
 	    &root_index, &root_depth, &parent_block, &parent_entries,
-	    &parent_max, &parent_index, &parent_key, &leaf_block)) != OK)
+	    &parent_max, &parent_index, &parent_key, &leaf_upper_bound,
+	    &leaf_block)) != OK)
 		return(r);
 	(void)node_size;	/* The selected node has already been bounded. */
 
@@ -804,14 +825,15 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 
 	if (entries >= max_entries) {
 		/*
-		 * The selected depth-one external leaf can grow by one record
-		 * when the inode root still has an unused index slot. Deeper trees
-		 * and a full root still fail without changing any on-disk mapping.
+		 * The selected external leaf can grow by one record when its
+		 * immediate parent index node has an unused slot. The inherited
+		 * upper bound keeps the split inside all ancestor subtrees. A full
+		 * immediate parent still fails without changing the mapping.
 		 */
 		r = extent_split_full_leaf(rip, root, leaf_bp, root_node,
 		    root_depth, parent_block, leaf_block, parent_entries,
-		    parent_max, parent_index, parent_key, entries, max_entries,
-		    insert, logical, physical);
+		    parent_max, parent_index, parent_key, leaf_upper_bound,
+		    entries, max_entries, insert, logical, physical);
 		return(r);
 	}
 
