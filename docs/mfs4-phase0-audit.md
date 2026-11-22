@@ -1,152 +1,182 @@
-# MFS4 Phase 0 監査記録
+# MFS4 Phase 0 監査記録（再監査）
 
 - 監査日: 2026-11-22
-- 対象: eclairdosesleekman/minix
-- 対象branch: master
-- 監査時HEAD: 8883d8e441bcb2ffcb8b95afc92e738f42629881
-- 設計書の監査基準: 8a2e402230074c9dbb51149b3992ae9db93a4c37
+- 対象: `eclairdosesleekman/minix`
+- 対象branch: `master`
+- 監査時HEAD: `c9ee52606c6beb1aa2e0f06947826223896da51f`
 - 設計書: MFS4 詳細設計書 v1.0（2026-11-22）
-- 状態: **ソース監査は完了。Phase 0 の受け入れは未完了**（MFS3 golden testを対象MINIX環境で実行できていない）。
+- 設計書のソース監査基準: `8a2e402230074c9dbb51149b3992ae9db93a4c37`
+- 状態: **静的ソース監査は完了。Phase 0の実行受け入れは未完了**（x86_64 MINIX上のMFS3 golden/runtime regression未実行）。
 
 ## 1. 結論
 
-| Phase 0項目 | 結果 | 判定 |
-|---|---|---|
-| x86_64 PAGE_SIZE | 4096 bytes。MFSのinclude経路から確認 | 確定。設計の4 KiB blockと整合 |
-| 64-bit ABI | off_t/time_tは64-bit、uid_t/gid_t/nlink_tは32-bit、dev_t/ino_tは64-bit。legacy MFS inodeは別幅 | 確定。disk codecは固定幅整数を使う |
-| VFS capability flags | RES_64BITはread/write/getdents/truncateで消費。RES_HASPEEKはmmap経路で消費 | 確定。MFS4が両実装を満たした場合のみ返却する |
-| device flush | bdev_ioctlはerrorを返せるが、LMFS/VFS/一部driverの上位経路でerrorが失われる | **未解決。durabilityのrelease blocker** |
-| MFS3 behavior / golden | dirty mountのRO fallbackと既存image hash testを確認。testは実行できていない | **未完了** |
+設計書24節のPhase 0完了条件は「PAGE_SIZE、VFS flag、flush APIとMFS3動作を確定」である。現在のmasterを基準に再監査し、前回残っていたLMFS→MFS/fsdriver→VFSのwriteback error伝播はPR #233でmasterに取り込まれたことを確認した。
 
-設計書24節の完了条件「PAGE_SIZE、VFS flag、flush APIとMFS3動作を確定」のうち、PAGE_SIZE・VFS flag・MFS3の現行動作はソースから確定した。一方、flush error propagationには実装上の欠落があり、MFS3 golden testの実行結果も未取得であるため、この記録をもってPhase 0完了とはしない。
+| Phase 0項目 | 現状 | 判定 |
+|---|---|---|
+| x86_64 PAGE_SIZE / block size条件 | amd64 `PAGE_SHIFT=12`、`PAGE_SIZE=4096`。MFS3はblock size < PAGE_SIZEを拒否 | **PASS（静的）** |
+| ABI / VFS capability flags | 型幅とRES_64BIT / RES_HASPEEKの実consumerを確認 | **PASS（静的）** |
+| LMFS writeback error propagation | error-reporting APIとfsdriver callbackを追加済み。VFS sync/fsync/unmountまで伝播 | **PASS（静的）** |
+| device DIOCFLUSH | bdev ioctlはstatusを返す。driverごとの対応・非対応条件を確認 | **PASS（静的契約の確定）** |
+| MFS3 clean/dirty mount動作 | dirty RW要求のRO fallback、mount時dirty化、成功unmount時clean化を確認 | **PASS（ソース）** |
+| MFS3 golden test実行 | 既存testmfs.shのimage hash testは未実行 | **NOT RUN** |
+| MFS3 mount/read/write等の回帰 | 設計書23.1の統合回帰は未実行。現testmfs.shにも含まれない | **NOT RUN / GAP** |
+
+**総合判定: Phase 0は静的監査部分を完了したが、受け入れは未完了。** 対象MINIX x86_64/QEMU環境で既存golden testとMFS3回帰を実行し、ログ・結果を保存するまでPhase 1へ進まない。
 
 ## 2. branch / source drift
 
-ソースを個別に監査した時点のmaster HEADは 8883d8e441bcb2ffcb8b95afc92e738f42629881 であり、設計書の基準commitから3 commit進んでいた。その比較では変更ファイルはext4関連の2件のみで、今回の監査対象に差分はなかった。
+設計書の監査基準commit `8a2e402230074c9dbb51149b3992ae9db93a4c37` と現行masterを比較すると、masterは14 commit aheadである。差分にはext4関連変更のほか、今回のPhase 0に関係するMFS、libminixfs cache、fsdriver、VFS、VNDの変更が含まれる。今回の報告は古い監査結果をそのまま再掲せず、`c9ee52606c6beb1aa2e0f06947826223896da51f` の現行ソースで再確認した。
 
-PR作成時点でmasterはさらに c4810bf8f1a55454ece163372187f7f5c9558849 へ進んでいた。8883d8eからの追加5 commitによる変更も次のext4関連4ファイルに限定され、MFS、VFS、libminixfs cache、block device API/storage driverの監査対象ファイルは変更されていない。
+PR #232（Phase 0 source audit）とPR #233（flush error propagation）はどちらもmasterへmerge済み。PR #233のmerge commitは上記HEADである。
 
-- minix/fs/ext4/README.md
-- minix/fs/ext4/const.h
-- minix/fs/ext4/inode.c
-- minix/fs/ext4/mount.c
+## 3. PAGE_SIZE / MFS3 block-size gate
 
-本PR branchはその時点のmaster（c4810bf8f1a55454ece163372187f7f5c9558849）をbaseとしている。監査記録内のソースURLは、監査時点を再現できるよう8883d8eに固定している。追加5 commitの差分も確認し、Phase 0結論に影響する対象ファイル変更がないことを確認した。
+`sys/arch/amd64/include/vmparam.h` は `PAGE_SHIFT=12`、`PAGE_SIZE=(1 << PAGE_SHIFT)` と定義するため、amd64のcompile-time PAGE_SIZEは4096 bytesである。MFS `super.c` は `machine/param.h` と `machine/vmparam.h` をincludeし、MFS3 superblock読込み時に `s_block_size < PAGE_SIZE` を拒否する。さらに512-byte sectorの倍数、superblock/inodeが収まるblockであること等を検査する。
 
-## 3. PAGE_SIZE / build include chain
+**決定:** 設計書の4 KiB blockは現行amd64 PAGE_SIZEと整合する。PAGE_SIZEのruntime値はMINIX上での実行確認をしていないが、対象arch headerのcompile-time定義は4096で確定した。
 
-MFSの super.c は machine/param.h と machine/vmparam.h を直接includeする。amd64 vmparam.h は PAGE_SHIFT=12、PAGE_SIZE=(1 << PAGE_SHIFT) と定義するため、x86_64実効PAGE_SIZEは4096 bytesである。MFS read_super() は filesystem block size が PAGE_SIZE 未満の場合に拒否する。
+## 4. ABI / VFS flags
 
-**決定:** MFS4の4096-byte blockは現行x86_64のPAGE_SIZE条件を満たす。少なくとも現在のbranchではPAGE_SIZE理由によるformat変更は不要。
+確認したx86_64型幅:
 
-## 4. ABI / VFS capability
+| 型 | 幅 |
+|---|---:|
+| `off_t` | signed 64-bit |
+| `time_t` | signed 64-bit |
+| `uid_t` / `gid_t` | 32-bit |
+| `nlink_t` | unsigned 32-bit |
+| `ino_t` / `dev_t` | unsigned 64-bit |
+| `zone_t` / `block_t` / `bit_t` | unsigned 32-bit |
+| `block64_t` | unsigned 64-bit |
 
-確認できたx86_64型幅:
+OS ABIが64-bitでもMFS3 inodeは自動的に拡張されない。現行MFS in-memory inodeはmode/nlinks/uid/gidが各16-bit、sizeはsigned 32-bit、atime/mtime/ctimeはunsigned 32-bit、zone pointerは32-bitである。MFS3のdisk inodeもlegacy fixed-width formatのまま扱う。MFS3 codecへLP64 native structを持ち込んではならない。MFS4では固定幅little-endian codecを使い、MFS3への値変換は範囲検査してoverflowを拒否する。
 
-| 型 | 定義/幅 |
-|---|---|
-| off_t | signed 64-bit（__int64_t） |
-| time_t | signed 64-bit（__int64_t） |
-| uid_t / gid_t | unsigned 32-bit |
-| nlink_t | unsigned 32-bit |
-| ino_t / dev_t | unsigned 64-bit |
-| zone_t / block_t / bit_t | unsigned 32-bit |
+VFS flag定義とconsumer:
 
-fsdriver_nodeのfile sizeおよびread/write/truncate callbackはoff_tを使う。ただしこれだけでMFS内部またはMFS3 disk inodeが64-bit化されるわけではない。MFS3互換codecとMFS4 codecの分離、およびMFS3側のdown-conversion range checkが必要である。
+- `RES_64BIT`: `req_readwrite_actual()`、`req_getdents_actual()`、`req_ftrunc()` がflagを見てoffset/range制限を切り替える。
+- `RES_HASPEEK`: VFS `dupvm()` のmmap経路でpeek非対応filesystemを拒否する。
+- 現行MFS3 `fs_mount()` は `RES_NOFLAGS` を返す。
 
-VFS側の実際のcapability consumerは以下のとおり。
+**決定:** MFS3の返却flagsは変更しない。MFS4は64-bit read/write/getdents/truncateのend-to-end実装とpeek/bpeekの有効性を確認した後にのみ `RES_64BIT | RES_HASPEEK` を返す。statの結果幅はこのflag確認だけで保証されたとはみなさず、VFS/libc統合試験で別途確認する。
 
-- RES_64BIT: REQ_READ/REQ_WRITEのposition、REQ_GETDENTSのposition、REQ_FTRUNCの範囲チェック。
-- RES_HASPEEK: mmap用dupvm経路でpeek非対応filesystemを拒否。
-- MFS現行mount callbackはRES_NOFLAGSを返す。
+## 5. flush API / durability contract
 
-**決定:** MFS4で64-bit size/offset経路とpeek/bpeekの双方を実装・試験するまではRES_64BIT/RES_HASPEEKを返さない。MFS3の返却flagsは変更しない。x86_64 IPC messageはheader 8 bytes + payload 88 bytes = 96 bytesで、_ASSERT_messageによるcompile-time size assertionがある。protocol拡張時もこれを維持する。
+### 5.1 LMFS writeback error propagation（PR #233 merge済み）
 
-## 5. device flush監査
+現行masterで確認した変更:
 
-MFS4のdurability要件は、LMFS bufferをdeviceへ書くだけでなく、DIOCFLUSHでdevice volatile write cacheまでflushすること。現行実装では、下層にはerrorを返すAPIがある一方、上位へ成功/失敗が届かない経路がある。
+- `lmfs_flushall_err()`、`lmfs_flushdev_err()`、`lmfs_bflush_err()` がstatusを返す。block-size変更・buffer pool resizeにもerror-return variantがある。
+- scattered writebackはdevice I/O error、short write、不正なtransfer countを検出する。完全に書けたblockのみclean化し、未完了bufferはdirtyのまま保持する。
+- dirty bufferをevict/invalidateする前にwritebackし、失敗時はdirty dataを破棄しない。
+- MFS `fs_sync()` はinodeを先にwritebackし、その後 `lmfs_flushall_err()` のerrorを返す。
+- fsdriverにerror-return callback（sync/unmount/bflush）が追加され、MFS tableで使用する。
+- VFS `do_sync()` / `do_fsync()` は `req_sync()` のerrorを呼出元へ返す。VFS unmountもREQ_UNMOUNT失敗時にmountをdetachしない。
+- VNDのDIOCFLUSHは下位fileの `fsync()` errorを返す。
 
-### 5.1 error propagationの欠落
+旧void callback/APIは互換wrapperとして残る。MFS4のdurability pathではerror-return variantを使用し、legacy void APIへ戻してはならない。
 
-1. bdev_ioctl()はintを返し、block driverのioctl statusを呼出側へ返す。
-2. lmfs_flushdev() / lmfs_flushall()はvoid。lmfs_flushdev()はrw_scattered(..., WRITING)を呼ぶが結果を呼出側へ返さない。したがってMFS4のjournal barrierでhome/data cache write failureを確実に検出できない。
-3. MFSのfs_sync()はdirty inodeをrw_inode()で書き、その後lmfs_flushall()を呼ぶ。fsdriverのfdr_sync callbackもvoid。
-4. VFS do_fsync()はreq_sync()の戻り値を捨てている。FS側がREQ_SYNCでerrorを返すようになっても、現状のVFS fsync()はそれを呼出し元へ伝播しない。
-5. VND driverのDIOCFLUSHはfsync(state.fd)の戻り値を無視してOKを返す。下位file sync失敗を隠してしまう。
+### 5.2 device flush ioctl
 
-**決定 / blocker:** MFS4 transactionを実装する前に、LMFS flushのerror-reporting barrier、FS sync callbackの戻り値、VFS do_fsync()のreq_sync error propagationを一体で設計・修正する。VNDもfsync errnoをblock ioctl statusへ変換して返す必要がある。これらが解決するまでdurability保証を宣言しない。
+`minix/include/minix/bdev.h` の同期 `bdev_ioctl()` はintを返す。`minix/lib/libbdev/bdev.c` はdriver reply statusをそのまま呼出元に返す。従ってDIOCFLUSHはLMFS buffer writebackとは別レイヤーのbarrierとして利用できる。
 
-### 5.2 x86_64でbuild対象となるstorage driver
+MFS4 transaction barrierの必須順序は次のとおり。
 
-| driver | DIOCFLUSH監査結果 | MFS4 RW mount上の扱い |
+1. 対象deviceのLMFS dirty bufferをerror-reporting APIでwritebackする。
+2. `bdev_ioctl(fs_dev, DIOCFLUSH, ...)` を実行し、device volatile write cacheのflush完了を確認する。
+3. どちらか一方でも失敗・未対応なら成功扱いせず、MFS4 RW mount/transactionをfail-closedにする。
+
+PR #233はLMFS writeback errorを伝播させる変更であり、MFS3の通常syncへDIOCFLUSHを追加したものではない。既存MFS3をflush非対応mediaで新たに拒否しないため、MFS3の通常syncは従来どおりLMFS cache writebackまでである。MFS4は上記device barrierを別途実装する必要がある。
+
+### 5.3 x86_64 storage driver matrix
+
+| driver | DIOCFLUSHの現状 | MFS4 RWの扱い |
 |---|---|---|
-| AHCI | 実装あり。write-cache flush commandを発行。device state / barrier flag / command結果を検査 | 成功を確認できるdeviceのみ可。非対応時はfail-closed |
-| virtio-blk | 実装あり。VIRTIO_BLK_F_FLUSHなしはEOPNOTSUPP | featureなしならRW mount拒否 |
-| at_wini | ATA FLUSH CACHE実装あり。ATAPIはEINVAL | 成功確認できるATA deviceのみ可 |
-| FBD | 未知ioctlを下位block driverへ転送 | 下位driverの実装/結果に従う |
-| filter | 未知ioctlはENOTTY | MFS4 RW mount不可（専用対応が必要） |
-| VND | fsync()結果を無視してOKを返す | 修正とerror伝播試験が終わるまで不可 |
-| floppy / memory | DIOCFLUSH実装を確認できず、専用ioctl以外は未対応 | MFS4 RW mount不可 |
+| AHCI | 対応。device state確認後 `gen_flush_wcache()`。command failureを返す | probeと各barrierの成功必須 |
+| virtio-blk | 対応。hostに `VIRTIO_BLK_F_FLUSH` がなければ `EOPNOTSUPP` | featureなしはRW拒否 |
+| at_wini | ATA FLUSH CACHE対応。ATAPIは `EINVAL` | 成功するATA deviceのみ |
+| FBD | 未知ioctlを下位block driverへforwardしstatusを返す | 下位driver次第。forward成功を事前仮定しない |
+| VND | 下位file `fsync()` のerrorを返す（PR #233） | fsync成功を必須 |
+| filter | 未知ioctlは `ENOTTY` | 専用対応なしではRW拒否 |
+| floppy | DIOCFLUSH handlerを確認できない | 対応扱いしない |
+| memory / ramdisk | ioctlは `MIOCRAMSIZE` のみ受理し、それ以外は `EINVAL` | volatile mediaとしてdurability対象外 |
 
-x86_64 storage MakefileではAHCI、FBD、filter、virtio_blkが条件付きでbuildされ、VND、at_wini、floppyも列挙される。memory/ramdiskは追加の非永続media経路として扱う。
+x86_64 storage MakefileはAHCI/FBD/filter/virtio-blk/VND/at_wini/floppyを列挙し、ramdisk/memoryも構成する。上表はsource-level auditであり、実デバイスでのflush動作・timeout・電源断耐性を実測したものではない。
 
-**実装方針:** MFS4 RW mount時に実deviceへのDIOCFLUSH probeを行い、EOPNOTSUPP/ENOTTY/その他errorを成功扱いしない。RO mountは別ポリシーで扱う。flush probeだけでは継続中のI/O error reporting欠落を補えないため、5.1の修正も必須。
+**決定:** MFS4はmount時に実deviceへのDIOCFLUSH probeを実装し、非対応・未確認・I/O errorを成功扱いしない。flush実装があるdriverでも、実device/host featureで成功を確認できない限りRW durabilityを主張しない。
 
-## 6. MFS3 compatibility / golden tests
+## 6. MFS3 current behavior / compatibility
 
-現行MFS3 sourceで確認した動作:
+現行MFS3 sourceから確認:
 
-- read_super()はSUPER_V3を認識し、filesystem block sizeがPAGE_SIZE未満の場合は拒否する。
-- RW mount要求時にMFSFLAG_CLEANが落ちていればdeviceをROで開き直し、read-only mountへfallbackする。
-- RW mount開始時にclean flagを落とし、unmount時はsync後にclean flagを立てる。
-- MFS mount callbackは現状RES_NOFLAGSを返す。
+- superblock parserはMFS V3を認識する。filesystem block sizeがPAGE_SIZE未満ならrejectする。
+- RW mount要求で `MFSFLAG_CLEAN` が落ちている場合、deviceをread-onlyで開き直し、警告を出してRO mountへfallbackする。
+- RW mount開始時にclean flagを落としてsuperblockを書き戻す。
+- unmountではinode/cache syncが成功した後にclean flagを書き戻す。writeback失敗時はunmountを中止する。clean marker write/close error時はdirty状態の復元を試み、復元不能ならread-onlyへfail-closedする。
+- cache invalidationは正常なwriteback/close完了後にのみ行う。
+- mount callbackは引き続き `RES_NOFLAGS` を返す。
 
-既存のMFS3 golden testはminix/tests/testmfs.sh。runnerのalltestsにはmfsが含まれ、rootから実行するとsu binでUID 3/GID 7として実行する。testmfs.sh自身もUID 3/GID 7を要求する。
+MFS3のdisk inode/in-memory inodeは16/32-bit legacy widthであり、64-bit kernel ABIとは別である。特に現行MFS3は32-bit size/time limitを持つ。自動timestamp更新は `clock_time(NULL)` による秒単位であり、MFS3でnanosecond精度を仮定しない。MFS4のseconds/nanoseconds保持はMFS4 codec/operation実装時の要件とする。
 
-ただし現行testmfs.shが検証するのは、proto入力から4096-byte block / 15000 blocks / 6000 inodesのimageを作り、その全imageのSHA-1が 98bcafa04cb1eb75b7add6c95eb587c37f5050e0 と一致すること。これはmkfs image生成のgolden testであり、設計書23.1が要求するmount/read/write/create/rename/link/unlink/truncate/stat/utime、disk byte layout、dirty mount RO fallbackを一通り検証するsuiteではない。
+## 7. MFS3 golden / regression test状況
 
-推奨実行コマンド（x86_64 MINIX test target内）:
+現行 `minix/tests/testmfs.sh` はmkfs.mfs image生成のgolden testである。
 
-    cd /usr/tests/minix-posix
-    ./run -t mfs
+- block size: 4096 bytes
+- blocks: 15000
+- inodes: 6000
+- expected SHA-1: `98bcafa04cb1eb75b7add6c95eb587c37f5050e0`
+- proto treeを生成し、mkfs.mfsでimageを作り、image全体のSHA-1を比較する。
+- test runnerのalltestsに `mfs` が登録され、`./run -t mfs` で実行される。root実行時はscriptをbin userで起動し、testmfs.shはUID 3/GID 7を要求する。
 
-**実行結果:** 未実行。今回の作業環境はLinux hostで、QEMUおよびMINIX用bmake/nbmakeが利用可能でないため、対象MINIX runtime上のtestmfs.shおよびMFS3 mount regressionを実行できなかった。成功したとは扱わない。
+**重要:** このtestはmkfs image byte-for-byte goldenの確認であり、MFS serverによるmount/read/write/create/rename/link/unlink/truncate/stat/utime、dirty mount RO fallback、disk inode/dirent/bitmapの実更新を検証しない。設計書23.1が要求するMFS3 regression一式は現テストに不足している。
 
-## 7. Phase 0 exit criteria / 次の作業
+### 実行結果
 
-| 条件 | 状態 | 次の作業 |
+未実行。実行環境にMINIX x86_64 runtime、`bmake`/`nbmake`、QEMU、MINIXの`mkproto`/`mkfs.mfs`がなく、対象環境を起動してtest runnerを実行できなかった。GitHub Actions workflowも見当たらず、Actions runは0件であった。従ってgolden testがpassしたとは記録しない。
+
+## 8. Phase 0 exit criteria / remaining work
+
+| 条件 | 状態 | 必要作業 |
 |---|---|---|
-| PAGE_SIZE確定 | PASS | 4 KiBを採用 |
-| ABI / RES_64BIT / RES_HASPEEK消費経路確定 | PASS | MFS3 flags維持、MFS4対応後にのみcapability返却 |
-| device flush APIがdurable/error-reporting可能 | FAIL | LMFS → MFS fsdriver → VFS → bdev/driverのerror伝播を修正。VNDを修正 |
-| MFS3 golden regression実行 | NOT RUN | x86_64 MINIX/QEMU CIまたは実機で実行しログを保存 |
-| MFS3動作・disk byte layout regression | PARTIAL | mount/read/write/namespace/truncate/stat/utime/dirty-RO fallback用golden testを追加 |
+| amd64 PAGE_SIZE = 4096確定 | PASS（compile-time source） | MINIX build/runtime valueは実行環境で補完 |
+| ABI / RES_64BIT / RES_HASPEEK consumer確定 | PASS（source audit） | MFS4実装後にend-to-end large-file/peek tests |
+| LMFS writeback error reporting確定 | PASS（PR #233 merge済み） | MFS4でerror-return APIを使う |
+| DIOCFLUSH API/driver差異確定 | PASS（source audit） | MFS4 mount probe /実device fault test |
+| MFS3 clean/dirty mount動作確定 | PASS（source audit） | dirty image RO fallback testを実行 |
+| testmfs.sh golden hash test | NOT RUN | x86_64 MINIX target上で `./run -t mfs` |
+| 設計書23.1のMFS3操作・disk layout regression | GAP / NOT RUN | mount/read/write/namespace/truncate/stat/utime、disk bytes、overflow rejectの回帰試験を整備・実行 |
+| build / QEMU validation | NOT RUN | amd64 cross-build、QEMU boot、flush error/unsupported device test |
 
-Phase 0は**部分完了**。PAGE_SIZEとVFS ABI監査の結果は確定したが、flush contractの不備とgolden runtime test未実行が残る。これらを解消・検証してからPhase 1（common inode + version codec分離）へ進む。
+### Phase 0の終了判定
 
-## 8. 参照ソース（監査時HEADに固定）
+静的監査により、設計書の前回未確定点のうちPAGE_SIZE、ABI/VFS flag、LMFS error propagation、DIOCFLUSHのdriver policy、MFS3 source behaviorは確定した。しかしPhase 0内容に含まれるMFS3 golden testを未実行であり、設計書23.1のmount/runtime regressionも実施できていない。
 
-- [amd64 PAGE_SIZE](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/sys/arch/amd64/include/vmparam.h#L55-L57)
-- [MFS super.c include / PAGE_SIZE check](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/fs/mfs/super.c#L19-L21)
-- [MFS read_super block-size validation](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/fs/mfs/super.c#L286-L315)
-- [system ABI types](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/sys/sys/types.h)
-- [time_t width macro](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/sys/sys/common_ansi.h#L1-L5)
-- [VFS capability flags](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/include/minix/vfsif.h)
-- [VFS RES_64BIT read/write/getdents/trunc consumers](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/servers/vfs/request.c#L261-L327)
-- [VFS RES_64BIT read/write consumer](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/servers/vfs/request.c#L833-L858)
-- [VFS RES_HASPEEK mmap consumer and fsync](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/servers/vfs/misc.c#L297-L321)
-- [fsdriver callback signatures](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/include/minix/fsdriver.h)
-- [LMFS flushdev implementation](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/lib/libminixfs/cache.c#L1137-L1170)
-- [bdev_ioctl synchronous error return](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/lib/libbdev/bdev.c#L354-L371)
-- [DIOCFLUSH ioctl number](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/include/sys/ioc_disk.h#L11-L18)
-- [MFS sync implementation](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/fs/mfs/misc.c)
-- [MFS mount clean flag and returned flags](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/fs/mfs/mount.c#L28-L80)
-- [VND DIOCFLUSH](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/drivers/storage/vnd/vnd.c#L489-L495)
-- [AHCI DIOCFLUSH](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/drivers/storage/ahci/ahci.c#L2710-L2715)
-- [virtio-blk flush support check](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/drivers/storage/virtio_blk/virtio_blk.c)
-- [AT wini DIOCFLUSH](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/drivers/storage/at_wini/at_wini.c#L2313-L2326)
-- [FBD ioctl forwarding](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/drivers/storage/fbd/fbd.c#L187-L214)
-- [filter ioctl policy](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/drivers/storage/filter/main.c#L200-L229)
-- [MFS3 golden test](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/tests/testmfs.sh)
-- [MFS test runner registration](https://github.com/eclairdosesleekman/minix/blob/8883d8e441bcb2ffcb8b95afc92e738f42629881/minix/tests/run#L21-L35)
+**Phase 0: PARTIAL / NOT ACCEPTED。** 上記のtarget regressionを通過し、ログをこの記録へ追記するまではPhase 1へ進まない。MFS4 disk formatの追加変更・common inode/codec実装はこの監査branchに含めない。
 
+## 9. Source references (audit HEAD pinned)
+
+- [amd64 PAGE_SIZE](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/sys/arch/amd64/include/vmparam.h)
+- [MFS superblock parser / PAGE_SIZE check](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/fs/mfs/super.c)
+- [system ABI types](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/sys/sys/types.h)
+- [amd64 time_t base type](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/sys/sys/common_ansi.h)
+- [MFS in-memory inode](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/fs/mfs/inode.h)
+- [VFS capability flags](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/include/minix/vfsif.h)
+- [VFS RES_64BIT consumers](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/servers/vfs/request.c)
+- [VFS RES_HASPEEK / fsync](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/servers/vfs/misc.c)
+- [MFS mount / clean flag / unmount](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/fs/mfs/mount.c)
+- [MFS fs_sync](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/fs/mfs/misc.c)
+- [MFS callback table](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/fs/mfs/table.c)
+- [fsdriver status callbacks](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/include/minix/fsdriver.h)
+- [LMFS cache writeback](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/lib/libminixfs/cache.c)
+- [bdev ioctl API](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/lib/libbdev/bdev.c)
+- [AHCI DIOCFLUSH](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/ahci/ahci.c)
+- [virtio-blk DIOCFLUSH](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/virtio_blk/virtio_blk.c)
+- [AT wini DIOCFLUSH](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/at_wini/at_wini.c)
+- [FBD ioctl forwarding](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/fbd/fbd.c)
+- [filter ioctl policy](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/filter/main.c)
+- [VND DIOCFLUSH](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/vnd/vnd.c)
+- [memory driver ioctl](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/memory/memory.c)
+- [x86_64 storage driver build list](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/drivers/storage/Makefile)
+- [MFS3 golden image test](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/tests/testmfs.sh)
+- [MFS test runner](https://github.com/eclairdosesleekman/minix/blob/c9ee52606c6beb1aa2e0f06947826223896da51f/minix/tests/run)
