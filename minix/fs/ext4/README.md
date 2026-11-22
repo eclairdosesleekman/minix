@@ -205,9 +205,12 @@ implementation.
   filesystem capability and no longer prevents a writable mount by itself.
   Namespace operations that would modify a directory carrying
   `EXT2_INDEX_FL` return `EOPNOTSUPP` before changing that directory;
-  ordinary unindexed directories remain writable. HTree lookup and linear
-  enumeration remain available. The `large_dir` incompat feature is still
-  read-only, including its multi-level indexes.
+  ordinary unindexed directories remain writable. Renaming an indexed
+  directory within the same parent is allowed, but moving one across parents
+  or replacing an indexed directory is rejected before either parent is
+  modified. HTree lookup and linear enumeration remain available. The
+  `large_dir` incompat feature is still read-only, including its multi-level
+  indexes.
 - **BIGALLOC is read-only:** block bitmap interpretation and read-only
   extent mapping understand clusters, but allocation, release, and truncation
   still operate in individual blocks. Writable mounts are therefore rejected.
@@ -692,8 +695,11 @@ until `e2fsck -D` creates an HTree, and keep a second directory unindexed.
 Mount the image read-write on MINIX. Creating, renaming, and removing entries
 in the ordinary directory must work; HTree lookup and readdir must still work
 for the indexed directory, while create/link/unlink/rename within that
-directory and removing the indexed directory itself must fail with
-`EOPNOTSUPP` without changing either directory. After unmount, run
+directory, moving an indexed directory across parents, replacing an indexed
+directory during rename, and removing the indexed directory itself must fail
+with `EOPNOTSUPP` without changing either directory. A same-parent rename of
+an indexed directory may succeed because it does not change that directory's
+contents or `..` entry. After unmount, run
 `e2fsck -fn` and verify that the image is clean.
 
 For read-only `large_dir` coverage, create an ext4 image with
