@@ -595,6 +595,22 @@ entry; further growth or splitting a full external index node remains
 unsupported and must fail without changing the tree. Unmount and run
 `e2fsck -fn`.
 
+For a full depth-one external index node under a depth-two inode root,
+prepare a fragmented file with a root entry that points to an external index
+node whose leaf-entry array is full, while the inode root still has an unused
+slot. Fill one external leaf and write a block into a hole in that leaf so
+the leaf split must also split the full depth-one index node. The existing
+external node must retain the lower half of the sorted child array; a new
+external depth-one node must contain the upper half; the inode root must gain
+the new sibling entry immediately after the original child. Verify that the
+new root key equals the first key in the new index node, the old root key is
+unchanged, all child pointers are in order, both index-node checksums and both
+leaf checksums validate with `metadata_csum`, and `i_blocks` accounts for
+the data block plus two new metadata blocks. Repeat without `metadata_csum`.
+A full inode root, a full parent above depth two, and depth-three-or-greater
+index-parent splits must remain unsupported and leave the image unchanged.
+Unmount and run `e2fsck -fn`.
+
 For depth-two and deeper coverage, prepare fragmented files whose inode roots
 have depths two and three (and greater, when the host tools can generate them).
 Choose a selected depth-one external index node with at least one free entry
