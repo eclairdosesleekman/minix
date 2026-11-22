@@ -15,6 +15,20 @@ int fs_utime(ino_t ino_nr, struct timespec *atime, struct timespec *mtime)
   if( (rip = get_inode(fs_dev, ino_nr)) == NULL)
         return(EINVAL);
 
+  /* Reject timestamps that cannot be represented by the mounted MFS3 disk
+   * format. UTIME_NOW/UTIME_OMIT are commands in tv_nsec, not timestamps.
+   */
+  if (rip->i_sp->s_version == V3 &&
+      ((atime->tv_nsec != UTIME_NOW && atime->tv_nsec != UTIME_OMIT &&
+        (atime->tv_sec < -2147483648LL ||
+         atime->tv_sec > 2147483647LL)) ||
+       (mtime->tv_nsec != UTIME_NOW && mtime->tv_nsec != UTIME_OMIT &&
+        (mtime->tv_sec < -2147483648LL ||
+         mtime->tv_sec > 2147483647LL)))) {
+      put_inode(rip);
+      return(EOVERFLOW);
+  }
+
   rip->i_update = CTIME; /* discard any stale ATIME and MTIME flags */
 
   switch (atime->tv_nsec) {
