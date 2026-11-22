@@ -510,16 +510,28 @@ corrupt:
 
 
 /*
- * Backup superblocks and GDT copies are reserved metadata. Check both extent
- * results and legacy indirect-map pointer blocks before exposing or reading them.
+ * Validate a single legacy indirect-map pointer. Metadata blocks are checked
+ * at block granularity; data blocks also reject every BIGALLOC cluster that
+ * contains reserved metadata. Unlike a zero pointer, a nonzero out-of-range
+ * or pre-data-zone pointer is corruption.
  */
+static int
+ext4_legacy_pointer_reserved(struct inode *rip, block64_t block,
+	int data_block)
+{
+	struct super_block *sp = rip->i_sp;
+
+	if (!sp->s_is_ext4 || block == NO_BLOCK)
+		return(FALSE);
+	if (block < sp->s_first_data_block || block >= sp->s_blocks_count)
+		return(TRUE);
+	return(ext4_extent_range_reserved(sp, block, block + 1, data_block));
+}
+
 static int
 ext4_reserved_metadata_block(struct inode *rip, block64_t block)
 {
-	if (!rip->i_sp->s_is_ext4 || block == NO_BLOCK)
-		return(FALSE);
-	return(ext4_overlaps_super_and_descriptor_blocks(rip->i_sp,
-	    block, block + 1));
+	return(ext4_legacy_pointer_reserved(rip, block, FALSE));
 }
 
 block64_t read_map(register struct inode *rip, off_t position,
@@ -566,7 +578,7 @@ block64_t read_map(register struct inode *rip, off_t position,
 
 	if (block_pos < EXT2_NDIR_BLOCKS) {
 		b = rip->i_block[block_pos];
-		if (ext4_data_overlaps_reserved_clusters(rip->i_sp, b)) {
+		if (ext4_legacy_pointer_reserved(rip, b, TRUE)) {
 			err_code = EIO;
 			return(NO_BLOCK);
 		}
@@ -615,7 +627,7 @@ block64_t read_map(register struct inode *rip, off_t position,
 	if (bp == NULL) return(NO_BLOCK);
 	b = rd_indir(bp, mindex);
 	put_block(bp);
-	if (ext4_data_overlaps_reserved_clusters(rip->i_sp, b)) {
+	if (ext4_legacy_pointer_reserved(rip, b, TRUE)) {
 		err_code = EIO;
 		return(NO_BLOCK);
 	}
