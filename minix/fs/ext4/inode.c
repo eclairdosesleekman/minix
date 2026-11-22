@@ -16,6 +16,7 @@
  */
 
 #include "fs.h"
+#include <stddef.h>
 #include <string.h>
 #include "buf.h"
 #include "inode.h"
