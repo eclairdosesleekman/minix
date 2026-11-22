@@ -225,14 +225,15 @@ ext4_verify_inode_csum(struct super_block *sp, ino_t ino,
  * validation is required even when that optional checksum is disabled.
  */
 int
-ext4_validate_xattr_block(struct super_block *sp, dev_t dev, block64_t block)
+ext4_validate_xattr_block(struct super_block *sp, dev_t dev,
+	block64_t block, ino_t parent_ino, u32_t parent_generation)
 {
 	struct buf *bp;
 	const unsigned char *data;
 	unsigned char block_nr_le[8];
 	unsigned int pos, entries_end, entry_size, name_len, i;
 	u32_t block_lo, block_hi, magic, refcount, blocks;
-	u32_t value_size, value_inum, padded_size;
+	u32_t value_size, value_inum, padded_size, entry_hash;
 	u16_t value_offset;
 	u32_t stored, crc, zero32 = 0;
 
@@ -337,6 +338,27 @@ ext4_validate_xattr_block(struct super_block *sp, dev_t dev, block64_t block)
 		    sp->s_block_size - 20);
 		if (stored != crc)
 			goto invalid;
+	}
+
+	/*
+	 * Only follow EA inode pointers after the containing xattr block has
+	 * passed its structural and, when enabled, checksum validation.
+	 */
+	pos = EXT4_XATTR_HEADER_SIZE;
+	while (pos < entries_end - sizeof(u32_t)) {
+		name_len = data[pos];
+		entry_size = (EXT4_XATTR_ENTRY_SIZE + name_len + 3U) & ~3U;
+		value_inum = ext4_csum_read32(data + pos + 4);
+		value_size = ext4_csum_read32(data + pos + 8);
+		if (value_inum != 0) {
+			entry_hash = ext4_csum_read32(data + pos + 12);
+			if (ext4_validate_ea_inode(sp, dev, parent_ino,
+			    parent_generation, value_inum, entry_hash,
+			    data + pos + EXT4_XATTR_ENTRY_SIZE, name_len,
+			    value_size) != OK)
+				goto invalid;
+		}
+		pos += entry_size;
 	}
 
 	put_block(bp);
