@@ -890,7 +890,12 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	    extent_get32(parent_node + 12) != grandparent_key)
 		goto corrupt;
 	if (split_grandparent) {
-		if (root_entries >= root_max || root_index >= root_entries)
+		if (root_entries >= root_max) {
+			extent_release_leaf(rip, parent_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EFBIG);
+		}
+		if (root_index >= root_entries)
 			goto corrupt;
 		grandparent_root_key = extent_get32(root_node + 12 +
 		    (size_t)root_index * 12);
