@@ -101,7 +101,8 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	block64_t *grandparent_blockp, u16_t *grandparent_entriesp,
 	u16_t *grandparent_maxp, u16_t *grandparent_indexp,
 	u32_t *grandparent_keyp,
-	u64_t *parent_upper_boundp, u64_t *leaf_upper_boundp,
+	u64_t *grandparent_upper_boundp, u64_t *parent_upper_boundp,
+	u64_t *leaf_upper_boundp,
 	block64_t *leaf_blockp)
 {
 	unsigned char *node;
@@ -132,6 +133,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	*grandparent_maxp = 0;
 	*grandparent_indexp = 0;
 	*grandparent_keyp = 0;
+	*grandparent_upper_boundp = upper_bound;
 	*leaf_blockp = NO_BLOCK;
 	expected_depth = -1;
 	have_expected_key = FALSE;
@@ -283,6 +285,8 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 			if (child_upper_bound <= selected_key ||
 			    child_upper_bound > upper_bound)
 				goto corrupt;
+			if (depth == 2)
+				*grandparent_upper_boundp = upper_bound;
 			if (depth == 1) {
 				*parent_upper_boundp = upper_bound;
 				*leaf_upper_boundp = child_upper_bound;
@@ -501,6 +505,37 @@ extent_root_parent_matches(struct inode *rip, unsigned char *root_node,
 }
 
 /*
+ * Revalidate the inode root's depth-two child before replacing it with a
+ * left/right pair of depth-two index nodes.
+ */
+static int
+extent_root_grandparent_matches(struct inode *rip, unsigned char *root_node,
+	u16_t root_entries, u16_t root_max, u16_t root_index,
+	block64_t grandparent_block, u32_t grandparent_key)
+{
+	const unsigned char *entry;
+	block64_t selected_block;
+
+	if (root_node == NULL || grandparent_block == NO_BLOCK ||
+	    grandparent_block >= rip->i_sp->s_blocks_count ||
+	    root_entries == 0 || root_index >= root_entries ||
+	    root_max < root_entries || root_max == 0 ||
+	    root_max > (sizeof(rip->i_block) - 12) / 12)
+		return(FALSE);
+	if (extent_get16(root_node) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(root_node + 2) != root_entries ||
+	    extent_get16(root_node + 4) != root_max ||
+	    extent_get16(root_node + 6) != 3)
+		return(FALSE);
+
+	entry = root_node + 12 + (size_t)root_index * 12;
+	selected_block = ((u64_t)extent_get16(entry + 8) << 32) |
+	    extent_get32(entry + 4);
+	return(selected_block == grandparent_block &&
+	    extent_get32(entry) == grandparent_key);
+}
+
+/*
  * Reacquire a depth-two ancestor before inserting a sibling index node.
  * The old child retains its first key, so adding a later sibling is safe even
  * when the old child occupies entry zero.
@@ -525,7 +560,7 @@ extent_prepare_grandparent_split(struct inode *rip,
 	    parent_block >= rip->i_sp->s_blocks_count ||
 	    parent_block == grandparent_block ||
 	    grandparent_entries == 0 ||
-	    grandparent_entries >= grandparent_max ||
+	    grandparent_entries > grandparent_max ||
 	    grandparent_index >= grandparent_entries ||
 	    grandparent_max == 0 ||
 	    grandparent_max > (rip->i_sp->s_block_size - 12) / 12)
