@@ -368,13 +368,13 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 }
 
 /*
- * Prepare an external leaf's parent index entry for a first-key update.
- * The inode root has no parent, so depth-one roots can update any root key.
- * At greater depths, only a non-first entry in the immediate parent is safe:
- * changing entry zero would also change that parent's key in its ancestor.
+ * Reacquire and validate the immediate parent index node before changing
+ * its selected child entry. The inode root has no ancestor, so depth-one
+ * roots can update or remove any entry. At greater depths, only a non-first
+ * entry is safe because changing entry zero would alter an ancestor key.
  */
 static int
-extent_prepare_parent_key_update(struct inode *rip,
+extent_prepare_parent_index(struct inode *rip,
 	unsigned char *root_node, u16_t root_depth, block64_t parent_block,
 	block64_t leaf_block, u16_t parent_entries, u16_t parent_max,
 	u16_t parent_index, u32_t parent_key, struct buf **parent_bpp,
@@ -713,13 +713,14 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if (op & WMAP_FREE) {
 		struct buf *parent_key_bp;
 		unsigned char *parent_key_node, *parent_key_entry;
-		u64_t block_to_free;
+		u64_t block_to_free, sectors;
 		u32_t new_parent_key;
-		int update_parent_key;
+		int update_parent_key, remove_empty_leaf;
 
 		parent_key_bp = NULL;
 		parent_key_node = NULL;
 		update_parent_key = FALSE;
+		remove_empty_leaf = FALSE;
 		if (i == entries) {
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(OK);	/* A hole needs no work. */
@@ -727,6 +728,46 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 
 		offset = logical - ex.logical;
 		block_to_free = ex.physical + offset;
+		remove_empty_leaf = leaf_bp != NULL && entries == 1 &&
+		    ex.length == 1 && offset == 0;
+		if (remove_empty_leaf) {
+			sectors = rip->i_sp->s_sectors_in_block;
+			if (parent_entries <= 1 || sectors == 0 ||
+			    sectors > ~(u64_t)0 / 2 ||
+			    rip->i_blocks < sectors * 2 ||
+			    block_to_free == leaf_block ||
+			    block_to_free == parent_block) {
+				extent_release_leaf(rip, leaf_bp, FALSE);
+				return(EOPNOTSUPP);
+			}
+			r = extent_prepare_parent_index(rip, root_node,
+			    root_depth, parent_block, leaf_block, parent_entries,
+			    parent_max, parent_index, parent_key, &parent_key_bp,
+			    &parent_key_node);
+			if (r != OK) {
+				extent_release_leaf(rip, leaf_bp, FALSE);
+				return(r);
+			}
+
+			/* Remove this child; keep the parent node nonempty. */
+			parent_key_entry = parent_key_node + 12 +
+			    (size_t)parent_index * 12;
+			memmove(parent_key_entry, parent_key_entry + 12,
+			    (size_t)(parent_entries - parent_index - 1) * 12);
+			memset(parent_key_node + 12 +
+			    (size_t)(parent_entries - 1) * 12, 0, 12);
+			extent_put16(parent_key_node + 2, parent_entries - 1);
+
+			/* Drop the leaf buffer before invalidating its block. */
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			free_block(rip->i_sp, block_to_free);
+			free_block(rip->i_sp, leaf_block);
+			rip->i_blocks -= sectors * 2;
+			extent_release_leaf(rip, parent_key_bp, TRUE);
+			rip->i_dirt = IN_DIRTY;
+			return(OK);
+		}
+
 		if (rip->i_blocks < rip->i_sp->s_sectors_in_block) {
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(EIO);
@@ -746,7 +787,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			} else {
 				new_parent_key = ex.logical + 1;
 			}
-			r = extent_prepare_parent_key_update(rip, root_node,
+			r = extent_prepare_parent_index(rip, root_node,
 			    root_depth, parent_block, leaf_block, parent_entries,
 			    parent_max, parent_index, parent_key, &parent_key_bp,
 			    &parent_key_node);
