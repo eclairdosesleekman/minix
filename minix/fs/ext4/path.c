@@ -312,6 +312,143 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 }
 
 
+
+/*
+ * Rename a name in an inline directory without changing either dirent area.
+ * This bounded operation is safe only when the new aligned name fits in the
+ * source record. Destination replacement and cross-area compaction need a
+ * multi-record transaction and are intentionally left unsupported.
+ */
+int
+ext4_rename_inline_dirent(struct inode *dir, const char *old_name,
+    const char *new_name, ino_t old_ino)
+{
+    unsigned char *areas[2];
+    unsigned int lengths[2], area, offset, rec_len, name_len;
+    unsigned int source_area_len, source_rec_len, required_space;
+    size_t old_len, new_len;
+    struct ext2_disk_dir_desc *dp, *source;
+    ino_t child, target_ino;
+    u8_t file_type;
+    int target_count;
+
+    if (dir == NULL || old_name == NULL || new_name == NULL)
+        return(EINVAL);
+    if ((dir->i_mode & I_TYPE) != I_DIRECTORY)
+        return(ENOTDIR);
+    if (!dir->i_sp->s_is_ext4 ||
+        !HAS_INCOMPAT_FEATURE(dir->i_sp, INCOMPAT_INLINE_DATA) ||
+        !(dir->i_flags & EXT4_INLINE_DATA_FL) ||
+        (dir->i_flags & EXT2_INDEX_FL))
+        return(EOPNOTSUPP);
+
+    old_len = strlen(old_name);
+    new_len = strlen(new_name);
+    if (old_len == 0 || new_len == 0 ||
+        strcmp(old_name, ".") == 0 || strcmp(old_name, "..") == 0 ||
+        strcmp(new_name, ".") == 0 || strcmp(new_name, "..") == 0 ||
+        strchr(old_name, '/') != NULL || strchr(new_name, '/') != NULL)
+        return(EINVAL);
+    if (old_len > EXT2_NAME_MAX || new_len > EXT2_NAME_MAX ||
+        old_len > NAME_MAX || new_len > NAME_MAX)
+        return(ENAMETOOLONG);
+    if (strcmp(old_name, new_name) == 0)
+        return(EXT4_RENAME_SAME);
+
+    if (dir->i_inline_data == NULL ||
+        dir->i_inline_size < EXT4_INLINE_DATA_MIN ||
+        dir->i_inline_size > EXT4_INLINE_DATA_TOTAL_MAX ||
+        dir->i_inline_size != EXT4_INLINE_DATA_MIN +
+        dir->i_inline_value_size ||
+        (u64_t)dir->i_size != (u64_t)dir->i_inline_size ||
+        dir->i_inline_parent == 0 ||
+        dir->i_inline_parent > dir->i_sp->s_inodes_count ||
+        old_ino == NO_ENTRY || old_ino > dir->i_sp->s_inodes_count)
+        return(EIO);
+
+    areas[0] = dir->i_inline_data + sizeof(u32_t);
+    lengths[0] = EXT4_INLINE_DATA_MIN - sizeof(u32_t);
+    areas[1] = dir->i_inline_data + EXT4_INLINE_DATA_MIN;
+    lengths[1] = dir->i_inline_value_size;
+    source = NULL;
+    source_area_len = 0;
+    source_rec_len = 0;
+    target_count = 0;
+    target_ino = NO_ENTRY;
+
+    /*
+     * Validate both complete areas before changing the source record.
+     * The inline body and system.data value are independent dirent blocks.
+     */
+    for (area = 0; area < 2; area++) {
+        if (lengths[area] == 0)
+            continue;
+        if (lengths[area] < MIN_DIR_ENTRY_SIZE ||
+            (lengths[area] & (DIR_ENTRY_ALIGN - 1)) != 0)
+            return(EIO);
+        for (offset = 0; offset < lengths[area]; offset += rec_len) {
+            dp = (struct ext2_disk_dir_desc *)(areas[area] + offset);
+            if (!ext4_valid_dirent(dp, offset, lengths[area]))
+                return(EIO);
+            rec_len = ext4_dir_rec_len(dp, lengths[area]);
+            if (rec_len > lengths[area] - offset)
+                return(EIO);
+            if (dp->d_ino == NO_ENTRY)
+                continue;
+
+            name_len = dp->d_name_len;
+            child = (ino_t)conv4(le_CPU, dp->d_ino);
+            if (child == NO_ENTRY ||
+                child > dir->i_sp->s_inodes_count)
+                return(EIO);
+
+            if (name_len == old_len &&
+                memcmp(dp->d_name, old_name, old_len) == 0) {
+                if (child != old_ino || source != NULL)
+                    return(EIO);
+                source = dp;
+                source_area_len = lengths[area];
+                source_rec_len = rec_len;
+            }
+            if (name_len == new_len &&
+                memcmp(dp->d_name, new_name, new_len) == 0) {
+                if (target_count != 0)
+                    return(EIO);
+                target_count = 1;
+                target_ino = child;
+            }
+        }
+    }
+
+    if (source == NULL)
+        return(ENOENT);
+    if (target_count != 0) {
+        if (target_ino == old_ino)
+            return(EXT4_RENAME_SAME);
+        /* Replacing a different inode needs unlink/link accounting. */
+        return(EOPNOTSUPP);
+    }
+
+    required_space = MIN_DIR_ENTRY_SIZE + (unsigned int)new_len;
+    required_space += (DIR_ENTRY_ALIGN -
+        (required_space & (DIR_ENTRY_ALIGN - 1))) &
+        (DIR_ENTRY_ALIGN - 1);
+    if (required_space > source_rec_len)
+        return(ENOSPC);
+
+    file_type = source->d_file_type;
+    memset(source, 0, source_rec_len);
+    source->d_ino = (u32_t)conv4(le_CPU, old_ino);
+    ext4_set_dir_rec_len(source, source_rec_len, source_area_len);
+    source->d_name_len = (u8_t)new_len;
+    source->d_file_type = file_type;
+    memcpy(source->d_name, new_name, new_len);
+
+    dir->i_update |= CTIME | MTIME;
+    dir->i_dirt = IN_DIRTY;
+    return(OK);
+}
+
 /* ext4 HTree hash versions stored in dx_root_info.hash_version. */
 #define EXT4_DX_HASH_LEGACY          0
 #define EXT4_DX_HASH_HALF_MD4        1
