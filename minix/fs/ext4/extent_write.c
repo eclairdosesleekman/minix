@@ -91,7 +91,9 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	size_t *node_sizep, u16_t *entriesp, u16_t *maxp,
 	struct buf **bpp, unsigned char **root_nodep,
 	u16_t *root_entriesp, u16_t *root_maxp, u16_t *root_indexp,
-	u16_t *root_depthp)
+	u16_t *root_depthp, block64_t *parent_blockp,
+	u16_t *parent_entriesp, u16_t *parent_maxp,
+	u16_t *parent_indexp, u32_t *parent_keyp)
 {
 	unsigned char *node;
 	struct buf *bp;
@@ -100,12 +102,19 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	u16_t magic, entries, max_entries, depth;
 	u64_t previous_end;
 	u32_t expected_key;
+	block64_t current_block;
 	int have_expected_key;
 	unsigned int i;
 
 	node = (unsigned char *)rip->i_block;
 	node_size = sizeof(rip->i_block);
 	bp = NULL;
+	current_block = NO_BLOCK;
+	*parent_blockp = NO_BLOCK;
+	*parent_entriesp = 0;
+	*parent_maxp = 0;
+	*parent_indexp = 0;
+	*parent_keyp = 0;
 	expected_depth = -1;
 	have_expected_key = FALSE;
 
@@ -167,6 +176,15 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 		if (depth == 0) {
 			if (bp != NULL && entries == 0)
 				goto corrupt;
+			if (*root_depthp == 1) {
+				*parent_entriesp = *root_entriesp;
+				*parent_maxp = *root_maxp;
+				*parent_indexp = *root_indexp;
+				*parent_keyp = extent_get32(*root_nodep + 12 +
+				    (size_t)*root_indexp * 12);
+			} else if (*root_depthp > 1 && *parent_blockp == NO_BLOCK) {
+				goto corrupt;
+			}
 			previous_end = 0;
 			for (i = 0; i < entries; i++) {
 				struct ext4_extent ex;
@@ -239,12 +257,24 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				return(EOPNOTSUPP);
 			}
 
+			if (expected_depth == -1)
+				*root_indexp = (u16_t)selected_index;
+			/*
+			 * Remember the immediate external index node when it owns
+			 * the leaf being returned. Its buffer is reacquired only if
+			 * the caller needs to split that leaf.
+			 */
+			if (depth == 1 && bp != NULL) {
+				*parent_blockp = current_block;
+				*parent_entriesp = entries;
+				*parent_maxp = max_entries;
+				*parent_indexp = (u16_t)selected_index;
+				*parent_keyp = selected_key;
+			}
 			if (bp != NULL) {
 				put_block(bp);
 				bp = NULL;
 			}
-			if (expected_depth == -1)
-				*root_indexp = (u16_t)selected_index;
 			expected_key = selected_key;
 			have_expected_key = TRUE;
 			bp = get_block(rip->i_dev, selected_child, NORMAL);
@@ -252,6 +282,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				goto corrupt;
 			node = (unsigned char *)b_data(bp);
 			node_size = rip->i_sp->s_block_size;
+			current_block = selected_child;
 			expected_depth = depth - 1;
 		}
 	}
@@ -326,58 +357,97 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
  */
 static int
 extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
-	struct buf *leaf_bp, unsigned char *root_node, u16_t root_entries,
-	u16_t root_max, u16_t root_index, u16_t root_depth,
-	u16_t leaf_entries, u16_t leaf_max, unsigned int insert,
-	u32_t logical, u64_t physical)
+	struct buf *leaf_bp, unsigned char *root_node, u16_t root_depth,
+	block64_t parent_block, u16_t parent_entries, u16_t parent_max,
+	u16_t parent_index, u32_t parent_key, u16_t leaf_entries,
+	u16_t leaf_max, unsigned int insert, u32_t logical, u64_t physical)
 {
-	struct buf *new_bp;
-	unsigned char *new_node, *new_index;
+	struct buf *new_bp, *parent_bp;
+	unsigned char *new_node, *new_index, *parent_node;
 	unsigned char *records;
-	u64_t upper, sectors;
+	u64_t upper, sectors, end_key;
 	block64_t new_block;
 	u32_t first_key, right_key;
-	u64_t end_key;
 	u16_t left_entries, right_entries;
-	size_t records_size;
+	size_t records_size, tail_offset;
 	unsigned int i;
+	int parent_is_external;
 
-	if (leaf_bp == NULL || root_node == NULL || root_depth != 1 ||
+	parent_bp = NULL;
+	parent_is_external = FALSE;
+	if (leaf_bp == NULL || root_node == NULL ||
+	    (root_depth != 1 && root_depth != 2) ||
 	    leaf_entries != leaf_max || insert > leaf_entries ||
-	    root_entries == 0 || root_index >= root_entries ||
-	    root_entries >= root_max) {
+	    parent_entries == 0 || parent_index >= parent_entries ||
+	    parent_entries >= parent_max) {
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EFBIG);
 	}
 
-	first_key = extent_get32(leaf + 12);
-	if (extent_get32(root_node + 12 + root_index * 12) != first_key ||
-	    logical < first_key) {
-		extent_release_leaf(rip, leaf_bp, FALSE);
-		return(EIO);
+	if (root_depth == 1) {
+		parent_node = root_node;
+		if (parent_block != NO_BLOCK) {
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EIO);
+		}
+	} else {
+		if (parent_block == NO_BLOCK ||
+		    parent_block >= rip->i_sp->s_blocks_count) {
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EIO);
+		}
+		parent_bp = get_block(rip->i_dev, parent_block, NORMAL);
+		if (parent_bp == NULL) {
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EIO);
+		}
+		parent_is_external = TRUE;
+		parent_node = (unsigned char *)b_data(parent_bp);
+		if (extent_get16(parent_node) != EXT4_EXTENT_MAGIC ||
+		    extent_get16(parent_node + 2) != parent_entries ||
+		    extent_get16(parent_node + 4) != parent_max ||
+		    extent_get16(parent_node + 6) != 1 ||
+		    parent_max > (rip->i_sp->s_block_size - 12) / 12)
+			goto corrupt;
+		if (HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM)) {
+			u32_t stored, calculated;
+
+			tail_offset = 12 + (size_t)parent_max * 12;
+			if (tail_offset > rip->i_sp->s_block_size -
+			    sizeof(stored))
+				goto corrupt;
+			stored = extent_get32(parent_node + tail_offset);
+			calculated = ext4_crc32c(ext4_inode_csum_seed(rip),
+			    parent_node, tail_offset);
+			if (stored != calculated)
+				goto corrupt;
+		}
 	}
 
-	upper = root_index + 1 < root_entries ?
-	    extent_get32(root_node + 12 + (root_index + 1) * 12) :
-	    (u64_t)UINT32_MAX + 1;
-	if ((u64_t)logical + 1 > upper) {
-		extent_release_leaf(rip, leaf_bp, FALSE);
-		return(EIO);
+	first_key = extent_get32(leaf + 12);
+	if (extent_get32(parent_node + 12 + parent_index * 12) != parent_key ||
+	    parent_key != first_key || logical < first_key) {
+		goto corrupt;
 	}
+
+	upper = parent_index + 1 < parent_entries ?
+	    extent_get32(parent_node + 12 + (parent_index + 1) * 12) :
+	    (u64_t)UINT32_MAX + 1;
+	if ((u64_t)logical + 1 > upper)
+		goto corrupt;
 	for (i = 0; i < leaf_entries; i++) {
 		struct ext4_extent ex;
 
 		extent_get(leaf + 12 + i * 12, &ex);
 		end_key = (u64_t)ex.logical + ex.length;
-		if (end_key > upper) {
-			extent_release_leaf(rip, leaf_bp, FALSE);
-			return(EIO);
-		}
+		if (end_key > upper)
+			goto corrupt;
 	}
 
 	sectors = rip->i_sp->s_sectors_in_block;
 	if (sectors == 0 || sectors > ~(u64_t)0 / 2 ||
 	    !extent_i_blocks_can_add(rip, sectors * 2)) {
+		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EFBIG);
 	}
@@ -385,6 +455,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	records_size = (size_t)(leaf_entries + 1) * 12;
 	records = malloc(records_size);
 	if (records == NULL) {
+		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(ENOMEM);
 	}
@@ -402,6 +473,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	if (left_entries == 0 || right_entries == 0 ||
 	    right_key <= first_key || (u64_t)right_key >= upper) {
 		free(records);
+		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EIO);
 	}
@@ -410,6 +482,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	new_block = alloc_block(rip, NO_BLOCK);
 	if (new_block == NO_BLOCK) {
 		free(records);
+		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(ENOSPC);
 	}
@@ -419,6 +492,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	if (new_block > 0xffffffffffffULL) {
 		free_block(rip->i_sp, new_block);
 		free(records);
+		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EFBIG);
 	}
@@ -426,6 +500,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	if (new_bp == NULL) {
 		free_block(rip->i_sp, new_block);
 		free(records);
+		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EIO);
 	}
@@ -439,30 +514,37 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	memcpy(new_node + 12, records + (size_t)left_entries * 12,
 	    (size_t)right_entries * 12);
 
-	/* Keep the old node's first key, and move the upper half to new_node. */
+	/* The existing leaf keeps its key; the new leaf gets the upper half. */
 	memcpy(leaf + 12, records, (size_t)left_entries * 12);
 	memset(leaf + 12 + (size_t)left_entries * 12, 0,
 	    (size_t)(leaf_max - left_entries) * 12);
 	extent_put16(leaf + 2, left_entries);
 
-	/* Publish a new root index immediately after the split child. */
-	new_index = root_node + 12 + (root_index + 1) * 12;
+	/* Add the new leaf key immediately after the original child. */
+	new_index = parent_node + 12 + (parent_index + 1) * 12;
 	memmove(new_index + 12, new_index,
-	    (size_t)(root_entries - root_index - 1) * 12);
+	    (size_t)(parent_entries - parent_index - 1) * 12);
 	extent_put32(new_index, right_key);
 	extent_put32(new_index + 4, (u32_t)new_block);
 	extent_put16(new_index + 8, (u16_t)(new_block >> 32));
 	extent_put16(new_index + 10, 0);
-	extent_put16(root_node + 2, root_entries + 1);
+	extent_put16(parent_node + 2, parent_entries + 1);
 
-	/* Both external nodes need fresh checksums when metadata_csum is active. */
+	/* Checksums cover the external parent index and both child leaves. */
 	extent_release_leaf(rip, new_bp, TRUE);
 	extent_release_leaf(rip, leaf_bp, TRUE);
+	if (parent_is_external)
+		extent_release_leaf(rip, parent_bp, TRUE);
 	free(records);
 
 	rip->i_blocks += sectors * 2; /* one data block plus one extent-tree node */
 	rip->i_dirt = IN_DIRTY;
 	return(OK);
+
+corrupt:
+	extent_release_leaf(rip, parent_bp, FALSE);
+	extent_release_leaf(rip, leaf_bp, FALSE);
+	return(EIO);
 }
 
 int
@@ -474,7 +556,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	struct ext4_extent ex, previous, next;
 	size_t node_size;
 	u16_t entries, max_entries, root_entries, root_max;
-	u16_t root_index, root_depth;
+	u16_t root_index, root_depth, parent_entries, parent_max;
+	u16_t parent_index;
+	block64_t parent_block;
+	u32_t parent_key;
 	u64_t logical64, physical;
 	u32_t logical, offset, new_length;
 	unsigned int i, insert;
@@ -492,7 +577,8 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 
 	if ((r = extent_leaf(rip, logical, &root, &node_size, &entries,
 	    &max_entries, &leaf_bp, &root_node, &root_entries, &root_max,
-	    &root_index, &root_depth)) != OK)
+	    &root_index, &root_depth, &parent_block, &parent_entries,
+	    &parent_max, &parent_index, &parent_key)) != OK)
 		return(r);
 	(void)node_size;	/* The selected node has already been bounded. */
 
@@ -715,8 +801,9 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		 * and a full root still fail without changing any on-disk mapping.
 		 */
 		r = extent_split_full_leaf(rip, root, leaf_bp, root_node,
-		    root_entries, root_max, root_index, root_depth, entries,
-		    max_entries, insert, logical, physical);
+		    root_depth, parent_block, parent_entries, parent_max,
+		    parent_index, parent_key, entries, max_entries, insert,
+		    logical, physical);
 		return(r);
 	}
 
