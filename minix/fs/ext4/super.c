@@ -736,9 +736,6 @@ ext4_store32(unsigned char *p, u32_t value)
 	memcpy(p, &value, sizeof(value));
 }
 
-/*===========================================================================*
- *                              write_super                                  *
- *===========================================================================*/
 static int
 ext4_write_descriptor_bytes(struct super_block *sp, u64_t disk_offset,
 	const unsigned char *data, size_t length)
@@ -763,6 +760,9 @@ ext4_write_descriptor_bytes(struct super_block *sp, u64_t disk_offset,
 	return(OK);
 }
 
+/*===========================================================================*
+ *                              write_super                                  *
+ *===========================================================================*/
 void
 write_super(struct super_block *sp)
 {
