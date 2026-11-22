@@ -129,6 +129,7 @@
 #define RO_COMPAT_METADATA_CSUM    0x0400
 #define RO_COMPAT_READONLY         0x1000
 #define RO_COMPAT_PROJECT          0x2000
+#define RO_COMPAT_VERITY           0x8000
 #define RO_COMPAT_ORPHAN_PRESENT   0x10000
 #define EXT4_BG_INODE_UNINIT       0x0001
 #define EXT4_BG_BLOCK_UNINIT       0x0002
@@ -150,6 +151,7 @@
 /* Linux ext4 inline-data inode and inode-body xattr layout. */
 #define EXT4_INLINE_DATA_FL        0x10000000
 #define EXT4_EA_INODE_FL           0x00200000
+#define EXT4_VERITY_FL             0x00100000
 #define EXT4_INLINE_DATA_MIN       60U
 #define EXT4_INLINE_DATA_MAX       256U
 #define EXT4_INLINE_DATA_EA_MAX    EXT4_XATTR_SIZE_MAX
@@ -180,6 +182,7 @@
                                       RO_COMPAT_METADATA_CSUM | \
                                       RO_COMPAT_READONLY | \
                                       RO_COMPAT_PROJECT | \
+                                      RO_COMPAT_VERITY | \
                                       RO_COMPAT_ORPHAN_PRESENT | \
                                       RO_COMPAT_GDT_CSUM)
 
