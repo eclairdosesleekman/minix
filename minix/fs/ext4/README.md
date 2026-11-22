@@ -90,9 +90,8 @@ read-write mode.
   Lustre-style EA inode backpointers are recognized. EA storage inodes remain
   outside the pathname namespace, and attribute values are not exposed through
   a get/list-xattr API. Inline-data `system.data` values stored in EA inodes
-  are still unsupported by the inline-data decoder. Writable mounts are
-  rejected because xattr reference counts and EA inode lifetimes are not
-  maintained.
+  are decoded and readable on read-only mounts, but EA reference counts and
+  lifetimes are not maintained. Writable mounts are rejected.
 
 - External xattr blocks are structurally validated before an inode is exposed,
   even when `metadata_csum` is disabled. The 32-byte header, reference count,
@@ -177,8 +176,11 @@ read-write mode.
   Inline directories can be searched and enumerated read-only. Their
   implicit `.` and `..` entries are synthesized; the 56-byte dirent area
   after the parent inode and the `system.data` continuation are validated as
-  separate regions. Inline-directory mutation, EA-inode-backed values, and
-  VM page mapping remain unsupported.
+  separate regions. EA-inode-backed `system.data` values are read and
+  checksum/hash validated for inline files, symlinks, and directories on
+  read-only mounts, up to the 64 KiB xattr-value limit. No get/list-xattr API
+  is provided; inline-directory mutation and VM page mapping remain
+  unsupported.
 - Read-write support for clean filesystems without a journal or indexed
   directories. Lazy `BLOCK_UNINIT` and `INODE_UNINIT` bitmaps are synthesized
   from backup-super/GDT locations and each group's block bitmap, inode bitmap,
@@ -750,7 +752,8 @@ the 48-bit filesystem-block limit before changing the extent tree.
 
 For inline-data coverage, create a disposable Linux ext4 image with
 the `inline_data` feature enabled, no journal, and metadata checksums disabled
-for read-write testing:
+for read-write testing. Use a second image with `ea_inode` enabled and
+metadata checksums enabled to exercise the read-only EA-backed payload path:
 
 ```sh
 truncate -s 128M ext4-inline-test.img
@@ -763,15 +766,23 @@ e2fsck -fn ext4-inline-test.img
 Populate it on Linux with short and 60-byte-boundary regular files, files
 whose payload extends into the `system.data` xattr, empty inline files, and
 inline symlinks. Confirm reads return exact contents at offsets spanning the
-60-byte boundary and at EOF. On a read-write mount, overwrite bytes in short
-files and in existing `system.data` payloads, extend a file only up to its
-already allocated inline payload capacity, and shrink/extend it with
-truncate. Writes or truncates beyond the current inline capacity must fail
+60-byte boundary and at EOF. On the EA-inode image, create files, inline
+symlinks, and inline directories whose `system.data` values are stored in EA
+inodes, including values crossing filesystem-block boundaries and values
+near 64 KiB. Compare file contents, symlink targets, directory lookup, and
+getdents output with the Linux source image. Corrupt the EA inode checksum,
+value extent, value hash, and referencing entry hash one at a time; each
+referencing inode must fail with `EIO` before returning payload bytes. Also
+verify that an `ea_inode` filesystem is rejected for read-write mounting.
+On the ordinary inline-data image, overwrite bytes in short files and in
+existing `system.data` payloads, extend a file only up to its already
+allocated inline payload capacity, and shrink/extend it with truncate. Writes or truncates beyond the current inline capacity must fail
 without changing the inode. Corrupt the inode-body xattr header, entry
 terminator, duplicate `system.data` entry, value offset/size, or inode size
 independently and confirm the inode is rejected with `EIO`. Payloads larger
-than the in-core 256-byte bound, external xattr-inode values, growth requiring
-a larger `system.data` xattr value, and page mapping must remain unsupported.
+than the in-core 256-byte bound, non-inline EA-inode xattr values remain
+validation-only, growth requiring a larger inline `system.data` value, and
+page mapping remain unsupported.
 For inline-directory coverage, create nested small directories so some entries
 remain in the 56-byte inode area and others spill into `system.data`. Verify
 lookup of ordinary names, `.`, and `..`, plus repeated getdents calls with

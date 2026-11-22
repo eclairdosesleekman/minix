@@ -355,7 +355,7 @@ ext4_validate_xattr_block(struct super_block *sp, dev_t dev,
 			if (ext4_validate_ea_inode(sp, dev, parent_ino,
 			    parent_generation, value_inum, entry_hash,
 			    data + pos + EXT4_XATTR_ENTRY_SIZE, name_len,
-			    value_size) != OK)
+			    value_size, NULL) != OK)
 				goto invalid;
 		}
 		pos += entry_size;
@@ -483,7 +483,7 @@ ext4_validate_inode_xattrs(struct super_block *sp, dev_t dev,
 			if (ext4_validate_ea_inode(sp, dev, parent_ino,
 			    generation, value_inum, entry_hash,
 			    raw + pos + EXT4_XATTR_ENTRY_SIZE, name_len,
-			    value_size) != OK)
+			    value_size, NULL) != OK)
 				return(EIO);
 		}
 		pos += entry_size;
