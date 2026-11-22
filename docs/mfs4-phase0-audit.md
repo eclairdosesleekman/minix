@@ -22,12 +22,16 @@
 
 ## 2. branch / source drift
 
-設計書の基準commitから監査時HEADまでは3 commit進んでいる。GitHub compareでは変更ファイルは次の2件のみで、今回の監査対象（MFS、VFS、libminixfs cache、block device API/storage drivers）に差分はない。
+ソースを個別に監査した時点のmaster HEADは 8883d8e441bcb2ffcb8b95afc92e738f42629881 であり、設計書の基準commitから3 commit進んでいた。その比較では変更ファイルはext4関連の2件のみで、今回の監査対象に差分はなかった。
+
+PR作成時点でmasterはさらに c4810bf8f1a55454ece163372187f7f5c9558849 へ進んでいた。8883d8eからの追加5 commitによる変更も次のext4関連4ファイルに限定され、MFS、VFS、libminixfs cache、block device API/storage driverの監査対象ファイルは変更されていない。
 
 - minix/fs/ext4/README.md
-- minix/fs/ext4/link.c
+- minix/fs/ext4/const.h
+- minix/fs/ext4/inode.c
+- minix/fs/ext4/mount.c
 
-したがって今回の対象箇所は設計書のcommit固定監査をそのまま適用できる。以降は監査時HEADを新しいPhase 0基準とする。
+本PR branchはその時点のmaster（c4810bf8f1a55454ece163372187f7f5c9558849）をbaseとしている。監査記録内のソースURLは、監査時点を再現できるよう8883d8eに固定している。追加5 commitの差分も確認し、Phase 0結論に影響する対象ファイル変更がないことを確認した。
 
 ## 3. PAGE_SIZE / build include chain
 
