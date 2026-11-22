@@ -3,9 +3,10 @@
  *
  * Inline roots and existing external leaves are edited in place. Full
  * external leaves can also be split when their immediate parent index node
- * has room, at any supported tree depth. A full depth-one inode root can grow
- * to depth two for one additional child. General index-node splitting,
- * deeper-tree growth, and root rebalancing remain unsupported.
+ * has room, at any supported tree depth. Full depth-one inode roots can grow
+ * to depth two, and full external depth-one index nodes can split beneath a
+ * depth-two inode root with space. General index-node splitting, deeper-tree
+ * growth, and root rebalancing remain unsupported.
  */
 
 #include "fs.h"
@@ -594,10 +595,9 @@ extent_prepare_parent_index(struct inode *rip,
 
 /*
  * Split a full external leaf when its immediate parent index node has room.
- * A full depth-one inode root is promoted to depth two through a newly
- * allocated external index node. The inherited exclusive upper bound comes
- * from the complete selected path, so the new leaf remains inside every
- * ancestor's logical-block interval. On failure, the old tree stays intact.
+ * A full depth-one inode root can grow to depth two. A full external depth-one
+ * index node can also split when its depth-two inode root has room. The
+ * inherited exclusive upper bounds keep new entries inside their subtrees.
  */
 static int
 extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
@@ -806,6 +806,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	/* Allocate and fully construct the new leaf before publishing its key. */
 	new_block = alloc_block(rip, NO_BLOCK);
 	if (new_block == NO_BLOCK) {
+		free(parent_records);
 		free(records);
 		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
