@@ -80,9 +80,10 @@ read-write mode.
   `s_backup_bgs` slot (zero slots are optional). Superblock, GDT, and
   `resize_inode` reserved-GDT blocks are protected from group bitmap/inode-table
   pointers, file extents, indirect mappings, external extent-tree nodes, and
-  external xattr pointers. The primary superblock and GDT retain their classic
-  locations, so regular allocation and metadata updates can use the existing
-  writer. As with other sparse-super layouts, ordinary writes update primary
+  external xattr pointers. The primary superblock retains its classic location;
+  primary GDT blocks use the classic prefix or META_BG locations as appropriate,
+  so regular allocation and metadata updates can use the existing writer.
+  As with other sparse-super layouts, ordinary writes update primary
   metadata; online resize and backup-copy regeneration are not implemented.
   Alternate-superblock selection remains unsupported.
 - Read-only compatibility with the ext4 `ea_inode` incompat feature.
@@ -476,9 +477,10 @@ With `sparse_super2` and without META_BG, mount the image read-write on MINIX.
 Create, write, rename, and remove regular files and create/remove ordinary
 directories. Unmount cleanly and run `e2fsck -fn`; repeat with 64-byte group
 descriptors and both `metadata_csum` and legacy `gdt_csum` configurations.
-A `sparse_super2` + META_BG image must remain read-only. Also verify that an
-unused zero in either backup-group slot is accepted, including a zero first
-entry followed by a valid second entry.
+A `sparse_super2` + META_BG image must also support read-write operations and
+pass `e2fsck -fn` after clean unmount. Verify that an unused zero in either
+backup-group slot is accepted, including a zero first entry followed by a
+valid second entry.
 
 For writable META_BG coverage, create disposable volumes without a
 journal, resize inode, or orphan file. Use multiple descriptor blocks so both
