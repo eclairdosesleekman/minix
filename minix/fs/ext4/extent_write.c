@@ -798,34 +798,9 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(ENOMEM);
 		}
-		memcpy(parent_records, parent_node + 12,
-		    (size_t)parent_index * 12);
-		extent_put32(parent_records + (size_t)parent_index * 12,
-		    right_key);
-		extent_put32(parent_records + (size_t)parent_index * 12 + 4,
-		    (u32_t)new_block);
-		extent_put16(parent_records + (size_t)parent_index * 12 + 8,
-		    (u16_t)(new_block >> 32));
-		extent_put16(parent_records + (size_t)parent_index * 12 + 10, 0);
-		memcpy(parent_records + (size_t)(parent_index + 1) * 12,
-		    parent_node + 12 + (size_t)parent_index * 12,
-		    (size_t)(parent_entries - parent_index) * 12);
 		split_left_entries = (u16_t)((parent_entries + 1) / 2);
 		split_right_entries = (u16_t)(parent_entries + 1 -
 		    split_left_entries);
-		split_parent_key = extent_get32(parent_records +
-		    (size_t)split_left_entries * 12);
-		if (split_left_entries == 0 || split_right_entries == 0 ||
-		    split_left_entries > parent_max ||
-		    split_right_entries > parent_max ||
-		    split_parent_key <= extent_get32(parent_records) ||
-		    (u64_t)split_parent_key >= parent_upper_bound) {
-			free(parent_records);
-			free(records);
-			extent_release_leaf(rip, parent_bp, FALSE);
-			extent_release_leaf(rip, leaf_bp, FALSE);
-			return(EIO);
-		}
 	}
 
 	/* Allocate and fully construct the new leaf before publishing its key. */
@@ -841,14 +816,47 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		panic("ext4: allocator returned invalid extent-tree block");
 	if (new_block > 0xffffffffffffULL) {
 		free_block(rip->i_sp, new_block);
+		free(parent_records);
 		free(records);
 		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EFBIG);
 	}
+	if (split_parent) {
+		memcpy(parent_records, parent_node + 12,
+		    (size_t)(parent_index + 1) * 12);
+		extent_put32(parent_records +
+		    (size_t)(parent_index + 1) * 12, right_key);
+		extent_put32(parent_records +
+		    (size_t)(parent_index + 1) * 12 + 4, (u32_t)new_block);
+		extent_put16(parent_records +
+		    (size_t)(parent_index + 1) * 12 + 8,
+		    (u16_t)(new_block >> 32));
+		extent_put16(parent_records +
+		    (size_t)(parent_index + 1) * 12 + 10, 0);
+		memcpy(parent_records +
+		    (size_t)(parent_index + 2) * 12,
+		    parent_node + 12 + (size_t)(parent_index + 1) * 12,
+		    (size_t)(parent_entries - parent_index - 1) * 12);
+		split_parent_key = extent_get32(parent_records +
+		    (size_t)split_left_entries * 12);
+		if (split_left_entries == 0 || split_right_entries == 0 ||
+		    split_left_entries > parent_max ||
+		    split_right_entries > parent_max ||
+		    split_parent_key <= extent_get32(parent_records) ||
+		    (u64_t)split_parent_key >= parent_upper_bound) {
+			free(parent_records);
+			free_block(rip->i_sp, new_block);
+			free(records);
+			extent_release_leaf(rip, parent_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EIO);
+		}
+	}
 	new_bp = get_block(rip->i_dev, new_block, NO_READ);
 	if (new_bp == NULL) {
 		free_block(rip->i_sp, new_block);
+		free(parent_records);
 		free(records);
 		extent_release_leaf(rip, parent_bp, FALSE);
 		extent_release_leaf(rip, leaf_bp, FALSE);
@@ -869,12 +877,14 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	 * depth-one external index node containing all old root entries before
 	 * publishing a depth-two root that points at it.
 	 */
-	if (grow_root) {
+	if (grow_root || split_parent) {
 		new_parent_block = alloc_block(rip, NO_BLOCK);
 		if (new_parent_block == NO_BLOCK) {
 			extent_release_leaf(rip, new_bp, FALSE);
 			free_block(rip->i_sp, new_block);
+			free(parent_records);
 			free(records);
+			extent_release_leaf(rip, parent_bp, FALSE);
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(ENOSPC);
 		}
@@ -884,8 +894,8 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		if (new_parent_block > 0xffffffffffffULL ||
 		    new_parent_block == new_block ||
 		    new_parent_block == physical ||
-		    (split_parent && (new_parent_block == parent_block ||
-		    new_parent_block == leaf_block))) {
+		    new_parent_block == leaf_block ||
+		    (split_parent && new_parent_block == parent_block)) {
 			if (new_parent_block != new_block &&
 			    new_parent_block != physical &&
 			    new_parent_block != parent_block &&
