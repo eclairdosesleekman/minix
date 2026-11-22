@@ -30,6 +30,9 @@ bit_t count_free_bits(
 
   assert(sp != NULL);
 
+  if (sp->s_version == V4)
+	return mfs4_count_free_bits(sp, map);
+
   if (map == IMAP) {
     start_block = START_BLOCK;
     map_bits = (bit_t) (sp->s_ninodes + 1);
