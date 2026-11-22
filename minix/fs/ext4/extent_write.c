@@ -93,7 +93,8 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	u16_t *root_entriesp, u16_t *root_maxp, u16_t *root_indexp,
 	u16_t *root_depthp, block64_t *parent_blockp,
 	u16_t *parent_entriesp, u16_t *parent_maxp,
-	u16_t *parent_indexp, u32_t *parent_keyp)
+	u16_t *parent_indexp, u32_t *parent_keyp,
+	block64_t *leaf_blockp)
 {
 	unsigned char *node;
 	struct buf *bp;
@@ -115,6 +116,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	*parent_maxp = 0;
 	*parent_indexp = 0;
 	*parent_keyp = 0;
+	*leaf_blockp = NO_BLOCK;
 	expected_depth = -1;
 	have_expected_key = FALSE;
 
@@ -200,6 +202,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 					goto corrupt;
 				previous_end = (u64_t)ex.logical + ex.length;
 			}
+			*leaf_blockp = current_block;
 			*nodep = node;
 			*node_sizep = node_size;
 			*entriesp = entries;
@@ -358,7 +361,8 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 static int
 extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	struct buf *leaf_bp, unsigned char *root_node, u16_t root_depth,
-	block64_t parent_block, u16_t parent_entries, u16_t parent_max,
+	block64_t parent_block, block64_t leaf_block,
+	u16_t parent_entries, u16_t parent_max,
 	u16_t parent_index, u32_t parent_key, u16_t leaf_entries,
 	u16_t leaf_max, unsigned int insert, u32_t logical, u64_t physical)
 {
@@ -366,7 +370,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	unsigned char *new_node, *new_index, *parent_node;
 	unsigned char *records;
 	u64_t upper, sectors, end_key;
-	block64_t new_block;
+	block64_t new_block, selected_block;
 	u32_t first_key, right_key;
 	u16_t left_entries, right_entries;
 	size_t records_size, tail_offset;
@@ -375,7 +379,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 
 	parent_bp = NULL;
 	parent_is_external = FALSE;
-	if (leaf_bp == NULL || root_node == NULL ||
+	if (leaf_bp == NULL || root_node == NULL || leaf_block == NO_BLOCK ||
 	    (root_depth != 1 && root_depth != 2) ||
 	    leaf_entries != leaf_max || insert > leaf_entries ||
 	    parent_entries == 0 || parent_index >= parent_entries ||
@@ -425,7 +429,11 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	}
 
 	first_key = extent_get32(leaf + 12);
-	if (extent_get32(parent_node + 12 + parent_index * 12) != parent_key ||
+	new_index = parent_node + 12 + parent_index * 12;
+	selected_block = ((u64_t)extent_get16(new_index + 8) << 32) |
+	    extent_get32(new_index + 4);
+	if (selected_block != leaf_block ||
+	    extent_get32(new_index) != parent_key ||
 	    parent_key != first_key || logical < first_key) {
 		goto corrupt;
 	}
@@ -558,7 +566,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	u16_t entries, max_entries, root_entries, root_max;
 	u16_t root_index, root_depth, parent_entries, parent_max;
 	u16_t parent_index;
-	block64_t parent_block;
+	block64_t parent_block, leaf_block;
 	u32_t parent_key;
 	u64_t logical64, physical;
 	u32_t logical, offset, new_length;
@@ -578,7 +586,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if ((r = extent_leaf(rip, logical, &root, &node_size, &entries,
 	    &max_entries, &leaf_bp, &root_node, &root_entries, &root_max,
 	    &root_index, &root_depth, &parent_block, &parent_entries,
-	    &parent_max, &parent_index, &parent_key)) != OK)
+	    &parent_max, &parent_index, &parent_key, &leaf_block)) != OK)
 		return(r);
 	(void)node_size;	/* The selected node has already been bounded. */
 
@@ -801,9 +809,9 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		 * and a full root still fail without changing any on-disk mapping.
 		 */
 		r = extent_split_full_leaf(rip, root, leaf_bp, root_node,
-		    root_depth, parent_block, parent_entries, parent_max,
-		    parent_index, parent_key, entries, max_entries, insert,
-		    logical, physical);
+		    root_depth, parent_block, leaf_block, parent_entries,
+		    parent_max, parent_index, parent_key, entries, max_entries,
+		    insert, logical, physical);
 		return(r);
 	}
 
