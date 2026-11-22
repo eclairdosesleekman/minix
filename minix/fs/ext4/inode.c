@@ -943,7 +943,8 @@ int rw_inode(
 		return(EIO);
 	}
 	if (xattr_block != 0 &&
-	    !ext4_validate_xattr_block(sp, rip->i_dev, xattr_block)) {
+	    !ext4_validate_xattr_block(sp, rip->i_dev, xattr_block,
+	    rip->i_num, ext4_inode_read32((const unsigned char *)dip, 100))) {
 		printf("ext4: invalid xattr block for inode %llu\n",
 		    (unsigned long long)rip->i_num);
 		put_block(bp);
