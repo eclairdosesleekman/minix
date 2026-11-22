@@ -124,15 +124,16 @@ read-write mode.
   file-type incompat feature continue to report `DT_UNKNOWN`.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
-- Read-only indexed-directory lookup uses the ext4 HTree for the first
-  candidate leaf with legacy, half-MD4, and TEA hashes (signed and unsigned
-  variants). When `metadata_csum` is enabled, root and internal-node checksums
-  are verified. Count/limit arrays, hash ordering, child logical-block bounds,
-  and depth are validated for every traversed index node. A candidate miss
-  falls back to the complete linear scan so hash-collision continuation leaves
-  and unusual layouts remain discoverable. SipHash/hash-in-dirent modes
-  continue to use linear lookup. Directory enumeration remains linear;
-  indexed-directory mutation is still unsupported.
+- Indexed-directory lookup uses the ext4 HTree for the first candidate leaf
+  with legacy, half-MD4, and TEA hashes (signed and unsigned variants). When
+  `metadata_csum` is enabled, root and internal-node checksums are verified.
+  Count/limit arrays, hash ordering, child logical-block bounds, and depth are
+  validated for every traversed index node. A candidate miss falls back to
+  the complete linear scan so hash-collision continuation leaves and unusual
+  layouts remain discoverable. SipHash/hash-in-dirent modes continue to use
+  linear lookup. Directory enumeration remains linear. Namespace mutations
+  on directories carrying `EXT2_INDEX_FL` are rejected; non-indexed
+  directories on the same filesystem remain writable.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block. The `large_dir` incompat
   feature is accepted for read-only mounts: internal HTree nodes are skipped
@@ -200,10 +201,16 @@ implementation.
   are flushed before the lazy-init flags are cleared. Legacy
   `gdt_csum` without `metadata_csum` remains supported for read-write mounts;
   its CRC16 checksum is regenerated whenever group descriptors are written.
-- **No indexed-directory updates:** writable mounts reject `dir_index`
-  and `large_dir`; htree directory updates are not implemented. Both
-  features can be read on a read-only mount, including multi-level
-  `large_dir` indexes.
+- **No HTree directory updates:** the `dir_index` compat flag is a
+  filesystem capability and no longer prevents a writable mount by itself.
+  Namespace operations that would modify a directory carrying
+  `EXT2_INDEX_FL` return `EOPNOTSUPP` before changing that directory;
+  ordinary unindexed directories remain writable. Renaming an indexed
+  directory within the same parent is allowed, but moving one across parents
+  or replacing an indexed directory is rejected before either parent is
+  modified. HTree lookup and linear enumeration remain available. The
+  `large_dir` incompat feature is still read-only, including its multi-level
+  indexes.
 - **BIGALLOC is read-only:** block bitmap interpretation and read-only
   extent mapping understand clusters, but allocation, release, and truncation
   still operate in individual blocks. Writable mounts are therefore rejected.
@@ -681,6 +688,19 @@ checksums one at a time; malformed index metadata must report `EIO`. Compare
 lookup results with a complete directory listing and run `e2fsck -fn` on
 unmounted images after testing. SipHash/hash-in-dirent mode remains on the
 linear path.
+
+For writable compatibility with the `dir_index` capability flag, create a
+disposable image without a journal or `large_dir`. Populate one directory
+until `e2fsck -D` creates an HTree, and keep a second directory unindexed.
+Mount the image read-write on MINIX. Creating, renaming, and removing entries
+in the ordinary directory must work; HTree lookup and readdir must still work
+for the indexed directory, while create/link/unlink/rename within that
+directory, moving an indexed directory across parents, replacing an indexed
+directory during rename, and removing the indexed directory itself must fail
+with `EOPNOTSUPP` without changing either directory. A same-parent rename of
+an indexed directory may succeed because it does not change that directory's
+contents or `..` entry. After unmount, run
+`e2fsck -fn` and verify that the image is clean.
 
 For read-only `large_dir` coverage, create an ext4 image with
 `large_dir` and `dir_index` enabled (and `orphan_file` disabled), populate
