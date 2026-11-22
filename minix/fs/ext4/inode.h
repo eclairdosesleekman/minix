@@ -18,7 +18,7 @@
  */
 EXTERN struct inode {
     u16_t  i_mode;         /* File mode */
-    u16_t  i_uid;          /* Low 16 bits of Owner Uid */
+    u32_t  i_uid;          /* Full ext4 UID; ext2 uses the low 16 bits */
     off_t  i_size;         /* Size in bytes */
     time_t i_atime;        /* Access time (ext4 34-bit seconds) */
     time_t i_ctime;        /* Inode change time (ext4 34-bit seconds) */
@@ -30,7 +30,7 @@ EXTERN struct inode {
     long   i_crtime_nsec;  /* ext4 creation-time nanoseconds */
     u16_t  i_ext4_extra_isize; /* decoded Linux extended-inode field size */
     u32_t  i_dtime;        /* Deletion Time */
-    u16_t  i_gid;          /* Low 16 bits of Group Id */
+    u32_t  i_gid;          /* Full ext4 GID; ext2 uses the low 16 bits */
     u16_t  i_links_count;  /* Links count */
     u64_t  i_blocks;       /* 512-byte sectors (decoded from ext4 huge_file) */
     u32_t  i_flags;        /* File flags */

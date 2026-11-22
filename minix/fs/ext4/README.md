@@ -15,6 +15,11 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Full 32-bit Linux ext4 owner and group IDs. The low 16-bit fields and
+  `osd2.linux2.l_i_uid_high`/`l_i_gid_high` words are decoded into 32-bit
+  in-core IDs and written back independently of the adjacent high block-count
+  and external-xattr pointer fields. ext2 and non-Linux ext4 creator formats
+  retain their existing 16-bit UID/GID behavior.
 - Legacy direct and single/double/triple-indirect block mappings are range-checked
   against the complete ext4 metadata map before any pointer block or data block
   is read. Indirect pointer blocks are checked at block granularity; mapped
@@ -273,6 +278,24 @@ may vary):
 ```sh
 service up /service/ext4
 mount -t ext4 /dev/c0d0p1 /mnt
+```
+
+To verify full-width owner and group IDs, create a no-journal Linux ext4
+image, create a test inode, and set its IDs above 65535 with `debugfs`.
+Mount the image read-write on MINIX: `ls -ln` must show the full values.
+Then change them with `chown`, unmount, and use `debugfs stat` to confirm
+that the updated values survived. Run `e2fsck -fn` after unmount to verify
+the inode checksum and the rest of the filesystem.
+
+```sh
+truncate -s 256M ext4-uidgid.img
+mke2fs -F -t ext4 -O 64bit,metadata_csum,^has_journal,^orphan_file,^dir_index \
+  ext4-uidgid.img
+debugfs -w -R "write README.md /uidgid-test" ext4-uidgid.img
+debugfs -w -R "set_inode_field /uidgid-test uid 70000" ext4-uidgid.img
+debugfs -w -R "set_inode_field /uidgid-test gid 80000" ext4-uidgid.img
+debugfs -R "stat /uidgid-test" ext4-uidgid.img | grep -E 'User:|Group:'
+e2fsck -fn ext4-uidgid.img
 ```
 
 To exercise writable lazy-bitmap initialization, create a fresh ext4 image

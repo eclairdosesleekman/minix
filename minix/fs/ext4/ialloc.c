@@ -69,8 +69,16 @@ struct inode *alloc_inode(struct inode *parent, mode_t bits, uid_t uid,
 	/* An inode slot is available. Put the inode just allocated into it. */
 	rip->i_mode = bits;         /* set up RWX bits */
 	rip->i_links_count = NO_LINK; /* initial no links */
-	rip->i_uid = uid;           /* file's uid is owner's */
-	rip->i_gid = gid;           /* ditto group id */
+	/* Only Linux ext4 defines the high UID/GID words.  Preserve the
+	 * historical 16-bit format for ext2 and non-Linux ext4 filesystems.
+	 */
+	if (sp->s_is_ext4 && sp->s_creator_os == EXT4_OS_LINUX) {
+		rip->i_uid = (u32_t)uid;
+		rip->i_gid = (u32_t)gid;
+	} else {
+		rip->i_uid = (u16_t)uid;
+		rip->i_gid = (u16_t)gid;
+	}
 	rip->i_dev = parent->i_dev; /* mark which device it is on */
 	rip->i_sp = sp;             /* pointer to super block */
 

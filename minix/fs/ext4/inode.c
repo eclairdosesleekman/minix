@@ -1064,7 +1064,11 @@ static void icopy(
   if (direction == READING) {
 	/* Copy inode to the in-core table, swapping bytes if need be. */
 	rip->i_mode    = conv2(norm,dip->i_mode);
-	rip->i_uid     = conv2(norm,dip->i_uid);
+	rip->i_uid = (u32_t)conv2(norm, dip->i_uid);
+	if (rip->i_sp->s_is_ext4 &&
+	    rip->i_sp->s_creator_os == EXT4_OS_LINUX)
+		rip->i_uid |= (u32_t)conv2(norm,
+		    dip->osd2.linux2.l_i_uid_high) << 16;
 	if (rip->i_sp->s_is_ext4 &&
 	    (rip->i_mode & I_TYPE) == I_REGULAR) {
 		rip->i_size = (off_t)(((u64_t)(u32_t)conv4(norm,
@@ -1077,7 +1081,11 @@ static void icopy(
 	rip->i_ctime   = conv4(norm,dip->i_ctime);
 	rip->i_mtime   = conv4(norm,dip->i_mtime);
 	rip->i_dtime   = conv4(norm,dip->i_dtime);
-	rip->i_gid     = conv2(norm,dip->i_gid);
+	rip->i_gid = (u32_t)conv2(norm, dip->i_gid);
+	if (rip->i_sp->s_is_ext4 &&
+	    rip->i_sp->s_creator_os == EXT4_OS_LINUX)
+		rip->i_gid |= (u32_t)conv2(norm,
+		    dip->osd2.linux2.l_i_gid_high) << 16;
 	rip->i_links_count  = conv2(norm,dip->i_links_count);
 	rip->i_flags	= conv4(norm,dip->i_flags);
 	rip->i_blocks	= (u64_t)(u32_t)conv4(norm,dip->i_blocks);
@@ -1107,7 +1115,7 @@ static void icopy(
   } else {
 	/* Copying inode to disk from the in-core table. */
 	dip->i_mode    = conv2(norm,rip->i_mode);
-	dip->i_uid     = conv2(norm,rip->i_uid);
+	dip->i_uid = conv2(norm, (u16_t)rip->i_uid);
 	if (rip->i_sp->s_is_ext4 &&
 	    (rip->i_mode & I_TYPE) == I_REGULAR) {
 		u64_t size = (u64_t)rip->i_size;
@@ -1120,7 +1128,7 @@ static void icopy(
 	dip->i_ctime   = conv4(norm,(u32_t)rip->i_ctime);
 	dip->i_mtime   = conv4(norm,(u32_t)rip->i_mtime);
 	dip->i_dtime   = conv4(norm,rip->i_dtime);
-	dip->i_gid     = conv2(norm,rip->i_gid);
+	dip->i_gid = conv2(norm, (u16_t)rip->i_gid);
 	dip->i_links_count  = conv2(norm,rip->i_links_count);
 	dip->i_blocks	= conv4(norm, rip->i_sp->s_is_ext4 ?
 	    (u32_t)ext4_i_blocks : (u32_t)rip->i_blocks);
@@ -1134,6 +1142,16 @@ static void icopy(
 	dip->i_dir_acl	= conv4(norm,rip->i_dir_acl);
 	dip->i_faddr	= conv4(norm,rip->i_faddr);
 	memcpy(&dip->osd2, &rip->osd2, sizeof(dip->osd2));
+	if (rip->i_sp->s_is_ext4 &&
+	    rip->i_sp->s_creator_os == EXT4_OS_LINUX) {
+		/* Linux stores high UID/GID words in osd2.  Leave the
+		 * adjacent high block-count and xattr-pointer words intact.
+		 */
+		dip->osd2.linux2.l_i_uid_high = conv2(norm,
+		    (u16_t)(rip->i_uid >> 16));
+		dip->osd2.linux2.l_i_gid_high = conv2(norm,
+		    (u16_t)(rip->i_gid >> 16));
+	}
 	if (rip->i_sp->s_is_ext4 &&
 	    HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_HUGE_FILE)) {
 		u16_t blocks_high;
