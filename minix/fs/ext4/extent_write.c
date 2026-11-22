@@ -732,11 +732,14 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		    ex.length == 1 && offset == 0;
 		if (remove_empty_leaf) {
 			sectors = rip->i_sp->s_sectors_in_block;
-			if (parent_entries <= 1 || sectors == 0 ||
-			    sectors > ~(u64_t)0 / 2 ||
+			if ((parent_entries <= 1 && root_depth != 1) ||
+			    sectors == 0 || sectors > ~(u64_t)0 / 2 ||
 			    rip->i_blocks < sectors * 2 ||
 			    block_to_free == leaf_block ||
-			    block_to_free == parent_block) {
+			    block_to_free == parent_block ||
+			    (root_depth == 1 &&
+			    (root_entries != 1 || parent_index != 0 ||
+			    parent_key_node != NULL))) {
 				extent_release_leaf(rip, leaf_bp, FALSE);
 				return(EOPNOTSUPP);
 			}
@@ -749,14 +752,27 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 				return(r);
 			}
 
-			/* Remove this child; keep the parent node nonempty. */
-			parent_key_entry = parent_key_node + 12 +
-			    (size_t)parent_index * 12;
-			memmove(parent_key_entry, parent_key_entry + 12,
-			    (size_t)(parent_entries - parent_index - 1) * 12);
-			memset(parent_key_node + 12 +
-			    (size_t)(parent_entries - 1) * 12, 0, 12);
-			extent_put16(parent_key_node + 2, parent_entries - 1);
+			if (root_depth == 1 && parent_entries == 1) {
+				/*
+				 * The inode root has no parent to preserve. Collapse
+				 * its sole external leaf back to an empty inline root.
+				 */
+				extent_put16(parent_key_node + 2, 0);
+				extent_put16(parent_key_node + 6, 0);
+				memset(parent_key_node + 12, 0,
+				    sizeof(rip->i_block) - 12);
+			} else {
+				/* Remove this child; keep its parent nonempty. */
+				parent_key_entry = parent_key_node + 12 +
+				    (size_t)parent_index * 12;
+				memmove(parent_key_entry, parent_key_entry + 12,
+				    (size_t)(parent_entries -
+				    parent_index - 1) * 12);
+				memset(parent_key_node + 12 +
+				    (size_t)(parent_entries - 1) * 12, 0, 12);
+				extent_put16(parent_key_node + 2,
+				    parent_entries - 1);
+			}
 
 			/* Drop the leaf buffer before invalidating its block. */
 			extent_release_leaf(rip, leaf_bp, FALSE);
