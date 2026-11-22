@@ -609,6 +609,15 @@ ext4_encode_inline_data(struct inode *rip, unsigned char *raw,
 	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
 		return(OK);
 
+	/*
+	 * An EA-inode-backed continuation has no writable inode-body value
+	 * offset. The filesystem is mounted read-only, but reject accidental
+	 * writeback here as well rather than treating offset zero as storage.
+	 */
+	if (rip->i_inline_value_capacity != 0 &&
+	    rip->i_inline_value_offset == 0)
+		return(EOPNOTSUPP);
+
 	if (rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
 	    rip->i_inline_size > EXT4_INLINE_DATA_MAX ||
 	    rip->i_inline_value_capacity !=
