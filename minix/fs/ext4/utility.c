@@ -379,7 +379,7 @@ int
 ext4_validate_inode_xattrs(struct super_block *sp, dev_t dev,
 	ino_t parent_ino, const unsigned char *raw, size_t inode_size)
 {
-	size_t header_offset, entries_offset, entries_end, pos, entry_size;
+	size_t header_offset, entries_offset, entries_end = 0, pos, entry_size;
 	size_t area_size, value_offset, padded_size;
 	u16_t extra_isize;
 	u32_t value_inum, value_size, entry_hash, generation;
