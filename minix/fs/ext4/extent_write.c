@@ -1072,8 +1072,8 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		    new_parent_block == new_block ||
 		    new_parent_block == physical ||
 		    new_parent_block == leaf_block ||
-		    ((split_parent || split_parent_ancestor) &&
-		    new_parent_block == parent_block) ||
+		    ((split_parent || split_parent_ancestor ||
+		    split_grandparent) && new_parent_block == parent_block) ||
 		    ((split_parent_ancestor || split_grandparent) &&
 		    new_parent_block == grandparent_block)) {
 			if (new_parent_block != new_block &&
