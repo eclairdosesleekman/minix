@@ -17,6 +17,7 @@
 
 #include "fs.h"
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include "buf.h"
 #include "inode.h"
@@ -83,6 +84,8 @@ void init_inode_cache(void)
   /* add free inodes to unused/free list */
   for (rip = &inode[0]; rip < &inode[NR_INODES]; ++rip) {
 	rip->i_num = NO_ENTRY;
+	rip->i_inline_data = NULL;
+	rip->i_inline_size = 0;
 	TAILQ_INSERT_HEAD(&unused_inodes, rip, i_unused);
   }
 }
@@ -155,6 +158,11 @@ struct inode *get_inode(
 
   /* Inode is not unused any more */
   TAILQ_REMOVE(&unused_inodes, rip, i_unused);
+
+  /* Drop any variable-sized inline payload retained by the old cache entry. */
+  free(rip->i_inline_data);
+  rip->i_inline_data = NULL;
+  rip->i_inline_size = 0;
 
   /* Load the inode. */
   rip->i_dev = dev;
@@ -404,12 +412,13 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 {
 	size_t header_offset, entries_offset, pos, entries_end, area_size;
 	size_t entry_size, value_offset, value_size_offset = 0;
-	size_t value_capacity = 0, value_limit;
-	u32_t value_inum = 0, value_size = 0;
+	size_t value_capacity = 0, value_limit, inline_size;
+	unsigned char *inline_data;
+	u32_t value_inum = 0, value_size = 0, inline_parent = 0;
 	u32_t other_value_inum, other_value_size;
 	u16_t extra_isize, value_offs = 0;
 	unsigned int name_len, name_index;
-	int found = FALSE, terminated = FALSE;
+	int found = FALSE, terminated = FALSE, r;
 	mode_t type;
 
 	rip->i_inline_size = 0;
@@ -418,7 +427,8 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	rip->i_inline_value_size = 0;
 	rip->i_inline_value_capacity = 0;
 	rip->i_inline_parent = 0;
-	memset(rip->i_inline_data, 0, sizeof(rip->i_inline_data));
+	free(rip->i_inline_data);
+	rip->i_inline_data = NULL;
 	if (!(rip->i_flags & EXT4_INLINE_DATA_FL))
 		return(OK);
 
@@ -483,20 +493,32 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	}
 	if (!terminated || !found)
 		return(EIO);
-	if (value_inum != 0)
+
+	/*
+	 * An EA-inode reference has no inline value offset. It is valid only
+	 * with the ea_inode feature and is read through the validated EA inode
+	 * extent map below. Values stored in the inode body retain the existing
+	 * small, writable-in-place limit.
+	 */
+	if (value_inum != 0) {
+		if (!HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_EA_INODE) ||
+		    value_offs != 0 || value_size == 0 ||
+		    value_size > EXT4_INLINE_DATA_EA_MAX)
+			return(EIO);
+		value_capacity = value_size;
+	} else if (value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN) {
 		return(EOPNOTSUPP);
-	if (value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
-		return(EOPNOTSUPP);
+	}
 
 	area_size = inode_size - entries_offset;
 	value_offset = value_offs;
-	if (value_size != 0 || value_offset != 0) {
+	if (value_inum == 0 && (value_size != 0 || value_offset != 0)) {
 		if (value_offset < entries_end - entries_offset ||
 		    value_offset > area_size)
 			return(EIO);
 
 		/*
-		 * Values are packed into the area after the xattr entries.  Do not
+		 * Values are packed into the area after the xattr entries. Do not
 		 * treat space occupied by another xattr as spare inline-data
 		 * capacity: stop at the next value that follows system.data.
 		 */
@@ -535,36 +557,54 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	    ((u64_t)rip->i_size != EXT4_INLINE_DATA_MIN + value_size ||
 	    rip->i_size < EXT4_INLINE_DATA_MIN))
 		return(EIO);
-	if (value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
-		return(EOPNOTSUPP);
-	if (value_capacity > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
+	if (value_inum == 0 &&
+	    value_capacity > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
 		value_capacity = EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN;
 
+	if (type == I_DIRECTORY) {
+		inline_parent = ext4_inode_read32(raw, 40);
+		if (inline_parent == 0 ||
+		    inline_parent > rip->i_sp->s_inodes_count)
+			return(EIO);
+		/* Directory system.data contains records, not spare capacity. */
+		value_capacity = value_size;
+	}
+
+	inline_size = EXT4_INLINE_DATA_MIN + value_capacity;
+	if (inline_size > EXT4_INLINE_DATA_TOTAL_MAX)
+		return(EIO);
+	inline_data = malloc(inline_size);
+	if (inline_data == NULL)
+		return(ENOMEM);
+	memset(inline_data, 0, inline_size);
+
 	/* i_block is byte-oriented inline content, not an extent root. */
-	memcpy(rip->i_inline_data, raw + 40, EXT4_INLINE_DATA_MIN);
-	if (value_size != 0)
-		memcpy(rip->i_inline_data + EXT4_INLINE_DATA_MIN,
-		    raw + entries_offset + value_offset, value_size);
-	rip->i_inline_value_offset = value_capacity != 0 ?
+	memcpy(inline_data, raw + 40, EXT4_INLINE_DATA_MIN);
+	if (value_size != 0) {
+		if (value_inum != 0) {
+			r = ext4_validate_ea_inode(rip->i_sp, rip->i_dev,
+			    rip->i_num, ext4_inode_read32(raw, 100), value_inum,
+			    ext4_inode_read32(raw, value_size_offset + 4),
+			    (const unsigned char *)"data", 4, value_size,
+			    inline_data + EXT4_INLINE_DATA_MIN);
+			if (r != OK) {
+				free(inline_data);
+				return(r);
+			}
+		} else {
+			memcpy(inline_data + EXT4_INLINE_DATA_MIN,
+			    raw + entries_offset + value_offset, value_size);
+		}
+	}
+
+	rip->i_inline_data = inline_data;
+	rip->i_inline_value_offset = value_inum == 0 && value_capacity != 0 ?
 	    (u32_t)(entries_offset + value_offset) : 0;
 	rip->i_inline_value_size_offset = (u32_t)value_size_offset;
 	rip->i_inline_value_size = value_size;
-	rip->i_inline_value_capacity = (u32_t)value_capacity;
-	rip->i_inline_size = EXT4_INLINE_DATA_MIN + (u16_t)value_capacity;
-	rip->i_inline_parent = 0;
-	if (type == I_DIRECTORY) {
-		rip->i_inline_parent = ext4_inode_read32(rip->i_inline_data, 0);
-		if (rip->i_inline_parent == 0 ||
-		    rip->i_inline_parent > rip->i_sp->s_inodes_count)
-			return(EIO);
-		/*
-		 * An inline directory's i_size tracks the actual two dirent
-		 * areas, not the spare capacity that regular inline files may
-		 * retain after truncation.
-		 */
-		rip->i_inline_size = EXT4_INLINE_DATA_MIN + (u16_t)value_size;
-		rip->i_inline_value_capacity = value_size;
-	}
+	rip->i_inline_value_capacity = value_inum == 0 ? (u32_t)value_capacity : 0;
+	rip->i_inline_size = (u32_t)inline_size;
+	rip->i_inline_parent = inline_parent;
 	return(OK);
 }
 
@@ -1192,7 +1232,7 @@ int
 ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
 	ino_t parent_ino, u32_t parent_generation, u32_t ea_ino,
 	u32_t entry_hash, const unsigned char *name, size_t name_len,
-	u32_t value_size)
+	u32_t value_size, unsigned char *value)
 {
 	struct group_desc *gd;
 	struct buf *bp;
@@ -1328,6 +1368,8 @@ ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
 		if ((u64_t)chunk > (u64_t)value_size - pos)
 			chunk = (size_t)((u64_t)value_size - pos);
 		value_hash = ext4_crc32c(value_hash, b_data(bp), chunk);
+		if (value != NULL)
+			memcpy(value + (size_t)pos, b_data(bp), chunk);
 		put_block(bp);
 		pos += chunk;
 	}

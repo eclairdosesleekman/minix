@@ -107,7 +107,7 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 	if (flag == ENTER || flag == DELETE)
 		return(EOPNOTSUPP);
 	if (dir->i_inline_size < EXT4_INLINE_DATA_MIN ||
-	    dir->i_inline_size > EXT4_INLINE_DATA_MAX ||
+	    dir->i_inline_size > EXT4_INLINE_DATA_TOTAL_MAX ||
 	    dir->i_inline_size != EXT4_INLINE_DATA_MIN +
 	    dir->i_inline_value_size ||
 	    dir->i_inline_parent == 0 ||

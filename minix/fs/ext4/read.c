@@ -839,7 +839,7 @@ ext4_getdents_inline_dir(struct inode *rip, struct fsdriver_data *data,
 	if ((rip->i_mode & I_TYPE) != I_DIRECTORY)
 		return(ENOTDIR);
 	if (rip->i_inline_size < EXT4_INLINE_DATA_MIN ||
-	    rip->i_inline_size > EXT4_INLINE_DATA_MAX ||
+	    rip->i_inline_size > EXT4_INLINE_DATA_TOTAL_MAX ||
 	    rip->i_inline_size != EXT4_INLINE_DATA_MIN +
 	    rip->i_inline_value_size ||
 	    rip->i_inline_parent == 0 ||

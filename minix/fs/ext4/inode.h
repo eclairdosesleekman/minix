@@ -81,13 +81,13 @@ EXTERN struct inode {
     int i_count;                /* # times inode used; 0 means slot is free */
     struct super_block *i_sp;   /* pointer to super block for inode's device */
     /* Decoded ext4 inline-data payload and validated system.data value. */
-    u16_t i_inline_size; /* total inline payload size */
+    u32_t i_inline_size; /* total inline payload size */
     u32_t i_inline_parent; /* parent inode for an inline directory */
     u32_t i_inline_value_offset; /* byte offset within the raw inode */
     u32_t i_inline_value_size_offset; /* value_size field in the raw inode */
     u32_t i_inline_value_size; /* current system.data value length */
     u32_t i_inline_value_capacity;
-    unsigned char i_inline_data[EXT4_INLINE_DATA_MAX];
+    unsigned char *i_inline_data; /* owned decoded inline payload */
     char i_dirt;                /* CLEAN or DIRTY */
     block64_t i_bsearch;          /* where to start search for new blocks,
                                  * also this is last allocated block.
