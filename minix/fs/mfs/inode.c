@@ -299,6 +299,15 @@ struct inode *alloc_inode(dev_t dev, mode_t bits, uid_t uid, gid_t gid)
 	rip->i_nlinks = NO_LINK;	/* initial no links */
 	rip->i_uid = uid;		/* file's uid is owner's */
 	rip->i_gid = gid;		/* ditto group id */
+        rip->i_flags = 0;
+        rip->i_atime_nsec = 0;
+        rip->i_mtime_nsec = 0;
+        rip->i_ctime_nsec = 0;
+        rip->i_generation = 0;
+        rip->i_xattr_head = 0;
+        rip->i_orphan_next = 0;
+        rip->i_rdev = 0;
+        rip->i_project_id = 0;
 	rip->i_dev = dev;		/* mark which device it is on */
 	rip->i_ndzones = sp->s_ndzones;	/* number of direct zones */
 	rip->i_nindirs = sp->s_nindirs;	/* number of indirect zones per blk*/
