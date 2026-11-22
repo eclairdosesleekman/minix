@@ -368,6 +368,96 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 }
 
 /*
+ * Prepare an external leaf's parent index entry for a first-key update.
+ * The inode root has no parent, so depth-one roots can update any root key.
+ * At greater depths, only a non-first entry in the immediate parent is safe:
+ * changing entry zero would also change that parent's key in its ancestor.
+ */
+static int
+extent_prepare_parent_key_update(struct inode *rip,
+	unsigned char *root_node, u16_t root_depth, block64_t parent_block,
+	block64_t leaf_block, u16_t parent_entries, u16_t parent_max,
+	u16_t parent_index, u32_t parent_key, struct buf **parent_bpp,
+	unsigned char **parent_nodep)
+{
+	struct buf *bp;
+	unsigned char *node, *entry;
+	block64_t selected_block;
+	size_t tail_offset;
+
+	*parent_bpp = NULL;
+	*parent_nodep = NULL;
+	if (root_node == NULL || root_depth == 0 ||
+	    root_depth > EXT4_EXTENT_MAX_DEPTH || leaf_block == NO_BLOCK ||
+	    parent_entries == 0 || parent_index >= parent_entries ||
+	    parent_max < parent_entries ||
+	    (root_depth > 1 && parent_index == 0))
+		return(EOPNOTSUPP);
+
+	bp = NULL;
+	if (root_depth == 1) {
+		if (parent_block != NO_BLOCK ||
+		    parent_max > (sizeof(rip->i_block) - 12) / 12)
+			return(EIO);
+		node = root_node;
+	} else {
+		if (parent_block == NO_BLOCK ||
+		    parent_block >= rip->i_sp->s_blocks_count ||
+		    parent_max > (rip->i_sp->s_block_size - 12) / 12)
+			return(EIO);
+		bp = get_block(rip->i_dev, parent_block, NORMAL);
+		if (bp == NULL)
+			return(EIO);
+		node = (unsigned char *)b_data(bp);
+		if (extent_get16(node) != EXT4_EXTENT_MAGIC ||
+		    extent_get16(node + 2) != parent_entries ||
+		    extent_get16(node + 4) != parent_max ||
+		    extent_get16(node + 6) != 1) {
+			extent_release_leaf(rip, bp, FALSE);
+			return(EIO);
+		}
+		if (HAS_RO_COMPAT_FEATURE(rip->i_sp,
+		    RO_COMPAT_METADATA_CSUM)) {
+			u32_t stored, calculated;
+
+			tail_offset = 12 + (size_t)parent_max * 12;
+			if (tail_offset > rip->i_sp->s_block_size -
+			    sizeof(stored)) {
+				extent_release_leaf(rip, bp, FALSE);
+				return(EIO);
+			}
+			stored = extent_get32(node + tail_offset);
+			calculated = ext4_crc32c(ext4_inode_csum_seed(rip),
+			    node, tail_offset);
+			if (stored != calculated) {
+				extent_release_leaf(rip, bp, FALSE);
+				return(EIO);
+			}
+		}
+	}
+
+	if (extent_get16(node) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(node + 2) != parent_entries ||
+	    extent_get16(node + 4) != parent_max ||
+	    extent_get16(node + 6) != 1) {
+		extent_release_leaf(rip, bp, FALSE);
+		return(EIO);
+	}
+	entry = node + 12 + (size_t)parent_index * 12;
+	selected_block = ((u64_t)extent_get16(entry + 8) << 32) |
+	    extent_get32(entry + 4);
+	if (selected_block != leaf_block ||
+	    extent_get32(entry) != parent_key) {
+		extent_release_leaf(rip, bp, FALSE);
+		return(EIO);
+	}
+
+	*parent_bpp = bp;
+	*parent_nodep = node;
+	return(OK);
+}
+
+/*
  * Split a full external leaf when its immediate parent index node has room.
  * The inherited exclusive upper bound comes from the complete selected path,
  * so the new leaf remains inside every ancestor's logical-block interval.
@@ -621,8 +711,15 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	}
 
 	if (op & WMAP_FREE) {
+		struct buf *parent_key_bp;
+		unsigned char *parent_key_node, *parent_key_entry;
 		u64_t block_to_free;
+		u32_t new_parent_key;
+		int update_parent_key;
 
+		parent_key_bp = NULL;
+		parent_key_node = NULL;
+		update_parent_key = FALSE;
 		if (i == entries) {
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(OK);	/* A hole needs no work. */
@@ -635,12 +732,29 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			return(EIO);
 		}
 		/*
-		 * Changing or removing the first extent in an external leaf
-		 * also changes its parent's index key.  Do not leave a stale key.
+		 * Changing the first extent changes its parent index key. The
+		 * parent key can be updated when the resulting leaf stays
+		 * nonempty and no ancestor key needs to change.
 		 */
 		if (leaf_bp != NULL && i == 0 && offset == 0) {
-			extent_release_leaf(rip, leaf_bp, FALSE);
-			return(EOPNOTSUPP);
+			if (ex.length == 1) {
+				if (entries == 1) {
+					extent_release_leaf(rip, leaf_bp, FALSE);
+					return(EOPNOTSUPP);
+				}
+				new_parent_key = extent_get32(entry + 12);
+			} else {
+				new_parent_key = ex.logical + 1;
+			}
+			r = extent_prepare_parent_key_update(rip, root_node,
+			    root_depth, parent_block, leaf_block, parent_entries,
+			    parent_max, parent_index, parent_key, &parent_key_bp,
+			    &parent_key_node);
+			if (r != OK) {
+				extent_release_leaf(rip, leaf_bp, FALSE);
+				return(r);
+			}
+			update_parent_key = TRUE;
 		}
 		/* Splitting a middle extent consumes one additional leaf slot. */
 		if (offset != 0 && offset != ex.length - 1 &&
@@ -672,9 +786,16 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		}
 
 		extent_put16(root + 2, entries);
+		if (update_parent_key) {
+			parent_key_entry = parent_key_node + 12 +
+			    (size_t)parent_index * 12;
+			extent_put32(parent_key_entry, new_parent_key);
+		}
 		free_block(rip->i_sp, block_to_free);
 		rip->i_blocks -= rip->i_sp->s_sectors_in_block;
 		extent_release_leaf(rip, leaf_bp, TRUE);
+		if (update_parent_key)
+			extent_release_leaf(rip, parent_key_bp, TRUE);
 		rip->i_dirt = IN_DIRTY;
 		return(OK);
 	}
