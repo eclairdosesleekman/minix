@@ -402,8 +402,10 @@ extent_root_parent_matches(struct inode *rip, unsigned char *root_node,
 /*
  * Reacquire and validate the immediate parent index node before changing
  * its selected child entry. The inode root has no ancestor, so depth-one
- * roots can update or remove any entry. At greater depths, only a non-first
- * entry is safe because changing entry zero would alter an ancestor key.
+ * roots can update or remove any entry. At greater depths, in-place changes
+ * require a non-first entry because changing entry zero alters an ancestor
+ * key. The depth-two sole-child detach is safe because it removes the entire
+ * intermediate node from the inode root instead of changing its first key.
  */
 static int
 extent_prepare_parent_index(struct inode *rip,
