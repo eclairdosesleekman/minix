@@ -181,13 +181,15 @@ read-write mode.
   mount.
 - Inline extent roots and existing external extent-tree leaves can be updated
   in place while allocating, writing, and truncating files. Full external
-  leaves can be split under depth-one and depth-two inode roots when the
-  immediate parent index node has a free slot. The original leaf keeps its
-  first logical-block key; the new leaf key is inserted immediately after it
-  in the parent index. For depth-two trees, the external parent index checksum
-  is regenerated along with both leaf checksums. The inode block count includes
-  the extra extent-tree node. Full parents and trees deeper than two external
-  levels remain unsupported. Writes into unwritten extents convert the
+  leaves can be split at any supported extent-tree depth when the immediate
+  parent index node has a free slot. The selected leaf's exclusive logical
+  upper bound is propagated from every ancestor and checked before splitting,
+  including for the final child of an intermediate index node. The original
+  leaf keeps its first logical-block key; the new leaf key is inserted
+  immediately after it in the parent index. External parent-index and leaf
+  checksums are regenerated as required. The inode block count includes the
+  extra extent-tree node. Full parents, index-node splits, and root growth or
+  rebalancing remain unsupported. Writes into unwritten extents convert the
   affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
@@ -242,11 +244,12 @@ implementation.
   operations do not maintain the orphan file.
 - **Explicit read-only feature:** `RO_COMPAT_READONLY` always rejects a
   writable mount, independent of the requested mount mode.
-- **Bounded extent-tree mutation:** full-leaf splitting is supported for
-  depth-one roots when the inode root has a free index slot, and for depth-two
-  roots when the selected external depth-one parent has a free slot. A full
-  parent, a tree deeper than two external levels, or an insertion that would
-  change the selected leaf's first logical-block key is rejected with
+- **Bounded extent-tree mutation:** full-leaf splitting is supported at any
+  extent-tree depth accepted by the reader, provided the selected leaf's
+  immediate parent index node has a free slot. Exclusive logical-block bounds
+  inherited from all ancestors are propagated to the selected leaf and
+  revalidated before a split. A full parent or an insertion that would change
+  the selected leaf's first logical-block key is rejected with
   `EOPNOTSUPP` or `EFBIG` before changing the mapping. Splitting a full
   intermediate index node, growing/rebalancing the inode root, and removing
   the first block in an external leaf remain unsupported.
@@ -546,31 +549,37 @@ leaf, add a root index entry, and remain readable after unmount/remount.
 Verify the resulting extent tree with `debugfs`/ `filefrag` and `e2fsck -fn`,
 both with and without `metadata_csum`.
 
-For depth-two coverage, prepare a larger fragmented file whose inode root has
-depth two and whose selected depth-one external index node has at least one
-free entry while one of its external leaves is full. Write a block into a hole
-inside that full leaf, again ensuring the allocated physical block cannot
-merge with neighboring extents. The leaf should split and the new key should
-be inserted into the external parent index. Verify the parent and leaf
-checksums with `metadata_csum`, then inspect the tree and run `e2fsck -fn`.
-Also exercise a depth-two parent index node with no free entry: splitting its
-full leaf must fail with `EFBIG` and leave the image clean. Repeat the
-supported parent-with-space scenario on an image without `metadata_csum`.
+For depth-two and deeper coverage, prepare fragmented files whose inode roots
+have depths two and three (and greater, when the host tools can generate them).
+Choose a selected depth-one external index node with at least one free entry
+and one full external leaf below it. Write a block into a hole inside that
+leaf, ensuring the allocated physical block cannot merge with neighboring
+extents. The leaf should split and the new key should be inserted into the
+immediate parent index node; no ancestor index entry should change. Include a
+case where the selected leaf is the final child of its parent and inherits a
+tighter upper bound from an ancestor, plus a case where a parent has no free
+entry. The supported split must preserve all ancestor bounds; a full immediate
+parent must fail with `EFBIG` and leave the image unchanged. Verify all
+modified parent/leaf checksums with `metadata_csum`, inspect the full tree,
+and run `e2fsck -fn`. Repeat a supported deeper-tree split without
+`metadata_csum`.
 
-On the supported depth-one and depth-two images, also exercise writes into
-holes within a non-full leaf, unwritten-extent conversion, and tail truncation
-while keeping the first extent of each leaf intact. Operations that require
-changing a leaf's first logical-block key, splitting a full parent index node,
-or growing a depth-three-or-deeper tree must fail without damaging the
-filesystem. Also corrupt the first
+On supported depth-one and deeper images, also exercise writes into holes
+within a non-full leaf, unwritten-extent conversion, and tail truncation while
+keeping the first extent of each leaf intact. Operations that require changing
+a leaf's first logical-block key, splitting a full parent index node, or
+growing/rebalancing an index node must fail without damaging the filesystem. Also corrupt the first
 logical-block key in an external child extent node without changing its parent
 index entry; lookup of a block in that subtree must fail with `EIO`, even when
 the child checksum is recomputed. Repeat for an intermediate index node and a
 leaf node, and verify that a matching parent/child key remains readable.
 Construct a leaf whose final extent crosses the next parent index key; mapping
 within that subtree must fail with `EIO` even if all node checksums are valid.
-Also verify that an ordinary final child inherits the parent's upper bound and
-that extents ending exactly at the exclusive boundary remain valid. Unmount
+Also verify that final children at multiple tree depths inherit the correct
+exclusive upper bound and that extents ending exactly at the boundary remain
+valid. Corrupt a leaf extent so it crosses an ancestor-imposed upper bound
+while keeping all checksums valid; lookup and write mapping must reject it
+with `EIO`. Unmount
 cleanly and run `e2fsck -fn`. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
