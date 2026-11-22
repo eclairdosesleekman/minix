@@ -484,8 +484,16 @@ int truncate_inode(
   		return(r);
   }
 
-  /* Clear the rest of the last zone if expanding. */
-  if (newsize > rip->i_size) clear_zone(rip, rip->i_size, 0);
+  /* Zero the old EOF block tail before a sparse extension. */
+  if (newsize > rip->i_size) {
+	if (rip->i_sp->s_version == V4) {
+	  if ((r = mfs4_zero_eof_tail(rip, (u64_t)rip->i_size,
+	      (u64_t)newsize)) != OK)
+		  return r;
+	} else {
+	  clear_zone(rip, rip->i_size, 0);
+	}
+  }
 
   /* Next correct the inode size. */
   rip->i_size = newsize;
