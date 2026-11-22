@@ -679,6 +679,18 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
 	return(ENOTDIR);
   }
 
+  /*
+   * COMPAT_DIR_INDEX only says that the filesystem can contain indexed
+   * directories.  This server can search and enumerate HTree directories,
+   * but its generic directory writer does not maintain HTree index blocks.
+   * Refuse namespace changes on an indexed inode before touching any dirent;
+   * ordinary, non-indexed directories remain writable.
+   */
+  if (ldir_ptr->i_sp->s_is_ext4 &&
+      (ldir_ptr->i_flags & EXT2_INDEX_FL) &&
+      (flag == ENTER || flag == DELETE))
+	return(EOPNOTSUPP);
+
   block_size = ldir_ptr->i_sp->s_block_size;
   new_slots = 0;
   e_hit = FALSE;
