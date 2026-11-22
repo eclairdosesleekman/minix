@@ -891,13 +891,16 @@ remain in the 56-byte inode area and others spill into `system.data`. Verify
 lookup of ordinary names, `.`, and `..`, plus repeated getdents calls with
 small output buffers and seeks to returned cookies. Unlink regular files from
 both dirent areas, including the first record and a later record in each area;
-verify surviving lookup/readdir results, unchanged inline size and xattr value
-length, and valid inode checksums after unmount. Creating/linking entries,
-renaming with an inline parent, moving an inline directory across parents,
-and rmdir of an inline directory must fail before mutation. Corrupt the stored
-parent inode and each dirent area's record lengths, inode numbers, and names;
-lookup or readdir must report `EIO`. Run `e2fsck -fn` on the unmounted image
-after testing.
+also remove an empty non-inline child directory whose parent entry is in each
+area. Verify surviving lookup/readdir results, unchanged inline size and xattr
+value length, updated parent link counts, and valid inode checksums after
+unmount. Repeat on an ordinary inline-data image with `metadata_csum` enabled
+and `ea_inode` disabled. Creating/linking entries, renaming with an inline
+parent, moving an inline directory across parents, replacing an inline
+directory during rename, and rmdir of an inline directory must fail before
+mutation. Corrupt the stored parent inode and each dirent area's record
+lengths, inode numbers, and names; lookup or readdir must report `EIO`. Run
+`e2fsck -fn` on the unmounted images after testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
 `metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:
