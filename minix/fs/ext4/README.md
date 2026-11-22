@@ -8,6 +8,12 @@ read-write mode.
 
 - Extent trees stored in the inode and in external extent nodes (read path,
   depth up to 5).
+- Writable extent-tree root growth for a full depth-one inode root. When
+  splitting a full external leaf requires a fifth inode-root index entry, the
+  four existing entries and new leaf entry are moved into a new external
+  depth-one index node and the inode root is promoted to depth two. The new
+  index checksum (when enabled) and inode `i_blocks` are updated. Splitting
+  full external index nodes and cascading growth remain unsupported.
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock. Group descriptor bitmap and inode-table
