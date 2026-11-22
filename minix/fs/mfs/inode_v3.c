@@ -27,7 +27,18 @@ mfs3_inode_decode(struct inode *rip, const d2_inode *dip, int norm)
     size = (i32_t)conv4(norm, (long)dip->d2_size);
     if (size < 0)
         return(EIO);
+
+    /* Decode into the common inode and clear fields absent from MFS3. */
+    rip->i_flags = 0;
     rip->i_size = (u64_t)size;
+    rip->i_atime_nsec = 0;
+    rip->i_mtime_nsec = 0;
+    rip->i_ctime_nsec = 0;
+    rip->i_generation = 0;
+    rip->i_xattr_head = 0;
+    rip->i_orphan_next = 0;
+    rip->i_rdev = 0;
+    rip->i_project_id = 0;
 
     /* Keep the legacy signed-seconds interpretation, including pre-epoch
      * timestamps, while extending it to the common 64-bit representation.
