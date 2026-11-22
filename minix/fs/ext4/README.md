@@ -15,6 +15,11 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Full 32-bit Linux ext4 owner and group IDs. The low 16-bit fields and
+  `osd2.linux2.l_i_uid_high`/`l_i_gid_high` words are decoded into 32-bit
+  in-core IDs and written back independently of the adjacent high block-count
+  and external-xattr pointer fields. ext2 and non-Linux ext4 creator formats
+  retain their existing 16-bit UID/GID behavior.
 - Legacy direct and single/double/triple-indirect block mappings are range-checked
   against the complete ext4 metadata map before any pointer block or data block
   is read. Indirect pointer blocks are checked at block granularity; mapped
