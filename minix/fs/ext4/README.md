@@ -619,6 +619,20 @@ A full inode root, a full parent above depth two, and depth-three-or-greater
 index-parent splits must remain unsupported and leave the image unchanged.
 Unmount and run `e2fsck -fn`.
 
+For depth-three and deeper root trees, prepare a full depth-one external
+index node below a depth-two ancestor node that still has one free entry.
+Trigger a full leaf split under that node. The depth-one node must split into
+a left node retaining its original first key and a right sibling; the
+depth-two ancestor must receive the sibling key/pointer immediately after
+the original child, including when the original child is entry zero. Verify
+the new sibling key is within the selected parent's inherited upper bound,
+the ancestor first key remains unchanged, all three external checksums are
+regenerated with `metadata_csum`, and `i_blocks` includes the new leaf,
+sibling index node, and data block. Repeat at root depths three, four, and
+five when fixtures can be generated, with and without `metadata_csum`.
+A full depth-two ancestor and any cascading ancestor split must fail without
+altering the tree. Unmount and run `e2fsck -fn`.
+
 For depth-two and deeper coverage, prepare fragmented files whose inode roots
 have depths two and three (and greater, when the host tools can generate them).
 Choose a selected depth-one external index node with at least one free entry
