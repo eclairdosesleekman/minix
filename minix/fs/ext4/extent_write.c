@@ -7,8 +7,7 @@
  * depth-one index nodes can split under depth-two ancestors with space, and
  * a full depth-two ancestor can split under a depth-three inode root or a
  * depth-three external ancestor with space under a depth-four root. Deeper
- * cascades and root rebalancing
- * remain unsupported.
+ * Further cascades and root rebalancing remain unsupported.
  */
 
 #include "fs.h"
@@ -1607,11 +1606,12 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	extent_release_leaf(rip, new_bp, TRUE);
 	extent_release_leaf(rip, leaf_bp, TRUE);
 	if (grow_root || split_parent || split_parent_ancestor ||
-	    split_grandparent)
+	    split_grandparent || split_grandparent_ancestor)
 		extent_release_leaf(rip, new_parent_bp, TRUE);
 	if (parent_is_external)
 		extent_release_leaf(rip, parent_bp, TRUE);
-	if (split_parent_ancestor || split_grandparent)
+	if (split_parent_ancestor || split_grandparent ||
+	    split_grandparent_ancestor)
 		extent_release_leaf(rip, grandparent_bp, TRUE);
 	if (split_grandparent || split_grandparent_ancestor)
 		extent_release_leaf(rip, new_grandparent_bp, TRUE);
