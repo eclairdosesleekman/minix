@@ -171,10 +171,10 @@ read-write mode.
   feature is accepted for both read-only and writable mounts: internal HTree
   nodes are skipped as inode-zero dummy directory entries, so lookup and
   readdir support the HTree depth limit (two levels normally, three with
-  `large_dir`). Namespace mutations on directories carrying
-  `EXT2_INDEX_FL` remain rejected, while ordinary non-indexed directories
-  and regular files can be modified on a writable mount. The root's depth
-  field is checked even without `metadata_csum`.
+  `large_dir`). Insertions and renames involving directories carrying
+  `EXT2_INDEX_FL` remain rejected; leaf-entry deletion is supported as
+  described above. The root's depth field is checked even without
+  `metadata_csum`.
 - Inline-data support for regular files and symlinks. The first 60 payload
   bytes are stored in `i_block`; an optional remainder is stored in the
   inode-body `system.data` xattr. The xattr header, entry table, terminator,
