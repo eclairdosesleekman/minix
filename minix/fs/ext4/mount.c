@@ -134,14 +134,9 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		printf("ext4: filesystem is not clean; run fsck first\\n");
 		goto bad_mount;
 	}
-	/* This server has no journal replay/commit or directory-index update
-	 * implementation.  Refuse read-write mounts that would need either. */
+	/* The server does not implement journal replay or journal commits. */
 	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_HAS_JOURNAL)) {
 		printf("ext4: read-write mounts require ^has_journal\\n");
-		goto bad_mount;
-	}
-	if (!readonly && HAS_COMPAT_FEATURE(sp, COMPAT_DIR_INDEX)) {
-		printf("ext4: read-write mounts require ^dir_index\\n");
 		goto bad_mount;
 	}
 	/*
