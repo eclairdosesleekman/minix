@@ -368,6 +368,7 @@ void init_vmnts(void);
 int lock_vmnt(struct vmnt *vp, tll_access_t locktype);
 void unlock_vmnt(struct vmnt *vp);
 void vmnt_unmap_by_endpt(endpoint_t proc_e);
+void vmnt_release_mountpoint(struct vmnt *vmp);
 void fetch_vmnt_paths(void);
 void upgrade_vmnt_lock(struct vmnt *vmp);
 void downgrade_vmnt_lock(struct vmnt *vmp);

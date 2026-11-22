@@ -174,6 +174,25 @@ int lock_vmnt(struct vmnt *vmp, tll_access_t locktype)
 }
 
 /*===========================================================================*
+ *                             vmnt_release_mountpoint			     *
+ *===========================================================================*/
+void vmnt_release_mountpoint(struct vmnt *vmp)
+{
+  struct vnode *vp;
+
+  /*
+   * Both unmount() and vmnt_unmap_by_endpt() can release the reference
+   * held on a mount point. In particular, a file server can exit while
+   * its mount is being unmounted. Claim the reference atomically so that
+   * only one of these paths can put the vnode.
+   */
+  vp = __atomic_exchange_n(&vmp->m_mounted_on, (struct vnode *)NULL,
+      __ATOMIC_ACQ_REL);
+  if (vp != NULL)
+	put_vnode(vp);
+}
+
+/*===========================================================================*
  *                             vmnt_unmap_by_endpoint			     *
  *===========================================================================*/
 void vmnt_unmap_by_endpt(endpoint_t proc_e)
@@ -184,11 +203,8 @@ void vmnt_unmap_by_endpt(endpoint_t proc_e)
 	mark_vmnt_free(vmp);
 	fs_cancel(vmp);
 	invalidate_filp_by_endpt(proc_e);
-	if (vmp->m_mounted_on) {
-		/* Only put mount point when it was actually used as mount
-		 * point. That is, the mount was succesful. */
-		put_vnode(vmp->m_mounted_on);
-	}
+	/* The unmount path may already have released this reference. */
+	vmnt_release_mountpoint(vmp);
   }
 }
 

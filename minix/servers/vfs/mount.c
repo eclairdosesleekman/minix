@@ -526,10 +526,8 @@ int unmount(
 	return r;
   }
 
-  if (vmp->m_mounted_on) {
-	put_vnode(vmp->m_mounted_on);
-	vmp->m_mounted_on = NULL;
-  }
+  /* The file server may concurrently exit and unmap this mount. */
+  vmnt_release_mountpoint(vmp);
 
   if (is_nonedev(vmp->m_dev)) free_nonedev(vmp->m_dev);
 
