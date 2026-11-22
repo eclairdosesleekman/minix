@@ -16,5 +16,9 @@ typedef struct {		/* V2.x disk inode */
   zone_t d2_zone[V2_NR_TZONES];	/* block nums for direct, ind, and dbl ind */
 } d2_inode;
 
+/* Keep the legacy MFS3 on-disk inode layout fixed at exactly 64 bytes. */
+typedef char mfs3_d2_inode_size_must_be_64[
+    sizeof(d2_inode) == 64 ? 1 : -1];
+
 #endif
 

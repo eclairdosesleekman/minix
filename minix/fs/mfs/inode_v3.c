@@ -1,0 +1,95 @@
+/*
+ * MFS3 inode disk codec.
+ *
+ * Keep the legacy 64-byte d2_inode layout isolated from the common in-memory
+ * inode. In particular, never memcpy a struct inode to or from disk.
+ */
+
+#include "fs.h"
+#include "inode.h"
+#include "type.h"
+
+int
+mfs3_inode_decode(struct inode *rip, const d2_inode *dip, int norm)
+{
+    int i;
+    i32_t size;
+
+    /* The legacy UID field is signed in the C declaration, but its on-disk
+     * representation is an unsigned 16-bit value.
+     */
+    rip->i_mode = (u16_t)conv2(norm, dip->d2_mode);
+    rip->i_uid = (u32_t)conv2(norm, (u16_t)dip->d2_uid);
+    rip->i_nlinks = (u32_t)conv2(norm, dip->d2_nlinks);
+    rip->i_gid = (u32_t)conv2(norm, dip->d2_gid);
+
+    /* MFS3's size field is a signed 32-bit value. Negative sizes are corrupt. */
+    size = (i32_t)conv4(norm, (long)dip->d2_size);
+    if (size < 0)
+        return(EIO);
+
+    /* Decode into the common inode and clear fields absent from MFS3. */
+    rip->i_flags = 0;
+    rip->i_size = (u64_t)size;
+    rip->i_atime_nsec = 0;
+    rip->i_mtime_nsec = 0;
+    rip->i_ctime_nsec = 0;
+    rip->i_generation = 0;
+    rip->i_xattr_head = 0;
+    rip->i_orphan_next = 0;
+    rip->i_rdev = 0;
+    rip->i_project_id = 0;
+
+    /*
+     * The legacy in-memory MFS3 fields were u32_t. Preserve that effective
+     * unsigned interpretation even though the disk structure spells them
+     * i32_t: values with bit 31 set must round-trip unchanged.
+     */
+    rip->i_atime = (i64_t)(u32_t)conv4(norm, (long)dip->d2_atime);
+    rip->i_mtime = (i64_t)(u32_t)conv4(norm, (long)dip->d2_mtime);
+    rip->i_ctime = (i64_t)(u32_t)conv4(norm, (long)dip->d2_ctime);
+
+    rip->i_ndzones = V2_NR_DZONES;
+    rip->i_nindirs = V2_INDIRECTS(rip->i_sp->s_block_size);
+    for (i = 0; i < V2_NR_TZONES; i++)
+        rip->i_zone[i] =
+            (zone_t)conv4(norm, (long)dip->d2_zone[i]);
+
+    return(OK);
+}
+
+int
+mfs3_inode_encode(const struct inode *rip, d2_inode *dip, int norm)
+{
+    int i;
+
+    /* Validate every narrowing conversion before changing the disk image. */
+    if (rip->i_uid > 0xffffU || rip->i_gid > 0xffffU)
+        return(EOVERFLOW);
+    if (rip->i_nlinks > 0xffffU)
+        return(EMLINK);
+    if (rip->i_size > 0x7fffffffULL)
+        return(EFBIG);
+    /*
+     * MFS3 historically treated these fields as unsigned 32-bit values in
+     * memory. Keep the full raw field range (through 2106-02-07) available.
+     */
+    if (rip->i_atime < 0 || rip->i_atime > 0xffffffffULL ||
+        rip->i_mtime < 0 || rip->i_mtime > 0xffffffffULL ||
+        rip->i_ctime < 0 || rip->i_ctime > 0xffffffffULL)
+        return(EOVERFLOW);
+
+    dip->d2_mode = (u16_t)conv2(norm, rip->i_mode);
+    dip->d2_uid = (i16_t)conv2(norm, (u16_t)rip->i_uid);
+    dip->d2_nlinks = (u16_t)conv2(norm, (u16_t)rip->i_nlinks);
+    dip->d2_gid = (u16_t)conv2(norm, (u16_t)rip->i_gid);
+    dip->d2_size = (i32_t)conv4(norm, (long)(i32_t)rip->i_size);
+    dip->d2_atime = (i32_t)conv4(norm, (long)(u32_t)rip->i_atime);
+    dip->d2_mtime = (i32_t)conv4(norm, (long)(u32_t)rip->i_mtime);
+    dip->d2_ctime = (i32_t)conv4(norm, (long)(u32_t)rip->i_ctime);
+    for (i = 0; i < V2_NR_TZONES; i++)
+        dip->d2_zone[i] =
+            (zone_t)conv4(norm, (long)rip->i_zone[i]);
+
+    return(OK);
+}

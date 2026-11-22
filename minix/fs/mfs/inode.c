@@ -26,8 +26,6 @@
 static void addhash_inode(struct inode *node);
 
 static void free_inode(dev_t dev, ino_t numb);
-static void new_icopy(struct inode *rip, d2_inode *dip, int direction,
-	int norm);
 static void unhash_inode(struct inode *node);
 static void wipe_inode(struct inode *rip);
 
@@ -124,7 +122,7 @@ struct inode *get_inode(
  * load it from the disk if it's necessary and put on the hash list 
  */
   register struct inode *rip;
-  int hashi;
+  int hashi, r;
 
   hashi = (int) (numb & INODE_HASH_MASK);
 
@@ -161,7 +159,15 @@ struct inode *get_inode(
   rip->i_dev = dev;
   rip->i_num = numb;
   rip->i_count = 1;
-  if (dev != NO_DEV) rw_inode(rip, READING);	/* get inode from disk */
+  if (dev != NO_DEV && (r = rw_inode(rip, READING)) != OK) {
+      /* Do not cache an inode whose disk representation could not be decoded. */
+      err_code = r;
+      rip->i_count = 0;
+      rip->i_num = NO_ENTRY;
+      rip->i_dev = NO_DEV;
+      TAILQ_INSERT_HEAD(&unused_inodes, rip, i_unused);
+      return(NULL);
+  }
   rip->i_update = 0;		/* all the times are initially up-to-date */
   rip->i_zsearch = NO_ZONE;	/* no zones searched for yet */
   rip->i_mountpoint= FALSE;
@@ -265,6 +271,12 @@ struct inode *alloc_inode(dev_t dev, mode_t bits, uid_t uid, gid_t gid)
 	return(NULL);
   }
 
+  /* Reject values that cannot be persisted by the active legacy codec. */
+  if (sp->s_version == V3 && (uid > 0xffffU || gid > 0xffffU)) {
+      err_code = EOVERFLOW;
+      return(NULL);
+  }
+
   /* Acquire an inode from the bit map. */
   b = alloc_bit(sp, IMAP, sp->s_isearch);
   if (b == NO_BIT) {
@@ -287,6 +299,15 @@ struct inode *alloc_inode(dev_t dev, mode_t bits, uid_t uid, gid_t gid)
 	rip->i_nlinks = NO_LINK;	/* initial no links */
 	rip->i_uid = uid;		/* file's uid is owner's */
 	rip->i_gid = gid;		/* ditto group id */
+        rip->i_flags = 0;
+        rip->i_atime_nsec = 0;
+        rip->i_mtime_nsec = 0;
+        rip->i_ctime_nsec = 0;
+        rip->i_generation = 0;
+        rip->i_xattr_head = 0;
+        rip->i_orphan_next = 0;
+        rip->i_rdev = 0;
+        rip->i_project_id = 0;
 	rip->i_dev = dev;		/* mark which device it is on */
 	rip->i_ndzones = sp->s_ndzones;	/* number of direct zones */
 	rip->i_nindirs = sp->s_nindirs;	/* number of indirect zones per blk*/
@@ -375,17 +396,19 @@ void update_times(
 /*===========================================================================*
  *				rw_inode				     *
  *===========================================================================*/
-void rw_inode(
+int rw_inode(
   register struct inode *rip,	/* pointer to inode to be read/written */
   int rw_flag			/* READING or WRITING */
 )
 {
-/* An entry in the inode table is to be copied to or from the disk. */
+/* Read or write an inode through the codec for the mounted disk format. */
 
   register struct buf *bp;
   register struct super_block *sp;
   d2_inode *dip2;
   block_t b, offset;
+  int r;
+  unsigned int pending_updates = 0;
 
   /* Get the block where the inode resides. */
   sp = &superblock;
@@ -396,61 +419,41 @@ void rw_inode(
   dip2 = b_v2_ino(bp) + (rip->i_num - 1) %
   	 V2_INODES_PER_BLOCK(sp->s_block_size);
 
-  /* Do the read or write. */
   if (rw_flag == WRITING) {
-	if (rip->i_update) update_times(rip);	/* times need updating */
-	if (sp->s_rd_only == FALSE) MARKDIRTY(bp);
+      if (sp->s_rd_only) {
+          put_block(bp);
+          return(EROFS);
+      }
+      pending_updates = rip->i_update;
+      if (pending_updates) update_times(rip);
   }
 
-  /* Copy the inode from the disk block to the in-core table or vice versa.
-   * If the fourth parameter below is FALSE, the bytes are swapped.
+  /*
+   * Version-specific serialization is deliberately kept out of the common
+   * inode cache. Add a codec here when a new on-disk format is introduced.
    */
-  assert(sp->s_version == V3);
-  new_icopy(rip, dip2, rw_flag, sp->s_native);
-  
+  if (sp->s_version == V3) {
+      if (rw_flag == WRITING)
+          r = mfs3_inode_encode(rip, dip2, sp->s_native);
+      else
+          r = mfs3_inode_decode(rip, dip2, sp->s_native);
+  } else {
+      r = EINVAL;
+  }
+
+  if (r != OK) {
+      /* Preserve deferred time updates when a legacy format cannot store them. */
+      rip->i_update |= pending_updates;
+      put_block(bp);
+      return(r);
+  }
+
+  if (rw_flag == WRITING)
+      MARKDIRTY(bp);
+
   put_block(bp);
   IN_MARKCLEAN(rip);
-}
-
-/*===========================================================================*
- *				new_icopy				     *
- *===========================================================================*/
-static void new_icopy(
-  register struct inode *rip,	/* pointer to the in-core inode struct */
-  register d2_inode *dip,	/* pointer to the d2_inode struct */
-  int direction,			/* READING (from disk) or WRITING (to disk) */
-  int norm			/* TRUE = do not swap bytes; FALSE = swap */
-)
-{
-  int i;
-
-  if (direction == READING) {
-	/* Copy V2.x inode to the in-core table, swapping bytes if need be. */
-	rip->i_mode    = (mode_t) conv2(norm,dip->d2_mode);
-	rip->i_uid     = (uid_t) conv2(norm,dip->d2_uid);
-	rip->i_nlinks  = (nlink_t) conv2(norm,dip->d2_nlinks);
-	rip->i_gid     = (gid_t) conv2(norm,dip->d2_gid);
-	rip->i_size    = (off_t) conv4(norm,dip->d2_size);
-	rip->i_atime   = (time_t) conv4(norm,dip->d2_atime);
-	rip->i_ctime   = (time_t) conv4(norm,dip->d2_ctime);
-	rip->i_mtime   = (time_t) conv4(norm,dip->d2_mtime);
-	rip->i_ndzones = V2_NR_DZONES;
-	rip->i_nindirs = V2_INDIRECTS(rip->i_sp->s_block_size);
-	for (i = 0; i < V2_NR_TZONES; i++)
-		rip->i_zone[i] = (zone_t) conv4(norm, (long) dip->d2_zone[i]);
-  } else {
-	/* Copying V2.x inode to disk from the in-core table. */
-	dip->d2_mode   = (u16_t) conv2(norm,rip->i_mode);
-	dip->d2_uid    = (i16_t) conv2(norm,rip->i_uid);
-	dip->d2_nlinks = (u16_t) conv2(norm,rip->i_nlinks);
-	dip->d2_gid    = (u16_t) conv2(norm,rip->i_gid);
-	dip->d2_size   = (i32_t) conv4(norm,rip->i_size);
-	dip->d2_atime  = (i32_t) conv4(norm,rip->i_atime);
-	dip->d2_ctime  = (i32_t) conv4(norm,rip->i_ctime);
-	dip->d2_mtime  = (i32_t) conv4(norm,rip->i_mtime);
-	for (i = 0; i < V2_NR_TZONES; i++)
-		dip->d2_zone[i] = (zone_t) conv4(norm, (long) rip->i_zone[i]);
-  }
+  return(OK);
 }
 
 
