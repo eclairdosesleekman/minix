@@ -1313,7 +1313,10 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		    extent_get32(grandparent_node + 12) != ancestor_key) ||
 		    (grandparent_index + 1 < grandparent_entries &&
 		    parent_upper_bound != extent_get32(grandparent_node + 12 +
-		    (size_t)(grandparent_index + 1) * 12))) {
+		    (size_t)(grandparent_index + 1) * 12)) ||
+		    (split_grandparent_ancestor &&
+		    grandparent_index + 1 == grandparent_entries &&
+		    parent_upper_bound != grandparent_upper_bound)) {
 			extent_release_leaf(rip, grandparent_bp, FALSE);
 			extent_release_leaf(rip, new_parent_bp, FALSE);
 			free_block(rip->i_sp, new_parent_block);
@@ -1483,8 +1486,10 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		}
 		if (extent_get32(ancestor_node + 12) != ancestor_root_key ||
 		    (ancestor_index + 1 < ancestor_entries &&
-		    ancestor_upper_bound != extent_get32(ancestor_node + 12 +
-		    (size_t)(ancestor_index + 1) * 12))) {
+		    grandparent_upper_bound != extent_get32(ancestor_node + 12 +
+		    (size_t)(ancestor_index + 1) * 12)) ||
+		    (ancestor_index + 1 == ancestor_entries &&
+		    grandparent_upper_bound != ancestor_upper_bound)) {
 			extent_release_leaf(rip, ancestor_bp, FALSE);
 			extent_release_leaf(rip, grandparent_bp, FALSE);
 			extent_release_leaf(rip, new_grandparent_bp, FALSE);
