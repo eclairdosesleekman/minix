@@ -9,6 +9,7 @@
 
 #include "fs.h"
 #include <string.h>
+#include <stdlib.h>
 #include "buf.h"
 #include "inode.h"
 #include "super.h"
@@ -381,10 +382,6 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		return(EFBIG);
 	}
 
-	if (leaf_entries >= (UINT16_MAX - 1)) {
-		extent_release_leaf(rip, leaf_bp, FALSE);
-		return(EFBIG);
-	}
 	records_size = (size_t)(leaf_entries + 1) * 12;
 	records = malloc(records_size);
 	if (records == NULL) {
