@@ -1814,7 +1814,6 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		extent_put16(root_node + 20, (u16_t)(new_parent_block >> 32));
 		extent_put16(root_node + 22, 0);
 	} else if (split_parent) {
-		unsigned char *root_entry;
 
 		root_entry = root_node + 12 +
 		    (size_t)(root_index + 1) * 12;
