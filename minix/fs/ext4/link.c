@@ -162,6 +162,11 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
   } else {
 	  if ((rip->i_mode & I_TYPE) != I_DIRECTORY)
 		  r = ENOTDIR;
+	  /* remove_dir() edits "." and ".." after unlinking the parent entry,
+	   * so reject indexed targets before that first mutation. */
+	  else if (rip->i_sp->s_is_ext4 &&
+	      (rip->i_flags & EXT2_INDEX_FL))
+		  r = EOPNOTSUPP;
 	  else if (has_external_extent_tree(rip))
 		  r = EOPNOTSUPP;
 	  else
