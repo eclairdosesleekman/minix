@@ -90,7 +90,7 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	size_t *node_sizep, u16_t *entriesp, u16_t *maxp,
 	struct buf **bpp, unsigned char **root_nodep,
 	u16_t *root_entriesp, u16_t *root_maxp, u16_t *root_indexp,
-	u16_t *root_depthp, block64_t *leaf_blockp)
+	u16_t *root_depthp)
 {
 	unsigned char *node;
 	struct buf *bp;
@@ -242,9 +242,8 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				put_block(bp);
 				bp = NULL;
 			}
-			if (bp == NULL)
+			if (expected_depth == -1)
 				*root_indexp = (u16_t)selected_index;
-			*leaf_blockp = selected_child;
 			expected_key = selected_key;
 			have_expected_key = TRUE;
 			bp = get_block(rip->i_dev, selected_child, NORMAL);
@@ -336,11 +335,11 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	unsigned char *records;
 	u64_t upper, sectors;
 	block64_t new_block;
-	u32_t first_key, right_key, end_key;
+	u32_t first_key, right_key;
+	u64_t end_key;
 	u16_t left_entries, right_entries;
 	size_t records_size;
 	unsigned int i;
-	int r;
 
 	if (leaf_bp == NULL || root_node == NULL || root_depth != 1 ||
 	    leaf_entries != leaf_max || insert > leaf_entries ||
@@ -368,8 +367,8 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		struct ext4_extent ex;
 
 		extent_get(leaf + 12 + i * 12, &ex);
-		end_key = ex.logical + ex.length;
-		if ((u64_t)end_key > upper) {
+		end_key = (u64_t)ex.logical + ex.length;
+		if (end_key > upper) {
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(EIO);
 		}
@@ -417,12 +416,14 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(ENOSPC);
 	}
-	if (new_block == 0 || new_block >= rip->i_sp->s_blocks_count ||
-	    new_block > 0xffffffffffffULL) {
+	if (new_block < rip->i_sp->s_first_data_block ||
+	    new_block >= rip->i_sp->s_blocks_count)
+		panic("ext4: allocator returned invalid extent-tree block");
+	if (new_block > 0xffffffffffffULL) {
 		free_block(rip->i_sp, new_block);
 		free(records);
 		extent_release_leaf(rip, leaf_bp, FALSE);
-		return(EIO);
+		return(EFBIG);
 	}
 	new_bp = get_block(rip->i_dev, new_block, NO_READ);
 	if (new_bp == NULL) {
@@ -477,7 +478,6 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	size_t node_size;
 	u16_t entries, max_entries, root_entries, root_max;
 	u16_t root_index, root_depth;
-	block64_t leaf_block;
 	u64_t logical64, physical;
 	u32_t logical, offset, new_length;
 	unsigned int i, insert;
@@ -495,10 +495,9 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 
 	if ((r = extent_leaf(rip, logical, &root, &node_size, &entries,
 	    &max_entries, &leaf_bp, &root_node, &root_entries, &root_max,
-	    &root_index, &root_depth, &leaf_block)) != OK)
+	    &root_index, &root_depth)) != OK)
 		return(r);
 	(void)node_size;	/* The selected node has already been bounded. */
-	(void)leaf_block;	/* Identifies the selected external child. */
 
 	/* Find the extent containing the requested logical block. */
 	for (i = 0; i < entries; i++) {
