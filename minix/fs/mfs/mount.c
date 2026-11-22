@@ -49,7 +49,11 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	printf("MFS: WARNING: FS 0x%llx unclean, mounting readonly\n", (unsigned long long)fs_dev);
   }
 
-  lmfs_set_blocksize(superblock.s_block_size);
+  if ((r = lmfs_set_blocksize_err(superblock.s_block_size)) != OK) {
+	superblock.s_dev = NO_DEV;
+	(void)bdev_close(fs_dev);
+	return r;
+  }
 
   /* Compute the current number of used zones, and report it to libminixfs.
    * Note that libminixfs really wants numbers of *blocks*, but this MFS
@@ -88,10 +92,20 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
   *res_flags = RES_NOFLAGS;
 
   /* Mark it dirty */
-  if(!superblock.s_rd_only) {
-	  superblock.s_flags &= ~MFSFLAG_CLEAN;
-	  if(write_super(&superblock) != OK)
-		panic("mounting: couldn't write dirty superblock");
+  if (!superblock.s_rd_only) {
+	unsigned int old_flags = superblock.s_flags;
+
+	superblock.s_flags &= ~MFSFLAG_CLEAN;
+	if ((r = write_super(&superblock)) != OK) {
+		/* Keep failed metadata in LMFS for a possible retry; do not
+		 * invalidate the device cache on this failed mount.
+		 */
+		put_inode(root_ip);
+		superblock.s_dev = NO_DEV;
+		(void)bdev_close(fs_dev);
+		superblock.s_flags = old_flags;
+		return r;
+	}
   }
 
   return(r);
@@ -131,43 +145,73 @@ int fs_mountpt(ino_t ino_nr)
 /*===========================================================================*
  *				fs_unmount				     *
  *===========================================================================*/
-void fs_unmount(void)
+int fs_unmount(void)
 {
-/* Unmount a file system. */
-  int count;
+/* Unmount a file system only after all metadata has reached the device.
+ * Keep the root inode pinned if an error prevents VFS from completing unmount.
+ */
+  int count, r, close_error;
   struct inode *rip, *root_ip;
 
-  /* See if the mounted device is busy.  Only 1 inode using it should be
-   * open --the root inode-- and that inode only 1 time.  This is an integrity
-   * check only: VFS expects the unmount to succeed either way.
-   */
   count = 0;
-  for (rip = &inode[0]; rip < &inode[NR_INODES]; rip++) 
-	  if (rip->i_count > 0 && rip->i_dev == fs_dev) count += rip->i_count;
+  for (rip = &inode[0]; rip < &inode[NR_INODES]; rip++)
+	if (rip->i_count > 0 && rip->i_dev == fs_dev)
+		count += rip->i_count;
   if (count != 1)
 	printf("MFS: file system has %d in-use inodes!\n", count);
 
   if ((root_ip = find_inode(fs_dev, ROOT_INODE)) == NULL)
-	panic("MFS: couldn't find root inode\n");
-   
+	return EIO;
+
   put_inode(root_ip);
 
-  /* force any cached blocks out of memory */
-  fs_sync();
-
-  /* Mark it clean if we're allowed to write _and_ it was clean originally. */
-  if (!superblock.s_rd_only) {
-	superblock.s_flags |= MFSFLAG_CLEAN;
-	write_super(&superblock);
+  /* put_inode() may have written the last dirty inode into LMFS. */
+  if ((r = fs_sync()) != OK) {
+	if (get_inode(fs_dev, ROOT_INODE) == NULL)
+		printf("MFS: unable to repin root inode after sync error\n");
+	return r;
   }
 
-  /* Close the device the file system lives on. */
-  bdev_close(fs_dev);
+  /* Mark it clean only after the preceding writeback has succeeded. */
+  if (!superblock.s_rd_only) {
+	unsigned int old_flags = superblock.s_flags;
 
-  /* Throw out blocks out of the VM cache, to prevent corruption later. */
+	superblock.s_flags |= MFSFLAG_CLEAN;
+	if ((r = write_super(&superblock)) != OK) {
+		/* Replace the failed clean image in LMFS with a dirty superblock
+		 * image before returning, so a later retry cannot flush CLEAN.
+		 */
+		superblock.s_flags = old_flags;
+		(void)write_super(&superblock);
+		if (get_inode(fs_dev, ROOT_INODE) == NULL)
+			printf("MFS: unable to repin root inode after superblock error\n");
+		return r;
+	}
+  }
+
+  close_error = bdev_close(fs_dev);
+  if (close_error != OK) {
+	/* The unmount did not complete, so revoke the clean indication. */
+	if (!superblock.s_rd_only) {
+		superblock.s_flags &= ~MFSFLAG_CLEAN;
+		r = write_super(&superblock);
+		if (r != OK) {
+			superblock.s_rd_only = 1;
+			printf("MFS: unable to restore dirty flag after close error (%d)\n",
+			    r);
+		}
+	}
+	if (get_inode(fs_dev, ROOT_INODE) == NULL)
+		printf("MFS: unable to repin root inode after close error\n");
+	return close_error;
+  }
+
+  /* Only invalidate cached blocks once all writeback and close operations
+   * have completed successfully.
+   */
   lmfs_invalidate(fs_dev);
-
-  /* Finish off the unmount. */
   superblock.s_dev = NO_DEV;
+
+  return OK;
 }
 

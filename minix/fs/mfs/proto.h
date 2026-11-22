@@ -38,12 +38,12 @@ int fs_unlink(ino_t dir_nr, char *name, int call);
 int truncate_inode(struct inode *rip, off_t len);
 
 /* misc.c */
-void fs_sync(void);
+int fs_sync(void);
 
 /* mount.c */
 int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	unsigned int *res_flags);
-void fs_unmount(void);
+int fs_unmount(void);
 int fs_mountpt(ino_t ino_nr);
 
 /* open.c */

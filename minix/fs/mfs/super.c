@@ -211,12 +211,8 @@ static int rw_super(struct super_block *sp, int writing)
    * zero-sized partition.  In that case, we'd rather faily cleanly than
    * crash the MFS service.
    */
-  if ((r = lmfs_get_block(&bp, sp->s_dev, 0, NORMAL)) != OK) {
-	if (writing)
-		panic("get_block of superblock failed: %d", r);
-	else
-		return r;
-  }
+  if ((r = lmfs_get_block(&bp, sp->s_dev, 0, NORMAL)) != OK)
+	return r;
 
   /* sbbuf points to the disk block at the superblock offset */
   sbbuf = (char *) b_data(bp) + SUPER_BLOCK_BYTES;
@@ -232,9 +228,7 @@ static int rw_super(struct super_block *sp, int writing)
   }
 
   put_block(bp);
-  lmfs_flushall();
-
-  return OK;
+  return lmfs_flushall_err();
 }
 
 /*===========================================================================*

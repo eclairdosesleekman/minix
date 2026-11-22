@@ -35,10 +35,14 @@ void lmfs_markclean(struct buf *bp);
 int lmfs_isclean(struct buf *bp);
 void lmfs_flushall(void);
 void lmfs_flushdev(dev_t dev);
+int lmfs_flushall_err(void);
+int lmfs_flushdev_err(dev_t dev);
 size_t lmfs_fs_block_size(void);
 void lmfs_may_use_vmcache(int);
 void lmfs_set_blocksize(size_t blocksize);
 void lmfs_buf_pool(int new_nr_bufs);
+int lmfs_set_blocksize_err(size_t blocksize);
+int lmfs_buf_pool_err(int new_nr_bufs);
 int lmfs_get_block(struct buf **bpp, dev_t dev, block64_t block, int how);
 int lmfs_get_block_ino(struct buf **bpp, dev_t dev, block64_t block, int how,
 	ino_t ino, u64_t off);
@@ -61,5 +65,6 @@ void lmfs_driver(dev_t dev, char *label);
 ssize_t lmfs_bio(dev_t dev, struct fsdriver_data *data, size_t bytes,
 	off_t pos, int call);
 void lmfs_bflush(dev_t dev);
+int lmfs_bflush_err(dev_t dev);
 
 #endif /* _MINIX_FSLIB_H */

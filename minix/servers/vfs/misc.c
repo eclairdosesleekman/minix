@@ -283,12 +283,14 @@ int do_sync(void)
 		break;
 	if (vmp->m_dev != NO_DEV && vmp->m_fs_e != NONE &&
 		 vmp->m_root_node != NULL) {
-		req_sync(vmp->m_fs_e);
+		r = req_sync(vmp->m_fs_e);
 	}
 	unlock_vmnt(vmp);
+	if (r != OK)
+		break;
   }
 
-  return(r);
+  return r;
 }
 
 /*===========================================================================*
@@ -315,14 +317,14 @@ int do_fsync(void)
 	if ((r = lock_vmnt(vmp, VMNT_READ)) != OK)
 		break;
 	if (vmp->m_dev != NO_DEV && vmp->m_dev == dev &&
-		vmp->m_fs_e != NONE && vmp->m_root_node != NULL) {
-
-		req_sync(vmp->m_fs_e);
-	}
+		vmp->m_fs_e != NONE && vmp->m_root_node != NULL)
+		r = req_sync(vmp->m_fs_e);
 	unlock_vmnt(vmp);
+	if (r != OK)
+		break;
   }
 
-  return(r);
+  return r;
 }
 
 int dupvm(struct fproc *rfp, int pfd, int *vmfd, struct filp **newfilp)

@@ -12,7 +12,7 @@
 
 struct fsdriver mfs_table = {
 	.fdr_mount	= fs_mount,
-	.fdr_unmount	= fs_unmount,
+	.fdr_unmount_err = fs_unmount,
 	.fdr_lookup	= fs_lookup,
 	.fdr_putnode	= fs_putnode,
 	.fdr_read	= fs_readwrite,
@@ -36,10 +36,10 @@ struct fsdriver mfs_table = {
 	.fdr_utime	= fs_utime,
 	.fdr_mountpt	= fs_mountpt,
 	.fdr_statvfs	= fs_statvfs,
-	.fdr_sync	= fs_sync,
+	.fdr_sync_err	= fs_sync,
 	.fdr_driver	= lmfs_driver,
 	.fdr_bread	= lmfs_bio,
 	.fdr_bwrite	= lmfs_bio,
 	.fdr_bpeek	= lmfs_bio,
-	.fdr_bflush	= lmfs_bflush
+	.fdr_bflush_err = lmfs_bflush_err
 };

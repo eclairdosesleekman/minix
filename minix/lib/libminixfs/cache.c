@@ -49,9 +49,11 @@ static unsigned int bufs_in_use;/* # bufs currently in use (not on free list)*/
 
 static void rm_lru(struct buf *bp);
 static int read_block(struct buf *bp, size_t size);
-static void freeblock(struct buf *bp);
+static int freeblock(struct buf *bp);
 static void cache_heuristic_check(void);
 static void put_block(struct buf *bp, int put_flags);
+static int rw_scattered(dev_t dev, struct buf **bufq,
+	unsigned int bufqsize, int rw_flag);
 
 static int vmcache = 0; /* are we using vm's secondary cache? (initially not) */
 
@@ -179,15 +181,21 @@ int lmfs_isclean(struct buf *bp)
 static void free_unused_blocks(void)
 {
 	struct buf *bp;
+	int freed = 0, bytes = 0, r;
 
-	int freed = 0, bytes = 0;
 	printf("libminixfs: freeing; %d blocks in use\n", bufs_in_use);
-	for(bp = &buf[0]; bp < &buf[nr_bufs]; bp++) {
-  		if(bp->lmfs_bytes > 0 && bp->lmfs_count == 0) {
-			freed++;
-			bytes += bp->lmfs_bytes;
-			freeblock(bp);
+	for (bp = &buf[0]; bp < &buf[nr_bufs]; bp++) {
+		size_t block_bytes;
+
+		if (bp->lmfs_bytes == 0 || bp->lmfs_count != 0)
+			continue;
+		block_bytes = bp->lmfs_bytes;
+		if ((r = freeblock(bp)) != OK) {
+			printf("libminixfs: unable to evict dirty block (%d)\n", r);
+			continue;
 		}
+		freed++;
+		bytes += block_bytes;
 	}
 	printf("libminixfs: freeing; %d blocks, %d bytes\n", freed, bytes);
 }
@@ -249,26 +257,38 @@ static void lowercount(struct buf *bp)
   if(bp->lmfs_count == 0) bufs_in_use--;
 }
 
-static void freeblock(struct buf *bp)
+static int freeblock(struct buf *bp)
 {
+  int r;
+
   ASSERT(bp->lmfs_count == 0);
-  /* If the block taken is dirty, make it clean by writing it to the disk.
-   * Avoid hysteresis by flushing all other dirty blocks for the same device.
-   */
+  /* Never discard dirty cached data unless the write completed. */
   if (bp->lmfs_dev != NO_DEV) {
-	if (!lmfs_isclean(bp)) lmfs_flushdev(bp->lmfs_dev);
+	if (!lmfs_isclean(bp)) {
+		/* Only this buffer is being evicted. Flushing the entire device
+		 * here could spuriously fail because unrelated buffers are held.
+		 */
+		r = rw_scattered(bp->lmfs_dev, &bp, 1, WRITING);
+		if (r != OK)
+			return r;
+	}
+	if (!lmfs_isclean(bp))
+		return EIO;
 	assert(bp->lmfs_bytes > 0);
 	bp->lmfs_dev = NO_DEV;
   }
 
-  /* Fill in block's parameters and add it to the hash chain where it goes. */
-  MARKCLEAN(bp);		/* NO_DEV blocks may be marked dirty */
-  if(bp->lmfs_bytes > 0) {
+  MARKCLEAN(bp);
+  if (bp->lmfs_bytes > 0) {
 	assert(bp->data);
 	munmap_t(bp->data, bp->lmfs_bytes);
 	bp->lmfs_bytes = 0;
 	bp->data = NULL;
-  } else assert(!bp->data);
+  } else {
+	assert(!bp->data);
+  }
+
+  return OK;
 }
 
 /*===========================================================================*
@@ -395,6 +415,12 @@ static int get_block_ino(struct buf **bpp, dev_t dev, block64_t block, int how,
   }
   assert(bp);
 
+  /* Do not unlink the old buffer until dirty contents are safely written.
+   * On failure it remains discoverable, dirty, and retryable.
+   */
+  if ((r = freeblock(bp)) != OK)
+	return r;
+
   rm_lru(bp);
 
   /* Remove the block that was just taken from its hash chain. */
@@ -412,8 +438,6 @@ static int get_block_ino(struct buf **bpp, dev_t dev, block64_t block, int how,
 			prev_ptr = prev_ptr->lmfs_hash;	/* keep looking */
 		}
   }
-
-  freeblock(bp);
 
   bp->lmfs_inode = ino;
   bp->lmfs_inode_offset = ino_off;
@@ -838,59 +862,51 @@ static void sort_blocks(struct buf **bufq, unsigned int bufqsize)
 /*===========================================================================*
  *				rw_scattered				     *
  *===========================================================================*/
-static void rw_scattered(
+static int rw_scattered(
   dev_t dev,			/* major-minor device number */
   struct buf **bufq,		/* pointer to array of buffers */
   unsigned int bufqsize,	/* number of buffers */
   int rw_flag			/* READING or WRITING */
 )
 {
-/* Read or write scattered data from a device. */
-
+/* Read or write scattered data from a device, reporting short and failed I/O.
+ * For writes, only completely written buffers are marked clean.
+ */
   register struct buf *bp;
   register iovec_t *iop;
   static iovec_t iovec[NR_IOREQS];
   off_t pos;
   unsigned int i, iov_per_block;
+  int error = OK;
 #if !defined(NDEBUG)
   unsigned int start_in_use = bufs_in_use, start_bufqsize = bufqsize;
 #endif /* !defined(NDEBUG) */
 
-  if(bufqsize == 0) return;
+  if (bufqsize == 0)
+	return OK;
 
 #if !defined(NDEBUG)
-  /* for READING, check all buffers on the list are obtained and held
-   * (count > 0)
-   */
   if (rw_flag == READING) {
 	assert(bufqsize <= LMFS_MAX_PREFETCH);
-
-	for(i = 0; i < bufqsize; i++) {
+	for (i = 0; i < bufqsize; i++) {
 		assert(bufq[i] != NULL);
 		assert(bufq[i]->lmfs_count > 0);
-  	}
-
-  	/* therefore they are all 'in use' and must be at least this many */
+	}
 	assert(start_in_use >= start_bufqsize);
   }
-
   assert(dev != NO_DEV);
   assert(fs_block_size > 0);
   assert(howmany(fs_block_size, PAGE_SIZE) <= NR_IOREQS);
 #endif /* !defined(NDEBUG) */
 
-  /* For WRITING, (Shell) sort buffers on lmfs_blocknr.
-   * For READING, the buffers are already sorted.
-   */
   if (rw_flag == WRITING)
 	sort_blocks(bufq, bufqsize);
 
-  /* Set up I/O vector and do I/O.  The result of bdev I/O is OK if everything
-   * went fine, otherwise the error code for the first failed transfer.
-   */
   while (bufqsize > 0) {
 	unsigned int p, nblocks = 0, niovecs = 0;
-	int r;
+	size_t requested = 0;
+	ssize_t transferred;
+
 	for (iop = iovec; nblocks < bufqsize; nblocks++) {
 		vir_bytes vdata, blockrem;
 		bp = bufq[nblocks];
@@ -898,9 +914,11 @@ static void rw_scattered(
 			break;
 		blockrem = bp->lmfs_bytes;
 		iov_per_block = howmany(blockrem, PAGE_SIZE);
-		if (niovecs > NR_IOREQS - iov_per_block) break;
+		if (niovecs > NR_IOREQS - iov_per_block)
+			break;
+		requested += bp->lmfs_bytes;
 		vdata = (vir_bytes) bp->data;
-		for(p = 0; p < iov_per_block; p++) {
+		for (p = 0; p < iov_per_block; p++) {
 			vir_bytes chunk =
 			    blockrem < PAGE_SIZE ? blockrem : PAGE_SIZE;
 			iop->iov_addr = vdata;
@@ -919,67 +937,65 @@ static void rw_scattered(
 
 	pos = (off_t)bufq[0]->lmfs_blocknr * fs_block_size;
 	if (rw_flag == READING)
-		r = bdev_gather(dev, pos, iovec, niovecs, BDEV_NOFLAGS);
+		transferred = bdev_gather(dev, pos, iovec, niovecs, BDEV_NOFLAGS);
 	else
-		r = bdev_scatter(dev, pos, iovec, niovecs, BDEV_NOFLAGS);
+		transferred = bdev_scatter(dev, pos, iovec, niovecs, BDEV_NOFLAGS);
 
-	/* Harvest the results.  The driver may have returned an error, or it
-	 * may have done less than what we asked for.
-	 */
-	if (r < 0) {
+	if (transferred < 0) {
+		error = (int)transferred;
 		printf("fs cache: I/O error %d on device %d/%d, "
-		    "block %"PRIu64"\n",
-		    r, major(dev), minor(dev), bufq[0]->lmfs_blocknr);
+		    "block %"PRIu64"\n", error, major(dev), minor(dev),
+		    bufq[0]->lmfs_blocknr);
+	} else if ((size_t)transferred > requested) {
+		error = EIO;
+		transferred = 0;
 	}
+
+	/* Harvest only complete blocks. Incomplete write buffers remain dirty. */
 	for (i = 0; i < nblocks; i++) {
 		bp = bufq[i];
-		if (r < (ssize_t)bp->lmfs_bytes) {
-			/* Transfer failed. */
-			if (i == 0) {
-				bp->lmfs_dev = NO_DEV;	/* Invalidate block */
-			}
+		if (transferred < (ssize_t)bp->lmfs_bytes) {
+			if (rw_flag == READING)
+				bp->lmfs_dev = NO_DEV;
+			if (error == OK)
+				error = EIO;
 			break;
 		}
-		if (rw_flag == READING) {
+		if (rw_flag == READING)
 			lmfs_put_block(bp);
-		} else {
+		else
 			MARKCLEAN(bp);
-		}
-		r -= bp->lmfs_bytes;
+		transferred -= bp->lmfs_bytes;
 	}
+
+	if (transferred > 0 && error == OK)
+		error = EIO;
 
 	bufq += i;
 	bufqsize -= i;
 
 	if (rw_flag == READING) {
-		/* Don't bother reading more than the device is willing to
-		 * give at this time.  Don't forget to release those extras.
-		 */
+		/* Release and invalidate every remaining prefetch buffer. */
 		while (bufqsize > 0) {
 			bp = *bufq++;
-			bp->lmfs_dev = NO_DEV;	/* invalidate block */
+			bp->lmfs_dev = NO_DEV;
 			lmfs_put_block(bp);
 			bufqsize--;
 		}
 	}
-	if (rw_flag == WRITING && i == 0) {
-		/* We're not making progress, this means we might keep
-		 * looping. Buffers remain dirty if un-written. Buffers are
-		 * lost if invalidate()d or LRU-removed while dirty. This
-		 * is better than keeping unwritable blocks around forever..
-		 */
+
+	if (error != OK)
 		break;
-	}
   }
 
 #if !defined(NDEBUG)
-  if(rw_flag == READING) {
-  	assert(start_in_use >= start_bufqsize);
-
-	/* READING callers assume all bufs are released. */
+  if (rw_flag == READING) {
+	assert(start_in_use >= start_bufqsize);
 	assert(start_in_use - start_bufqsize == bufs_in_use);
   }
 #endif /* !defined(NDEBUG) */
+
+  return error;
 }
 
 /*===========================================================================*
@@ -1134,36 +1150,51 @@ void lmfs_prefetch(dev_t dev, const block64_t *blockset, unsigned int nblocks)
 /*===========================================================================*
  *				lmfs_flushdev				     *
  *===========================================================================*/
-void lmfs_flushdev(dev_t dev)
+int lmfs_flushdev_err(dev_t dev)
 {
-/* Flush all dirty blocks for one device. */
+/* Flush all dirty blocks for one device and report incomplete I/O. */
 
   register struct buf *bp;
   static noxfer_buf_ptr_t *dirty;
   static unsigned int dirtylistsize = 0;
   unsigned int ndirty;
+  int busy = FALSE, r;
 
-  if(dirtylistsize != nr_bufs) {
-	if(dirtylistsize > 0) {
+  if (dirtylistsize != nr_bufs) {
+	if (dirtylistsize > 0) {
 		assert(dirty != NULL);
 		free(dirty);
+		dirty = NULL;
+		dirtylistsize = 0;
 	}
-	if(!(dirty = malloc(sizeof(dirty[0])*nr_bufs)))
-		panic("couldn't allocate dirty buf list");
+	if (!(dirty = malloc(sizeof(dirty[0]) * nr_bufs)))
+		return ENOMEM;
 	dirtylistsize = nr_bufs;
   }
 
   for (bp = &buf[0], ndirty = 0; bp < &buf[nr_bufs]; bp++) {
-	/* Do not flush dirty blocks that are in use (lmfs_count>0): the file
-	 * system may mark the block as dirty before changing its contents, in
-	 * which case the new contents could end up being lost.
-	 */
-	if (!lmfs_isclean(bp) && bp->lmfs_dev == dev && bp->lmfs_count == 0) {
-		dirty[ndirty++] = bp;
+	if (lmfs_isclean(bp) || bp->lmfs_dev != dev)
+		continue;
+	if (bp->lmfs_count != 0) {
+		busy = TRUE;
+		continue;
 	}
+	dirty[ndirty++] = bp;
   }
 
-  rw_scattered(dev, dirty, ndirty, WRITING);
+  r = rw_scattered(dev, dirty, ndirty, WRITING);
+  if (r != OK)
+	return r;
+  return busy ? EBUSY : OK;
+}
+
+void lmfs_flushdev(dev_t dev)
+{
+	int r = lmfs_flushdev_err(dev);
+
+	if (r != OK)
+		printf("libminixfs: flush of device 0x%"PRIx64" failed (%d)\n",
+		    (uint64_t)dev, r);
 }
 
 /*===========================================================================*
@@ -1190,19 +1221,23 @@ static void rm_lru(struct buf *bp)
 /*===========================================================================*
  *				cache_resize				     *
  *===========================================================================*/
-static void cache_resize(size_t blocksize, unsigned int bufs)
+static int cache_resize(size_t blocksize, unsigned int bufs)
 {
   struct buf *bp;
+  int r;
 
   assert(blocksize > 0);
   assert(bufs >= MINBUFS);
 
   for (bp = &buf[0]; bp < &buf[nr_bufs]; bp++)
-	if(bp->lmfs_count != 0) panic("change blocksize with buffer in use");
+	if (bp->lmfs_count != 0)
+		panic("change blocksize with buffer in use");
 
-  lmfs_buf_pool(bufs);
+  if ((r = lmfs_buf_pool_err(bufs)) != OK)
+	return r;
 
   fs_block_size = blocksize;
+  return OK;
 }
 
 static void cache_heuristic_check(void)
@@ -1216,34 +1251,43 @@ static void cache_heuristic_check(void)
    */
   d = bufs-nr_bufs;
   if(d < 0) d = -d;
-  if(d*100/nr_bufs > 10) {
-	cache_resize(fs_block_size, bufs);
+  if (d * 100 / nr_bufs > 10) {
+	int r = cache_resize(fs_block_size, bufs);
+	if (r != OK)
+		printf("libminixfs: unable to resize cache (%d)\n", r);
   }
 }
 
 /*===========================================================================*
  *			lmfs_set_blocksize				     *
  *===========================================================================*/
-void lmfs_set_blocksize(size_t new_block_size)
+int lmfs_set_blocksize_err(size_t new_block_size)
 {
-  cache_resize(new_block_size, MINBUFS);
+  int r;
+
+  if ((r = cache_resize(new_block_size, MINBUFS)) != OK)
+	return r;
   cache_heuristic_check();
-  
-  /* Decide whether to use seconday cache or not.
-   * Only do this if the block size is a multiple of the page size, and using
-   * the VM cache has been enabled for this FS.
-   */
 
   vmcache = 0;
-
-  if(may_use_vmcache && !(new_block_size % PAGE_SIZE))
+  if (may_use_vmcache && !(new_block_size % PAGE_SIZE))
 	vmcache = 1;
+
+  return OK;
+}
+
+void lmfs_set_blocksize(size_t new_block_size)
+{
+  int r = lmfs_set_blocksize_err(new_block_size);
+
+  if (r != OK)
+	printf("libminixfs: unable to change block size (%d)\n", r);
 }
 
 /*===========================================================================*
  *                              lmfs_buf_pool                                *
  *===========================================================================*/
-void lmfs_buf_pool(int new_nr_bufs)
+int lmfs_buf_pool_err(int new_nr_bufs)
 {
 /* Initialize the buffer pool. */
   register struct buf *bp;
@@ -1252,7 +1296,11 @@ void lmfs_buf_pool(int new_nr_bufs)
 
   if(nr_bufs > 0) {
 	assert(buf);
-	lmfs_flushall();
+	{
+		int r = lmfs_flushall_err();
+		if (r != OK)
+			return r;
+	}
   	for (bp = &buf[0]; bp < &buf[nr_bufs]; bp++) {
 		if(bp->data) {
 			assert(bp->lmfs_bytes > 0);
@@ -1291,24 +1339,42 @@ void lmfs_buf_pool(int new_nr_bufs)
 
   for (bp = &buf[0]; bp < &buf[nr_bufs]; bp++) bp->lmfs_hash = bp->lmfs_next;
   buf_hash[0] = front;
+	return OK;
+}
+
+void lmfs_buf_pool(int new_nr_bufs)
+{
+	int r = lmfs_buf_pool_err(new_nr_bufs);
+
+	if (r != OK)
+		printf("libminixfs: unable to resize buffer pool (%d)\n", r);
+}
+
+int lmfs_flushall_err(void)
+{
+	struct buf *bp;
+int r;
+
+	for (bp = &buf[0]; bp < &buf[nr_bufs]; bp++) {
+		if (bp->lmfs_dev == NO_DEV || lmfs_isclean(bp))
+			continue;
+		r = lmfs_flushdev_err(bp->lmfs_dev);
+		if (r != OK)
+			return r;
+	}
+
+	/* Do not resize or otherwise reclaim cache memory after a failed flush. */
+lmfs_change_blockusage(0);
+
+	return OK;
 }
 
 void lmfs_flushall(void)
 {
-	struct buf *bp;
-	for(bp = &buf[0]; bp < &buf[nr_bufs]; bp++)
-		if(bp->lmfs_dev != NO_DEV && !lmfs_isclean(bp)) 
-			lmfs_flushdev(bp->lmfs_dev);
+	int r = lmfs_flushall_err();
 
-	/* This is the moment where it is least likely (although certainly not
-	 * impossible!) that there are buffers in use, since buffers should not
-	 * be held across file system syncs. See if we already intended to
-	 * resize the buffer cache, but couldn't. Be aware that we may be
-	 * called indirectly from within lmfs_change_blockusage(), so care must
-	 * be taken not to recurse infinitely. TODO: see if it is better to
-	 * resize the cache from here *only*, thus guaranteeing a clean cache.
-	 */
-	lmfs_change_blockusage(0);
+	if (r != OK)
+		printf("libminixfs: flush all failed (%d)\n", r);
 }
 
 size_t lmfs_fs_block_size(void)
