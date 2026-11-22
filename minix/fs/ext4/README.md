@@ -12,17 +12,20 @@ read-write mode.
   splitting a full external leaf requires a fifth inode-root index entry, the
   four existing entries and new leaf entry are moved into a new external
   depth-one index node and the inode root is promoted to depth two. The new
-  index checksum (when enabled) and inode `i_blocks` are updated. Splitting
-  full external index nodes and cascading growth remain unsupported.
-- Writable splitting of a full external depth-one index node beneath depth-two and deeper trees, when its depth-two ancestor has a
-  free slot. The full parent
-  and the newly added leaf entry are divided between the existing node and a
-  new sibling node; the sibling index is inserted immediately after the old
-  parent in the depth-two ancestor, preserving the old first key. The
-  modified ancestor and both sibling index nodes have their checksums
-  regenerated when `metadata_csum` is enabled. `i_blocks` accounts for the
-  data block, new leaf, and new index node. A full depth-two ancestor and
-  cascading ancestor splits remain unsupported.
+  index checksum (when enabled) and inode `i_blocks` are updated. Additional
+  full external index-node splitting is bounded by available ancestor slots.
+- Writable splitting of a full external depth-one index node beneath
+  depth-two and deeper roots when its depth-two ancestor has a free entry.
+  The full depth-one parent and the newly added leaf entry are divided
+  between the existing node and a new sibling; the sibling index is inserted
+  immediately after the old parent in the depth-two ancestor, preserving the
+  old first key. The modified ancestor and both sibling index nodes have their
+  checksums regenerated when `metadata_csum` is enabled. `i_blocks` accounts
+  for the data block, new leaf, and new index node. If both the depth-one
+  parent and its depth-two ancestor are full, a depth-three inode root with a
+  free entry can accept a new depth-two sibling after both levels are split.
+  Full inode roots, full depth-two ancestors beneath deeper roots, and further
+  cascading splits remain unsupported.
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock. Group descriptor bitmap and inode-table
@@ -633,6 +636,20 @@ sibling index node, and data block. Repeat at root depths three, four, and
 five when fixtures can be generated, with and without `metadata_csum`.
 A full depth-two ancestor and any cascading ancestor split must fail without
 altering the tree. Unmount and run `e2fsck -fn`.
+
+For a depth-three tree with both its selected depth-one parent and
+depth-two ancestor full, but with a free inode-root slot, write into a full
+leaf to force the two-level split. The depth-one parent and depth-two
+ancestor must each retain their lower half; new right siblings must contain
+the upper halves. The inode root must receive the new depth-two sibling
+immediately after the original ancestor, with the sibling's first logical
+key. Verify all six modified/new external nodes (two leaves, two depth-one
+nodes, two depth-two nodes) pass checksums with `metadata_csum`, the original
+first keys and inherited bounds remain intact, and `i_blocks` includes the
+data block plus three metadata blocks. Repeat without `metadata_csum`.
+A full inode root, full depth-two ancestor at root depths greater than three,
+or any further cascading split remains unsupported. Run `e2fsck -fn` after
+unmount.
 
 For depth-two and deeper coverage, prepare fragmented files whose inode roots
 have depths two and three (and greater, when the host tools can generate them).
