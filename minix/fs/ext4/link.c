@@ -12,7 +12,7 @@
 #include <minix/vfsif.h>
 #include <sys/param.h>
 
-#define SAME 1000
+#define SAME EXT4_RENAME_SAME
 
 static int freesp_inode(struct inode *rip, off_t st, off_t end);
 static int remove_dir(struct inode *rldirp, struct inode *rip,
@@ -401,9 +401,40 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
   }
 
   /*
-   * Rename changes two directory entries and may perform them in separate
-   * steps. Keep it out of indexed and inline parents until HTree insertion,
-   * inline-dir insertion, and transactional rename handling are implemented.
+   * A same-parent inline-directory rename can be committed by rewriting
+   * one existing dirent, provided the replacement name fits its current
+   * record. No HTree key, parent link count, or second dirent is changed.
+   */
+  if (old_dirp->i_num == new_dirp->i_num &&
+      old_dirp->i_sp->s_is_ext4 &&
+      HAS_INCOMPAT_FEATURE(old_dirp->i_sp, INCOMPAT_INLINE_DATA) &&
+      (old_dirp->i_flags & EXT4_INLINE_DATA_FL) &&
+      !(old_dirp->i_flags & EXT2_INDEX_FL)) {
+    if ((old_ip->i_mode & I_TYPE) == I_DIRECTORY &&
+        old_ip->i_sp->s_is_ext4 &&
+        HAS_INCOMPAT_FEATURE(old_ip->i_sp, INCOMPAT_INLINE_DATA) &&
+        (old_ip->i_flags & EXT4_INLINE_DATA_FL) &&
+        old_ip->i_inline_parent != old_dirp->i_num)
+        r = EIO;
+    else
+        r = ext4_rename_inline_dirent(old_dirp, old_name, new_name,
+            old_ip->i_num);
+    if (r == OK) {
+        old_ip->i_update |= CTIME;
+        old_ip->i_dirt = IN_DIRTY;
+    } else if (r == SAME) {
+        r = OK;
+    }
+    put_inode(old_ip);
+    put_inode(old_dirp);
+    put_inode(new_dirp);
+    return(r);
+  }
+
+  /*
+   * Rename still requires a multi-entry transaction for other indexed and
+   * inline-parent cases. Keep those paths disabled until HTree insertion,
+   * destination replacement, and cross-parent updates are implemented.
    */
   if ((old_dirp->i_sp->s_is_ext4 &&
       ((old_dirp->i_flags & EXT2_INDEX_FL) ||
