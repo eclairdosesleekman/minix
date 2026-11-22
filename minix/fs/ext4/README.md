@@ -188,7 +188,10 @@ read-write mode.
   leaf keeps its first logical-block key; the new leaf key is inserted
   immediately after it in the parent index. External parent-index and leaf
   checksums are regenerated as required. The inode block count includes the
-  extra extent-tree node. Full parents, index-node splits, and root growth or
+  extra extent-tree node. Removing or shortening the first extent in an
+  external leaf updates its parent key when that update does not require
+  changing an ancestor key; empty leaves and first-child ancestor propagation
+  remain unsupported. Full parents, index-node splits, and root growth or
   rebalancing remain unsupported. Writes into unwritten extents convert the
   affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
@@ -251,8 +254,11 @@ implementation.
   revalidated before a split. A full parent or an insertion that would change
   the selected leaf's first logical-block key is rejected with
   `EOPNOTSUPP` or `EFBIG` before changing the mapping. Splitting a full
-  intermediate index node, growing/rebalancing the inode root, and removing
-  the first block in an external leaf remain unsupported.
+  intermediate index node and growing/rebalancing the inode root remain
+  unsupported. Removing the first block of an external leaf is supported
+  when its parent key can be updated without propagating a key change to an
+  ancestor; removing the leaf's final extent or changing the first key of a
+  first-child subtree remains unsupported.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, inline
@@ -564,11 +570,19 @@ modified parent/leaf checksums with `metadata_csum`, inspect the full tree,
 and run `e2fsck -fn`. Repeat a supported deeper-tree split without
 `metadata_csum`.
 
-On supported depth-one and deeper images, also exercise writes into holes
-within a non-full leaf, unwritten-extent conversion, and tail truncation while
-keeping the first extent of each leaf intact. Operations that require changing
-a leaf's first logical-block key, splitting a full parent index node, or
-growing/rebalancing an index node must fail without damaging the filesystem. Also corrupt the first
+On supported depth-one and deeper images, also exercise freeing the first
+block of the first extent in a nonempty external leaf. The parent index key
+must advance to the new first logical block and its checksum must be
+regenerated when `metadata_csum` is enabled. Repeat when the first extent
+has length one but later extents remain, so the next extent becomes the new
+first record. At depth one, include the first inode-root index entry; at
+greater depths, include a nonzero parent index slot whose key can change
+without altering an ancestor key. Freeing the only extent in a leaf, or
+changing the first key of a parent node's first child when an ancestor update
+would be required, must fail without modifying the mapping. Also exercise
+writes into holes within a non-full leaf, unwritten-extent conversion, and
+tail truncation. Splitting a full parent index node or growing/rebalancing an
+index node must fail without damaging the filesystem. Also corrupt the first
 logical-block key in an external child extent node without changing its parent
 index entry; lookup of a block in that subtree must fail with `EIO`, even when
 the child checksum is recomputed. Repeat for an intermediate index node and a
