@@ -190,10 +190,12 @@ read-write mode.
   checksums are regenerated as required. The inode block count includes the
   extra extent-tree node. Removing or shortening the first extent in an
   external leaf updates its parent key when that update does not require
-  changing an ancestor key; empty leaves and first-child ancestor propagation
-  remain unsupported. Full parents, index-node splits, and root growth or
-  rebalancing remain unsupported. Writes into unwritten extents convert the
-  affected block to an initialized extent.
+  changing an ancestor key. A one-extent external leaf is removed from its
+  parent and its metadata block is freed when the parent remains nonempty and
+  no ancestor key must change. Emptying the parent or changing a first-child
+  key that requires ancestor propagation remains unsupported. Full parents,
+  index-node splits, and root growth or rebalancing remain unsupported. Writes
+  into unwritten extents convert the affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
 
@@ -257,8 +259,11 @@ implementation.
   intermediate index node and growing/rebalancing the inode root remain
   unsupported. Removing the first block of an external leaf is supported
   when its parent key can be updated without propagating a key change to an
-  ancestor; removing the leaf's final extent or changing the first key of a
-  first-child subtree remains unsupported.
+  ancestor. A leaf containing a single one-block extent can also be detached
+  and its block freed when the immediate parent has another child and the
+  parent entry is not its first child at depths greater than one. Emptying a
+  parent index node, removing the only inode-root child, and first-child
+  ancestor propagation remain unsupported.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, inline
@@ -579,9 +584,17 @@ first record. At depth one, include the first inode-root index entry; at
 greater depths, include a nonzero parent index slot whose key can change
 without altering an ancestor key. Freeing the only extent in a leaf, or
 changing the first key of a parent node's first child when an ancestor update
-would be required, must fail without modifying the mapping. Also exercise
-writes into holes within a non-full leaf, unwritten-extent conversion, and
-tail truncation. Splitting a full parent index node or growing/rebalancing an
+would be required, must fail without modifying the mapping. Also test
+removing a leaf that contains exactly one one-block extent: with multiple
+inode-root children at depth one, deleting the first, middle, or final child
+must remove the root entry and free both the data block and leaf metadata
+block. At greater depths, deleting a non-first child from a parent that has
+another child must compact that parent, refresh its checksum, and free both
+blocks. Deleting the only child of a parent or a first child at greater depth
+must fail without changing either node. Verify `i_blocks`, group/free-block
+counters, and `e2fsck -fn` after unmount, with and without
+`metadata_csum`. Also exercise writes into holes within a non-full leaf,
+unwritten-extent conversion, and tail truncation. Splitting a full parent index node or growing/rebalancing an
 index node must fail without damaging the filesystem. Also corrupt the first
 logical-block key in an external child extent node without changing its parent
 index entry; lookup of a block in that subtree must fail with `EIO`, even when
