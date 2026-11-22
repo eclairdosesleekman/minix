@@ -28,6 +28,7 @@
 #define LOOK_UP            0 /* tells search_dir to lookup string */
 #define ENTER              1 /* tells search_dir to make dir entry */
 #define DELETE             2 /* tells search_dir to delete entry */
+#define EXT4_RENAME_SAME    1000 /* rename names already reference same inode */
 #define IS_EMPTY           3 /* tells search_dir to ret. OK or ENOTEMPTY */
 
 /* write_map() args */
