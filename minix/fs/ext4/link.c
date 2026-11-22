@@ -162,8 +162,8 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
   } else {
 	  if ((rip->i_mode & I_TYPE) != I_DIRECTORY)
 		  r = ENOTDIR;
-	  /* remove_dir() edits "." and ".." after unlinking the parent entry,
-	   * so reject indexed targets before that first mutation. */
+	  /* remove_dir() edits "." and ".." after unlinking the parent entry.
+	   * Indexed and inline targets cannot safely update those entries. */
 	  else if (rip->i_sp->s_is_ext4 &&
 	      ((rip->i_flags & EXT2_INDEX_FL) ||
 	      (HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
@@ -387,11 +387,10 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 	same_pdir = (old_dirp == new_dirp);
 
 	/*
-	 * Moving an indexed directory between parents also requires updating
-	 * its ".." entry.  The generic directory writer cannot update HTree
-	 * metadata, so reject this case before creating or deleting any names.
-	 * Renaming an indexed directory within the same parent is safe: its
-	 * own contents and parent link do not change.
+	 * Moving an indexed or inline directory between parents also requires
+	 * updating its ".." entry, which is unsupported. Reject before creating
+	 * or deleting names. Same-parent rename leaves its contents and parent
+	 * reference unchanged.
 	 */
 	if (odir && !same_pdir && old_ip->i_sp->s_is_ext4 &&
 	    ((old_ip->i_flags & EXT2_INDEX_FL) ||
