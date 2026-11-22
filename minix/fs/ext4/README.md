@@ -24,8 +24,10 @@ read-write mode.
   for the data block, new leaf, and new index node. If both the depth-one
   parent and its depth-two ancestor are full, a depth-three inode root with a
   free entry can accept a new depth-two sibling after both levels are split.
-  Full inode roots, full depth-two ancestors beneath deeper roots, and further
-  cascading splits remain unsupported.
+  At root depth four, a full depth-two ancestor can instead split beneath its
+  depth-three external parent when that node has room; the root pointer and
+  inherited key bounds are revalidated. A full depth-three parent, deeper
+  cascades, and root growth or rebalancing remain unsupported.
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock. Group descriptor bitmap and inode-table
@@ -647,9 +649,22 @@ key. Verify all six modified/new external nodes (two leaves, two depth-one
 nodes, two depth-two nodes) pass checksums with `metadata_csum`, the original
 first keys and inherited bounds remain intact, and `i_blocks` includes the
 data block plus three metadata blocks. Repeat without `metadata_csum`.
-A full inode root, full depth-two ancestor at root depths greater than three,
-or any further cascading split remains unsupported. Run `e2fsck -fn` after
-unmount.
+A full inode root, a full depth-two ancestor under a depth-four root whose
+selected depth-three node has no free slot, or any further cascading split
+remains unsupported. Run `e2fsck -fn` after unmount.
+
+For a depth-four inode root, prepare a tree whose selected depth-one parent and
+depth-two ancestor are full while their containing depth-three external node
+has a free entry. Force a full-leaf split. Verify that the depth-one and
+depth-two nodes are divided into ordered left/right halves, the new depth-two
+sibling is inserted immediately after the original child in the depth-three
+node, and the inode-root pointer to that depth-three node is unchanged. Check
+that the depth-three node, both depth-two nodes, both depth-one nodes, and both
+leaves have valid checksums with `metadata_csum`; inherited upper bounds and
+`i_blocks` (data block plus three metadata nodes) must remain correct. Repeat
+without `metadata_csum`. A full depth-three node and any attempt to cascade a
+split into the inode root or a deeper ancestor must fail without changing the
+tree. Run `e2fsck -fn` after unmount.
 
 For depth-two and deeper coverage, prepare fragmented files whose inode roots
 have depths two and three (and greater, when the host tools can generate them).
