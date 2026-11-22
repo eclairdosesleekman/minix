@@ -126,6 +126,10 @@ void put_block(block_t n, void *buf);
 static uint64_t mkfs_seek(uint64_t pos, int whence);
 static ssize_t mkfs_write(void * buf, size_t count);
 
+/* MFS4 formatter, selected before the legacy MFS3 option parser. */
+int mfs4_mkfs_requested(int argc, char **argv);
+int mfs4_mkfs_main(int argc, char **argv);
+
 /*================================================================
  *                    mkfs  -  make filesystem
  *===============================================================*/
@@ -138,6 +142,9 @@ int main(int argc, char *argv[])
   struct fs_size fssize;
   int insertmode = 0;
 
+  if (mfs4_mkfs_requested(argc, argv))
+    return mfs4_mkfs_main(argc, argv);
+
   progname = argv[0];
 
   /* Process switches. */
@@ -149,7 +156,7 @@ int main(int argc, char *argv[])
 #endif
   zone_shift = 0;
   extra_space_percent = 0;
-  while ((ch = getopt(argc, argv, "B:b:di:ltvx:z:I:T:")) != EOF)
+  while ((ch = getopt(argc, argv, "B:b:di:ltvx:z:I:T:V:")) != EOF)
 	switch (ch) {
 #ifndef MFS_STATIC_BLOCK_SIZE
 	    case 'B':
@@ -181,6 +188,9 @@ int main(int argc, char *argv[])
 	    case 'T':
 		Tflag = 1;
 		current_time = strtoul(optarg, (char **) NULL, 0);
+		break;
+	    case 'V':
+		if (strcmp(optarg, "3") != 0) usage();
 		break;
 	    case 'd':
 		dflag = 1;
@@ -1427,7 +1437,7 @@ int read_and_set(block_t n)
 __dead void
 usage(void)
 {
-  fprintf(stderr, "Usage: %s [-dltv] [-b blocks] [-i inodes]\n"
+  fprintf(stderr, "Usage: %s [-V 3|4] [-n (MFS4 only)] [-dltv] [-b blocks] [-i inodes]\n"
 	"\t[-z zone_shift] [-I offset] [-x extra] [-B blocksize] special [proto]\n",
       progname);
   exit(4);
