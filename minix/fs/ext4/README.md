@@ -47,19 +47,21 @@ read-write mode.
   data blocks are also rejected when their BIGALLOC allocation cluster contains
   a backup superblock/GDT copy, group bitmap, or inode table. Zero pointers
   continue to represent holes.
-- Read-only support for ext4 `meta_bg` group-descriptor placement. The
-  descriptor table is assembled in logical order from the classic contiguous
-  prefix and the primary descriptor blocks in later metablock groups. A
-  `resize_inode` + `meta_bg` combination is rejected, matching the
-  e2fsprogs restriction.
-  Descriptor checksums are verified after all descriptor blocks are gathered.
-  Primary and backup descriptor blocks in the first, second, and last groups
-  of each metablock group are reserved against group bitmap/inode-table
-  pointers, file-data extents, external extent-tree nodes, and external xattr
-  pointers. Classic-prefix descriptor copies in the primary and sparse-super
-  backup groups are reserved as well.
-  Writable mounts remain disabled because the current writer emits a classic
-  contiguous descriptor table. Alternate-superblock selection and malformed
+- Read-write support for ext4 `meta_bg` group-descriptor placement.
+  The descriptor table is assembled in logical order from the classic
+  contiguous prefix and the primary descriptor blocks in later metablock
+  groups. Descriptor checksums are verified after all descriptor blocks are
+  gathered and regenerated when counters change. Primary descriptor writes
+  use the first group of each metablock group rather than assuming a
+  contiguous table. Primary and backup descriptor blocks in the first,
+  second, and last groups of each metablock group are reserved against group
+  bitmap/inode-table pointers, file-data extents, external extent-tree nodes,
+  and external xattr pointers. Classic-prefix descriptor copies in the
+  primary and sparse-super backup groups are reserved as well. A
+  `resize_inode` + `meta_bg` combination is rejected, matching the e2fsprogs
+  restriction. Normal metadata updates write primary descriptor blocks;
+  online resize and regeneration of backup descriptor copies are not
+  implemented. Alternate-superblock selection and malformed
   `s_first_meta_bg` values are rejected.
 - Read-only support for ext4 `bigalloc` clustered allocation. The superblock's
   cluster size and clusters-per-group fields are validated against the block
@@ -78,9 +80,10 @@ read-write mode.
   `s_backup_bgs` slot (zero slots are optional). Superblock, GDT, and
   `resize_inode` reserved-GDT blocks are protected from group bitmap/inode-table
   pointers, file extents, indirect mappings, external extent-tree nodes, and
-  external xattr pointers. The primary superblock and GDT retain their classic
-  locations, so regular allocation and metadata updates can use the existing
-  writer. As with other sparse-super layouts, ordinary writes update primary
+  external xattr pointers. The primary superblock retains its classic location;
+  primary GDT blocks use the classic prefix or META_BG locations as appropriate,
+  so regular allocation and metadata updates can use the existing writer.
+  As with other sparse-super layouts, ordinary writes update primary
   metadata; online resize and backup-copy regeneration are not implemented.
   Alternate-superblock selection remains unsupported.
 - Read-only compatibility with the ext4 `ea_inode` incompat feature.
@@ -271,14 +274,15 @@ implementation.
 - **BIGALLOC is read-only:** block bitmap interpretation and read-only
   extent mapping understand clusters, but allocation, release, and truncation
   still operate in individual blocks. Writable mounts are therefore rejected.
-- **META_BG is read-only:** primary descriptor blocks are loaded from their
-  metablock-group locations, and backup superblock, classic GDT-prefix, and
-  META_BG descriptor blocks are reserved using the actual sparse-super or
-  sparse_super2 group selection. Writable mounts are rejected because
-  descriptor writes still use the classic contiguous GDT layout. The
-  `sparse_super2` feature without META_BG is writable; its primary GDT remains
-  contiguous and selected backup groups are excluded from allocation.
-  Alternate-superblock selection remains unsupported for both layouts.
+- **META_BG write limitations:** primary descriptor blocks are written
+  to their correct metablock-group locations, and backup superblock,
+  classic GDT-prefix, and META_BG descriptor blocks are reserved using the
+  actual sparse-super or sparse_super2 group selection. The
+  `resize_inode` + META_BG combination and alternate-superblock selection
+  remain unsupported. Ordinary metadata updates do not regenerate redundant
+  backup GDT copies; online filesystem resizing is not implemented. A
+  `sparse_super2` filesystem with or without META_BG can be writable, subject
+  to the same no-journal, clean-filesystem restrictions.
 - **Quota metadata is read-only:** filesystems with `quota` or `project`
   enabled can be mounted read-only, but writable mounts are rejected because
   create, link, unlink, truncate, and allocation paths do not update user,
@@ -473,9 +477,39 @@ With `sparse_super2` and without META_BG, mount the image read-write on MINIX.
 Create, write, rename, and remove regular files and create/remove ordinary
 directories. Unmount cleanly and run `e2fsck -fn`; repeat with 64-byte group
 descriptors and both `metadata_csum` and legacy `gdt_csum` configurations.
-A `sparse_super2` + META_BG image must remain read-only. Also verify that an
-unused zero in either backup-group slot is accepted, including a zero first
-entry followed by a valid second entry.
+A `sparse_super2` + META_BG image must also support read-write operations and
+pass `e2fsck -fn` after clean unmount. Verify that an unused zero in either
+backup-group slot is accepted, including a zero first entry followed by a
+valid second entry.
+
+For writable META_BG coverage, create disposable volumes without a
+journal, resize inode, or orphan file. Use multiple descriptor blocks so both
+the classic prefix and discontiguous META_BG primary descriptor locations are
+exercised. Mount read-write on MINIX, create and remove files and directories,
+and write enough file data to change block counters. After clean unmount, run
+`e2fsck -fn` and verify that every primary descriptor checksum and free
+counter is valid. Repeat with 32-byte and 64-byte descriptors, with
+`metadata_csum` and legacy `gdt_csum` where supported, and with a partial
+final metablock group. Also test a `sparse_super2` + `meta_bg` image. The
+`resize_inode` + `meta_bg` combination and alternate-superblock mounts must
+remain rejected.
+
+```sh
+# 32-byte descriptors, all descriptor blocks in META_BG groups.
+truncate -s 1G ext4-meta-bg-32bit-rw.img
+mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,meta_bg,^64bit,^resize_inode,^has_journal,^orphan_file \
+  ext4-meta-bg-32bit-rw.img
+
+# 64-byte descriptors, with the first descriptor block in the classic prefix.
+truncate -s 1G ext4-meta-bg-64bit-rw.img
+MKE2FS_FIRST_META_BG=1 mke2fs -F -t ext4 -b 4096 -g 1024 \
+  -O extent,64bit,meta_bg,^resize_inode,^has_journal,^orphan_file \
+  ext4-meta-bg-64bit-rw.img
+
+e2fsck -fn ext4-meta-bg-32bit-rw.img
+e2fsck -fn ext4-meta-bg-64bit-rw.img
+```
 
 For read-only META_BG coverage, prepare disposable images with e2fsprogs.
 Test both 32-byte and 64-byte group descriptors, classic GDT prefixes with
@@ -499,9 +533,9 @@ same paths with valid non-reserved data blocks to ensure the stricter checks do
 not reject ordinary legacy indirect files. Use an image whose group count ends
 part-way through a metablock group to
 confirm that the final partial group does not cause out-of-range backup
-descriptor reads. Confirm writable mounts, `sparse_super2` + `meta_bg`,
-and alternate-superblock META_BG mounts are rejected. Run `e2fsck -fn` after
-each unmounted-image test.
+descriptor reads. Confirm that `sparse_super2` + `meta_bg` read-write mounts work with the
+primary descriptor locations, while alternate-superblock META_BG mounts are
+rejected. Run `e2fsck -fn` after each unmounted-image test.
 
 ```sh
 # 32-byte descriptors (2 descriptor blocks for 256 block groups)
@@ -966,7 +1000,7 @@ The large-file read path should be tested with files larger than 2 TiB on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
-The META_BG read-only layout, extended timestamp, 64 KiB directory-record,
+The META_BG read-write layout, extended timestamp, 64 KiB directory-record,
 `huge_file`, `metadata_csum`, bounded external-extent-leaf update, writable
 legacy `gdt_csum`, writable `large_dir`, and writable `sparse_super2`
 mount-compatibility changes have not yet been compiled or runtime-tested in a
