@@ -40,6 +40,35 @@ static int has_external_extent_tree(struct inode *rip)
 	return(depth != 0);
 }
 
+/*
+ * ext4 uses i_links_count == 1 as a sentinel for indexed directories whose
+ * subdirectory count exceeds the on-disk 16-bit range when DIR_NLINK is set.
+ * Removing one child must not decrement that sentinel to zero.
+ */
+static int ext4_dir_nlink_sentinel(struct inode *dir)
+{
+	return(dir != NULL && dir->i_sp != NULL && dir->i_sp->s_is_ext4 &&
+	    (dir->i_mode & I_TYPE) == I_DIRECTORY &&
+	    HAS_RO_COMPAT_FEATURE(dir->i_sp, RO_COMPAT_DIR_NLINK) &&
+	    (dir->i_flags & EXT2_INDEX_FL) && dir->i_links_count == 1);
+}
+
+/*
+ * Removing a directory's ".." entry drops one link from its parent. ext4
+ * keeps directory link counts at one or two at their sentinel/base values;
+ * ordinary ext2 behavior continues to use the historical decrement.
+ */
+static void ext4_drop_parent_dir_link(struct inode *parent)
+{
+	if (parent->i_sp != NULL && parent->i_sp->s_is_ext4 &&
+	    (parent->i_mode & I_TYPE) == I_DIRECTORY) {
+		if (parent->i_links_count > 2)
+			parent->i_links_count--;
+	} else {
+		parent->i_links_count--;
+	}
+}
+
 /* Args to zeroblock_half() */
 #define FIRST_HALF	0
 #define LAST_HALF	1
@@ -286,7 +315,8 @@ static int remove_dir(struct inode *rldirp, struct inode *rip,
 	    (HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_64BIT) &&
 	    rip->osd2.linux2.i_pad1 != 0) ||
 	    has_external_extent_tree(rip) ||
-	    rldirp->i_links_count <= 2)
+	    (rldirp->i_links_count <= 2 &&
+	    !ext4_dir_nlink_sentinel(rldirp)))
 		return(EOPNOTSUPP);
 
 	if ((r = unlink_file(rldirp, rip, dir_name)) != OK)
@@ -298,7 +328,7 @@ static int remove_dir(struct inode *rldirp, struct inode *rip,
 	rip->i_dirt = IN_DIRTY;
 
 	/* Removing the implicit ".." drops the parent's directory link count. */
-	rldirp->i_links_count--;
+	ext4_drop_parent_dir_link(rldirp);
 	rldirp->i_update |= CTIME | MTIME;
 	rldirp->i_dirt = IN_DIRTY;
 	return(OK);
@@ -343,7 +373,15 @@ static int unlink_file(struct inode *dirp, struct inode *rip,
   r = search_dir(dirp, file_name, NULL, DELETE, 0);
 
   if (r == OK) {
-	rip->i_links_count--;	/* entry deleted from parent's dir */
+	/*
+	 * Removing ".." from a child directory decrements the parent. Keep
+	 * ext4 directory link counts at their base/sentinel values.
+	 */
+	if (strcmp(file_name, "..") == 0 &&
+	    (rip->i_mode & I_TYPE) == I_DIRECTORY)
+		ext4_drop_parent_dir_link(rip);
+	else
+		rip->i_links_count--;
 	rip->i_update |= CTIME;
 	rip->i_dirt = IN_DIRTY;
   }
