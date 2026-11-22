@@ -27,7 +27,8 @@ read-write mode.
   At root depth four, a full depth-two ancestor can instead split beneath its
   depth-three external parent when that node has room; the root pointer and
   inherited key bounds are revalidated. A full depth-three parent, deeper
-  cascades, and root growth or rebalancing remain unsupported.
+  cascades, inode-root growth beyond the documented depth-one-to-depth-two
+  promotion, and root rebalancing remain unsupported.
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock. Group descriptor bitmap and inode-table
@@ -221,8 +222,10 @@ read-write mode.
   depth-two parent when that parent has another child; the
   depth-two parent's checksum is refreshed and its first key is unchanged.
   Emptying that depth-two parent or changing a first-child key that requires
-  ancestor propagation remains unsupported. Full parents,
-  index-node splits, and root growth or rebalancing remain unsupported. Writes
+  ancestor propagation remains unsupported. Full-parent splitting is limited
+  to the bounded depth-one and depth-two cascades described above; full
+  depth-three ancestors, deeper cascades, and root rebalancing remain
+  unsupported. Writes
   into unwritten extents convert the affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
@@ -278,14 +281,18 @@ implementation.
 - **Explicit read-only feature:** `RO_COMPAT_READONLY` always rejects a
   writable mount, independent of the requested mount mode.
 - **Bounded extent-tree mutation:** full-leaf splitting is supported at any
-  extent-tree depth accepted by the reader, provided the selected leaf's
-  immediate parent index node has a free slot. Exclusive logical-block bounds
-  inherited from all ancestors are propagated to the selected leaf and
-  revalidated before a split. A full parent or an insertion that would change
-  the selected leaf's first logical-block key is rejected with
-  `EOPNOTSUPP` or `EFBIG` before changing the mapping. Splitting a full
-  intermediate index node and growing/rebalancing the inode root remain
-  unsupported. Removing the first block of an external leaf is supported
+  extent-tree depth accepted by the reader when its immediate parent has room.
+  A full depth-one parent can also split under a depth-two inode root with a
+  free entry, and full depth-one plus depth-two nodes can split together under
+  a depth-three inode root or a depth-four root's depth-three external node
+  when that ancestor has room. Exclusive logical-block bounds inherited from
+  every ancestor are revalidated before publication. A full inode root, a full
+  depth-three ancestor, a deeper cascade, or an insertion that would change
+  the selected leaf's first key without supported ancestor propagation is
+  rejected with `EOPNOTSUPP` or `EFBIG` before changing the mapping. General
+  index-node rebalancing and inode-root growth beyond the documented
+  depth-one-to-depth-two promotion remain unsupported. Removing the first
+  block of an external leaf is supported
   when its parent key can be updated without propagating a key change to an
   ancestor. A leaf containing a single one-block extent can also be detached
   and its block freed when the immediate parent has another child and the
@@ -605,8 +612,8 @@ child. Verify the root key, all five child keys/pointers, both leaf checksums,
 the new index-node checksum when `metadata_csum` is enabled, and `i_blocks`
 (accounting for the data block, new leaf, and new index node). Repeat without
 `metadata_csum`. The new external index node must have room for the fifth
-entry; further growth or splitting a full external index node remains
-unsupported and must fail without changing the tree. Unmount and run
+entry; further inode-root promotion beyond depth two is unsupported and must
+fail without changing the tree. Unmount and run
 `e2fsck -fn`.
 
 For a full depth-one external index node under a depth-two inode root,
@@ -621,8 +628,9 @@ new root key equals the first key in the new index node, the old root key is
 unchanged, all child pointers are in order, both index-node checksums and both
 leaf checksums validate with `metadata_csum`, and `i_blocks` accounts for
 the data block plus two new metadata blocks. Repeat without `metadata_csum`.
-A full inode root, a full parent above depth two, and depth-three-or-greater
-index-parent splits must remain unsupported and leave the image unchanged.
+A full inode root, or an ancestor chain beyond the bounded root-depth-three
+and depth-four cases below, must remain unsupported and leave the image
+unchanged.
 Unmount and run `e2fsck -fn`.
 
 For depth-three and deeper root trees, prepare a full depth-one external
@@ -636,7 +644,9 @@ the ancestor first key remains unchanged, all five modified external
 node/leaf checksums are regenerated with `metadata_csum`, and `i_blocks` includes the new leaf,
 sibling index node, and data block. Repeat at root depths three, four, and
 five when fixtures can be generated, with and without `metadata_csum`.
-A full depth-two ancestor and any cascading ancestor split must fail without
+A full depth-two ancestor may split only in the depth-three-root and
+root-depth-four cases described below. At root depth five or greater, or when
+the required higher-level node has no free entry, the split must fail without
 altering the tree. Unmount and run `e2fsck -fn`.
 
 For a depth-three tree with both its selected depth-one parent and
@@ -712,8 +722,9 @@ that depth-two parent, or its only child, must remain unsupported because
 removal would require ancestor propagation or empty that parent. Verify
 `i_blocks`, group and free-block counters, and `e2fsck -fn` after unmount, with and without
 `metadata_csum`. Also exercise writes into holes within a non-full leaf,
-unwritten-extent conversion, and tail truncation. Splitting a full parent index node or growing/rebalancing an
-index node must fail without damaging the filesystem. Also corrupt the first
+unwritten-extent conversion, and tail truncation. Full-parent splitting must
+succeed only in the bounded cases above; unsupported cascades and index-node
+rebalancing must fail without damaging the filesystem. Also corrupt the first
 logical-block key in an external child extent node without changing its parent
 index entry; lookup of a block in that subtree must fail with `EIO`, even when
 the child checksum is recomputed. Repeat for an intermediate index node and a
