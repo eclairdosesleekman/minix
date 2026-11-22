@@ -15,6 +15,12 @@ read-write mode.
   Cross-group bitmap/inode-table overlap is rejected, while `flex_bg`
   placement outside the nominal group is preserved.
 - 64-bit regular-file sizes using the inode size-high field.
+- Legacy direct and single/double/triple-indirect block mappings are range-checked
+  against the complete ext4 metadata map before any pointer block or data block
+  is read. Indirect pointer blocks are checked at block granularity; mapped
+  data blocks are also rejected when their BIGALLOC allocation cluster contains
+  a backup superblock/GDT copy, group bitmap, or inode table. Zero pointers
+  continue to represent holes.
 - Read-only support for ext4 `meta_bg` group-descriptor placement. The
   descriptor table is assembled in logical order from the classic contiguous
   prefix and the primary descriptor blocks in later metablock groups. A
@@ -378,7 +384,14 @@ META_BG descriptor blocks and confirm mount rejects them. Construct direct
 and legacy-indirect data pointers, extent records, external extent-node
 pointers, and external xattr pointers that target descriptor blocks in both
 the classic prefix/backups and META_BG groups; reads must fail with `EIO`.
-Use an image whose group count ends part-way through a metablock group to
+For a filesystem containing a legacy indirect-format inode, also construct
+direct and single/double/triple-indirect pointers that target a block bitmap,
+inode bitmap, inode-table block, an out-of-range block, and a valid data block
+inside a BIGALLOC cluster containing reserved metadata. Each invalid mapping
+must fail with `EIO`; zero pointers must remain ordinary holes. Verify the
+same paths with valid non-reserved data blocks to ensure the stricter checks do
+not reject ordinary legacy indirect files. Use an image whose group count ends
+part-way through a metablock group to
 confirm that the final partial group does not cause out-of-range backup
 descriptor reads. Confirm writable mounts, `sparse_super2` + `meta_bg`,
 and alternate-superblock META_BG mounts are rejected. Run `e2fsck -fn` after
