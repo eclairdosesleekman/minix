@@ -16,6 +16,7 @@
  */
 
 #include "fs.h"
+#include <stddef.h>
 #include <string.h>
 #include "buf.h"
 #include "inode.h"
@@ -943,7 +944,8 @@ int rw_inode(
 		return(EIO);
 	}
 	if (xattr_block != 0 &&
-	    !ext4_validate_xattr_block(sp, rip->i_dev, xattr_block)) {
+	    !ext4_validate_xattr_block(sp, rip->i_dev, xattr_block,
+	    rip->i_num, ext4_inode_read32((const unsigned char *)dip, 100))) {
 		printf("ext4: invalid xattr block for inode %llu\n",
 		    (unsigned long long)rip->i_num);
 		put_block(bp);
@@ -1130,6 +1132,185 @@ static void icopy(
 		memcpy(&dip->osd2, &blocks_high, sizeof(blocks_high));
 	}
   }
+}
+
+
+/*
+ * Verify one ext4 EA-inode-backed external xattr value. EA inodes are not
+ * namespace files: read their raw inode record directly, validate its
+ * metadata, then walk its data mapping without inserting it into the inode
+ * cache. This also keeps the ordinary get_inode() path free to reject EA
+ * inodes when they are reached through a directory entry.
+ */
+static u32_t
+ext4_ea_xattr_entry_hash(const unsigned char *name, size_t name_len,
+	u32_t value_hash, int signed_name)
+{
+	u32_t hash = 0, ch;
+	size_t i;
+
+	for (i = 0; i < name_len; i++) {
+		ch = signed_name ?
+		    (u32_t)(long)(signed char)name[i] : (u32_t)name[i];
+		hash = (hash << 5) ^ (hash >> 27) ^ ch;
+	}
+	hash = (hash << 16) ^ (hash >> 16) ^ value_hash;
+	return(hash);
+}
+
+int
+ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
+	ino_t parent_ino, u32_t parent_generation, u32_t ea_ino,
+	u32_t entry_hash, const unsigned char *name, size_t name_len,
+	u32_t value_size)
+{
+	struct group_desc *gd;
+	struct buf *bp;
+	d_inode *dip;
+	struct inode ea;
+	const unsigned char *raw;
+	u64_t inode_offset, refcount, xattr_block;
+	block64_t inode_block, data_block;
+	u32_t group, stored_hash, value_hash, mtime;
+	u16_t acl_hi, extra_isize;
+	size_t inode_size, in_block_offset, chunk;
+	u64_t pos;
+	int lustre_inode;
+
+	if (!sp->s_is_ext4 ||
+	    !HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE) ||
+	    sp->s_creator_os != EXT4_OS_LINUX ||
+	    sp->s_inodes_per_group == 0 || sp->s_block_size == 0 ||
+	    ea_ino == 0 || ea_ino == ROOT_INODE ||
+	    ea_ino > sp->s_inodes_count || ea_ino == parent_ino ||
+	    name == NULL || name_len == 0 || name_len > EXT2_NAME_MAX ||
+	    value_size > 65536U)
+		return(EIO);
+
+	inode_size = EXT2_INODE_SIZE(sp);
+	if (inode_size < EXT2_GOOD_OLD_INODE_SIZE ||
+	    (inode_size & 3U) != 0)
+		return(EIO);
+	group = (ea_ino - 1) / sp->s_inodes_per_group;
+	gd = get_group_desc(group);
+	if (gd == NULL)
+		return(EIO);
+
+	inode_offset = (u64_t)((ea_ino - 1) % sp->s_inodes_per_group) *
+	    inode_size;
+	inode_block = gd->inode_table +
+	    (inode_offset >> sp->s_blocksize_bits);
+	in_block_offset = (size_t)(inode_offset &
+	    (sp->s_block_size - 1));
+	if (in_block_offset > sp->s_block_size ||
+	    inode_size > sp->s_block_size - in_block_offset)
+		return(EIO);
+
+	bp = get_block(dev, inode_block, NORMAL);
+	if (bp == NULL)
+		return(EIO);
+	dip = (d_inode *)(b_data(bp) + in_block_offset);
+	raw = (const unsigned char *)dip;
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_METADATA_CSUM) &&
+	    !ext4_verify_inode_csum(sp, ea_ino, raw, inode_size)) {
+		put_block(bp);
+		return(EIO);
+	}
+
+	memset(&ea, 0, sizeof(ea));
+	ea.i_dev = dev;
+	ea.i_num = ea_ino;
+	ea.i_sp = sp;
+	icopy(&ea, dip, READING, TRUE, 0);
+
+	/*
+	 * Linux ext4 requires EA inodes to be regular files with one link,
+	 * no external or inode-body xattrs, and no inline-data payload.
+	 */
+	if ((ea.i_mode & I_TYPE) != I_REGULAR ||
+	    !(ea.i_flags & EXT4_EA_INODE_FL) ||
+	    (ea.i_flags & EXT4_INLINE_DATA_FL) ||
+	    ea.i_links_count != 1 || ea.i_size < 0 ||
+	    (u64_t)ea.i_size != value_size) {
+		put_block(bp);
+		return(EIO);
+	}
+
+	xattr_block = (u64_t)(u32_t)ext4_inode_read32(raw, 104);
+	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_64BIT)) {
+		acl_hi = ext4_inode_read16(raw,
+		    offsetof(d_inode, osd2.linux2.i_pad1));
+		xattr_block |= (u64_t)acl_hi << 32;
+	}
+	if (xattr_block != 0) {
+		put_block(bp);
+		return(EIO);
+	}
+
+	if (inode_size >= EXT4_INODE_EXTRA_ISIZE_OFF + sizeof(u16_t)) {
+		extra_isize = ext4_inode_read16(raw,
+		    EXT4_INODE_EXTRA_ISIZE_OFF);
+		if ((extra_isize & 3U) != 0 ||
+		    extra_isize > inode_size - EXT2_GOOD_OLD_INODE_SIZE) {
+			put_block(bp);
+			return(EIO);
+		}
+		if (EXT4_INODE_EXTRA_ISIZE_OFF + extra_isize <=
+		    inode_size - sizeof(u32_t) &&
+		    ext4_inode_read32(raw,
+		    EXT4_INODE_EXTRA_ISIZE_OFF + extra_isize) ==
+		    EXT4_XATTR_MAGIC) {
+			put_block(bp);
+			return(EIO);
+		}
+	}
+
+	stored_hash = ext4_inode_read32(raw, 8);
+	mtime = ext4_inode_read32(raw, 16);
+	refcount = ((u64_t)ext4_inode_read32(raw, 12) << 32) |
+	    ext4_inode_read32(raw, 36);
+	lustre_inode = (entry_hash != stored_hash &&
+	    mtime == (u32_t)parent_ino &&
+	    ea.i_generation == parent_generation);
+	if (!lustre_inode && refcount == 0) {
+		put_block(bp);
+		return(EIO);
+	}
+	put_block(bp);
+
+	/*
+	 * EA values must be fully allocated; holes are corruption. Read by
+	 * physical block through the existing extent/indirect mapper, compute
+	 * the filesystem-seeded CRC32C value hash, and compare the xattr entry
+	 * hash. Old Lustre EA inodes use a parent-inode backpointer instead.
+	 */
+	value_hash = sp->s_csum_seed;
+	for (pos = 0; pos < value_size; ) {
+		err_code = OK;
+		data_block = read_map(&ea, (off_t)pos, 0);
+		if (err_code != OK || data_block == NO_BLOCK ||
+		    data_block >= sp->s_blocks_count)
+			return(EIO);
+		bp = get_block(dev, data_block, NORMAL);
+		if (bp == NULL)
+			return(EIO);
+		chunk = sp->s_block_size;
+		if ((u64_t)chunk > (u64_t)value_size - pos)
+			chunk = (size_t)((u64_t)value_size - pos);
+		value_hash = ext4_crc32c(value_hash, b_data(bp), chunk);
+		put_block(bp);
+		pos += chunk;
+	}
+
+	if (!lustre_inode &&
+	    (value_hash != stored_hash ||
+	    (ext4_ea_xattr_entry_hash(name, name_len, value_hash,
+	    FALSE) != entry_hash &&
+	    ext4_ea_xattr_entry_hash(name, name_len, value_hash,
+	    TRUE) != entry_hash)))
+		return(EIO);
+
+	return(OK);
 }
 
 

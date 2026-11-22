@@ -105,7 +105,11 @@ int ext4_verify_inode_csum(struct super_block *sp, ino_t ino,
 int ext4_update_inode_csum(struct super_block *sp, ino_t ino,
 	unsigned char *raw, size_t inode_size);
 int ext4_validate_xattr_block(struct super_block *sp, dev_t dev,
-	block64_t block);
+	block64_t block, ino_t parent_ino, u32_t parent_generation);
+int ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
+	ino_t parent_ino, u32_t parent_generation, u32_t ea_ino,
+	u32_t entry_hash, const unsigned char *name, size_t name_len,
+	u32_t value_size);
 int ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 	unsigned int logical_block);
 int ext4_update_dir_block_csum(struct inode *rip, unsigned char *data);

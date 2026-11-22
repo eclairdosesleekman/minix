@@ -54,6 +54,11 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 	/* EA inode xattr values are not exposed or maintained by this server. */
+	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE) &&
+	    sp->s_creator_os != EXT4_OS_LINUX) {
+		printf("ext4: ea_inode requires a Linux-created filesystem\\n");
+		goto bad_mount;
+	}
 	if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE) && !readonly) {
 		printf("ext4: ea_inode is supported only on read-only mounts\\n");
 		goto bad_mount;

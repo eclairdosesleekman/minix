@@ -48,13 +48,16 @@ read-write mode.
   pointers, file extents, indirect mappings, external extent-tree nodes, and
   external xattr pointers. Writable mounts
   remain disabled because the current writer does not update backup copies.
-- Read-only compatibility with the ext4 `ea_inode` incompat feature. The
-  mount path accepts filesystems using EA inodes as extended-attribute value
-  storage, while keeping those storage inodes out of the pathname namespace.
-  Ordinary file data and metadata remain readable; EA-inode-backed xattr
-  values are still opaque and are not exposed through a get/list-xattr API.
-  Writable mounts are rejected because xattr reference counts and EA inode
-  lifetimes are not maintained.
+- Read-only compatibility with the ext4 `ea_inode` incompat feature.
+  EA-inode-backed values referenced from external xattr blocks are validated
+  on inode read: the referenced inode checksum, regular-file type, link and
+  reference counts, absence of nested xattrs, exact value size, complete data
+  allocation, CRC32C value hash, and xattr entry hash are checked. Legacy
+  Lustre-style EA inode backpointers are recognized. EA storage inodes remain
+  outside the pathname namespace, and attribute values are not exposed through
+  a get/list-xattr API. EA inode values in inode-body xattrs are not yet
+  resolved. Writable mounts are rejected because xattr reference counts and
+  EA inode lifetimes are not maintained.
 
 - External xattr blocks are structurally validated before an inode is exposed,
   even when `metadata_csum` is disabled. The 32-byte header, reference count,
@@ -605,6 +608,19 @@ and a bound Unix-domain socket. Mount it read-only on MINIX and inspect the
 `DT_SOCK` (not `DT_UNKNOWN`). Repeat with an image whose directory entry type
 field is set to `EXT2_FT_UNKNOWN`; it must continue to report `DT_UNKNOWN`.
 Run `e2fsck -fn` after testing the unmounted image.
+
+For EA-inode-backed xattr value validation, create disposable Linux ext4
+images with `ea_inode` enabled and `metadata_csum` both enabled and disabled.
+Add large `user.*` attributes so e2fsprogs stores their values in EA inodes.
+Verify that files referencing valid EA inodes remain readable. On unmounted
+copies, corrupt the EA inode flag, mode, link count, refcount, size, extent
+mapping (including a hole), stored value CRC32C, and the referring xattr
+entry hash independently. For checksummed images, recompute both the parent
+xattr-block checksum and EA inode checksum after each targeted edit, so the
+test reaches the corresponding EA validation. Each malformed reference must
+cause the referencing inode to fail with `EIO`; an EA inode number without
+the `ea_inode` incompat feature must also be rejected. Keep the EA inode out
+of the pathname namespace and run `e2fsck -fn` after tests.
 
 For external xattr-block validation, create a disposable ext4 image without
 `metadata_csum`, populate files with `user.*` attributes large enough to force
