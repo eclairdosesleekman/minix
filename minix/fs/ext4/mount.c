@@ -89,6 +89,16 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 	/*
+	 * fs-verity stores Merkle trees and descriptors beyond i_size, and
+	 * every read must be checked against those trees. This server can
+	 * expose ordinary file data read-only but does not verify the tree.
+	 * RO_COMPAT_VERITY therefore permits read-only compatibility only.
+	 */
+	if (HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_VERITY) && !readonly) {
+		printf("ext4: verity filesystems require read-only mounts\\n");
+		goto bad_mount;
+	}
+	/*
 	 * BIGALLOC block bitmaps track clusters. The current allocator and
 	 * truncation paths operate on individual blocks, so only read-only
 	 * access is safe until cluster-granular allocation is implemented.

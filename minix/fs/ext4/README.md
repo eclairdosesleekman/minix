@@ -107,6 +107,14 @@ read-write mode.
   inode number. When `metadata_csum` is enabled, the block-number-based
   CRC32C checksum is also verified. Attribute values are still not exposed
   through a get/list-xattr API.
+- Read-only compatibility with ext4 `verity` filesystems. The
+  `RO_COMPAT_VERITY` feature is accepted only for read-only mounts, and an
+  inode carrying `EXT4_VERITY_FL` must be a regular, extent-based, non-inline
+  file and the superblock must advertise the feature. Ordinary file data and
+  `i_size` remain readable. This is compatibility, not fs-verity integrity
+  support: the Merkle tree and descriptor stored beyond EOF are not parsed,
+  reads are not verified against the tree, and no digest/signature API is
+  exposed. Do not rely on MINIX reads to authenticate a verity file.
 - Read-only compatibility for quota (`quota`) and project-quota (`project`)
   feature flags, and for `RO_COMPAT_READONLY`. Quota metadata is left
   untouched, so quota-enabled filesystems require read-only mounts.
@@ -492,6 +500,13 @@ entry hash and verify that inode loading returns `EIO`. Confirm ordinary file
 contents remain readable, and that EA-inode storage objects cannot be reached
 as directory entries. EA-inode-backed xattr get/list operations are not
 implemented and must not be inferred to work.
+For `verity`, use Linux fs-verity to enable a regular extent-based file on an
+image formatted with `-O verity`. Verify that MINIX accepts the image read-only
+and returns the unchanged file bytes and logical size, while a read-write
+mount is rejected. Also verify that a verity inode without the superblock
+feature, or a verity flag on an inline/non-regular inode, fails with `EIO`.
+MINIX does not verify fs-verity Merkle trees or signatures; a successful read
+is not an integrity/authenticity check.
 Check that a block bitmap checksum over the cluster-bit length is accepted and
 that a deliberately corrupted checksum is rejected. Writable BIGALLOC mounts
 must fail before the volume is marked unclean. After unmount, run

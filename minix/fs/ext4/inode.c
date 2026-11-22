@@ -1025,6 +1025,19 @@ int rw_inode(
   }
 
   icopy(rip, dip, rw_flag, TRUE, disk_blocks);
+  if (rw_flag == READING && sp->s_is_ext4 &&
+      (rip->i_flags & EXT4_VERITY_FL) &&
+      (!HAS_RO_COMPAT_FEATURE(sp, RO_COMPAT_VERITY) ||
+      (rip->i_mode & I_TYPE) != I_REGULAR ||
+      !(rip->i_flags & EXT4_EXTENTS_FL) ||
+      (rip->i_flags & EXT4_INLINE_DATA_FL))) {
+	/*
+	 * ext4 verity inodes must be regular, extent-based files. The
+	 * superblock feature must advertise the on-disk verity layout.
+	 */
+	put_block(bp);
+	return(EIO);
+  }
 	/*
 	 * EA inodes are storage objects referenced by xattr entries, not
 	 * namespace files. Until xattr value lookup is implemented, never
