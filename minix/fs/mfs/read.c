@@ -65,7 +65,16 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 	   * to be created.  This is necessary because all unwritten
 	   * blocks prior to the EOF must read as zeros.
 	   */
-	  if(position > f_size) clear_zone(rip, f_size, 0);
+	  if (position > f_size) {
+		  if (rip->i_sp->s_version == V4) {
+			  r = mfs4_zero_eof_tail(rip, (u64_t)f_size,
+			      (u64_t)position);
+			  if (r != OK)
+				  return r;
+		  } else {
+			  clear_zone(rip, f_size, 0);
+		  }
+	  }
   }
 
   cum_io = 0;
