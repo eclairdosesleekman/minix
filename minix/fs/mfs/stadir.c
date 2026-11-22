@@ -18,6 +18,40 @@ static blkcnt_t estimate_blocks(struct inode *rip)
   blkcnt_t zones, sindirs, dindirs, nr_indirs, sq_indirs;
   unsigned int zone_size;
 
+  if (rip->i_sp->s_version == V4) {
+    uint64_t data_blocks, remaining, indirect_blocks = 0, level_blocks;
+    data_blocks = (rip->i_size + MFS4_BLOCK_SIZE - 1) / MFS4_BLOCK_SIZE;
+    remaining = data_blocks > MFS4_MAP_DIRECT_COUNT ?
+        data_blocks - MFS4_MAP_DIRECT_COUNT : 0;
+    if (remaining != 0) {
+        indirect_blocks++; /* single-indirect root */
+        if (remaining > MFS4_MAP_POINTERS)
+            remaining -= MFS4_MAP_POINTERS;
+        else
+            remaining = 0;
+    }
+    if (remaining != 0) {
+        indirect_blocks++; /* double-indirect root */
+        level_blocks = (remaining + MFS4_MAP_POINTERS - 1) /
+            MFS4_MAP_POINTERS;
+        indirect_blocks += level_blocks;
+        if (remaining > (uint64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS)
+            remaining -= (uint64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS;
+        else
+            remaining = 0;
+    }
+    if (remaining != 0) {
+        indirect_blocks++; /* triple-indirect root */
+        indirect_blocks += (remaining +
+            (uint64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS - 1) /
+            ((uint64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS);
+        indirect_blocks += (remaining + MFS4_MAP_POINTERS - 1) /
+            MFS4_MAP_POINTERS;
+    }
+    return (blkcnt_t)((data_blocks + indirect_blocks) *
+        (MFS4_BLOCK_SIZE / 512));
+  }
+
   /* Compute the number of zones used by the file. */
   zone_size = rip->i_sp->s_block_size << rip->i_sp->s_log_zone_size;
 
