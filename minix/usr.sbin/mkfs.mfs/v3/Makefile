@@ -10,4 +10,6 @@ SYMLINKS+=	${BINDIR}/${PROG} /sbin/mkfs.mfs
 MLINKS+=	mkfs.mfs.1 newfs_mfs.1
 .endif
 
+MKFS_EXTRA_SRCS=	mfs4.c
+
 .include <../Makefile.mkfs>
