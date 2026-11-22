@@ -444,7 +444,7 @@ int read_super(register struct super_block *sp)
 	u32_t blocks_hi, reserved_hi, free_hi;
 	u16_t raw_desc_size;
 	u64_t groups64, gdt_position;
-	size_t gd_size, classic_gdt_size, off, chunk;
+	size_t gd_size, group_desc_size, classic_gdt_size, off, chunk;
 	unsigned int classic_gdb_count, gdb;
 	block64_t descriptor_block;
 
@@ -635,11 +635,14 @@ int read_super(register struct super_block *sp)
 		classic_gdb_count = sp->s_gdb_count;
 	}
 
-	if (sp->s_gdb_count > ((size_t)-1) / sp->s_block_size ||
-	    sp->s_groups_count > SIZE_MAX / sizeof(*group_descs))
+	if (sp->s_gdb_count > ((size_t)-1) / sp->s_block_size)
+		return(EINVAL);
+	group_desc_size = (size_t)sp->s_groups_count * sizeof(*group_descs);
+	if (sp->s_groups_count != 0 &&
+	    group_desc_size / sp->s_groups_count != sizeof(*group_descs))
 		return(EINVAL);
 	gd_size = (size_t)sp->s_gdb_count * sp->s_block_size;
-	group_descs = malloc((size_t)sp->s_groups_count * sizeof(*group_descs));
+	group_descs = malloc(group_desc_size);
 	if (group_descs == NULL)
 		panic("can't allocate ext4 group descriptor array");
 	ondisk_group_descs = mmap(NULL, gd_size,
@@ -738,7 +741,7 @@ ext4_store32(unsigned char *p, u32_t value)
 
 static int
 ext4_write_descriptor_bytes(struct super_block *sp, u64_t disk_offset,
-	const unsigned char *data, size_t length)
+	unsigned char *data, size_t length)
 {
 	u64_t max_offset;
 	size_t off, chunk;
