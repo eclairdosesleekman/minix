@@ -12,8 +12,8 @@ read-write mode.
   splitting a full external leaf requires a fifth inode-root index entry, the
   four existing entries and new leaf entry are moved into a new external
   depth-one index node and the inode root is promoted to depth two. The new
-  index checksum (when enabled) and inode `i_blocks` are updated. Splitting
-  full external index nodes and cascading growth remain unsupported.
+  index checksum (when enabled) and inode `i_blocks` are updated. Additional
+  full external index-node splitting is bounded by available ancestor slots.
 - Writable splitting of a full external depth-one index node beneath
   depth-two and deeper roots when its depth-two ancestor has a free entry.
   The full depth-one parent and the newly added leaf entry are divided
