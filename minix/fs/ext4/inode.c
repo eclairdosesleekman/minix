@@ -396,7 +396,7 @@ ext4_inode_read32(const unsigned char *raw, size_t offset)
  * Decode ext4 inline regular files, symlinks, and the read-only inline
  * directory format. For directories, i_block[0..4] is the parent inode and
  * i_block[4..60] is a separate dirent area; system.data, when nonempty, is a
- * second independent dirent area in the inode-body xattr.
+ * second independent dirent area stored inline or in an EA inode.
  */
 static int
 ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
@@ -409,7 +409,7 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	u32_t other_value_inum, other_value_size;
 	const unsigned char *value_name = NULL;
 	u16_t extra_isize, value_offs = 0;
-	unsigned int name_len, name_index;
+	unsigned int name_len, value_name_len = 0, name_index;
 	int found = FALSE, terminated = FALSE;
 	mode_t type;
 
@@ -481,6 +481,7 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 			value_size = ext4_inode_read32(raw, pos + 8);
 			entry_hash = ext4_inode_read32(raw, pos + 12);
 			value_name = raw + pos + EXT4_XATTR_ENTRY_SIZE;
+			value_name_len = name_len;
 		}
 		pos += entry_size;
 	}
@@ -496,10 +497,10 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 		 * its entry hash, EA inode metadata, allocation, and value checksum.
 		 */
 		if (!HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_EA_INODE) ||
-		    value_name == NULL || name_len != 4 ||
+		    value_name == NULL || value_name_len != 4 ||
 		    ext4_validate_ea_inode(rip->i_sp, rip->i_dev, rip->i_num,
 		    ext4_inode_read32(raw, 100), value_inum, entry_hash,
-		    value_name, name_len, value_size,
+		    value_name, value_name_len, value_size,
 		    rip->i_inline_data + EXT4_INLINE_DATA_MIN) != OK)
 			return(EIO);
 		value_capacity = value_size;
@@ -512,9 +513,9 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 				return(EIO);
 
 			/*
-			 * Values are packed into the area after the xattr entries. Do not
-			 * treat space occupied by another xattr as spare inline-data
-			 * capacity: stop at the next value that follows system.data.
+			 * Values follow the xattr entries. Do not treat space occupied
+			 * by another xattr as spare inline-data capacity: stop at the
+			 * next value that follows system.data.
 			 */
 			value_limit = area_size;
 			pos = entries_offset;
