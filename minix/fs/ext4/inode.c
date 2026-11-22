@@ -405,8 +405,9 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 	size_t header_offset, entries_offset, pos, entries_end, area_size;
 	size_t entry_size, value_offset, value_size_offset = 0;
 	size_t value_capacity = 0, value_limit;
-	u32_t value_inum = 0, value_size = 0;
+	u32_t value_inum = 0, value_size = 0, entry_hash = 0;
 	u32_t other_value_inum, other_value_size;
+	const unsigned char *value_name = NULL;
 	u16_t extra_isize, value_offs = 0;
 	unsigned int name_len, name_index;
 	int found = FALSE, terminated = FALSE;
@@ -478,55 +479,72 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 			value_inum = ext4_inode_read32(raw, pos + 4);
 			value_size_offset = pos + 8;
 			value_size = ext4_inode_read32(raw, pos + 8);
+			entry_hash = ext4_inode_read32(raw, pos + 12);
+			value_name = raw + pos + EXT4_XATTR_ENTRY_SIZE;
 		}
 		pos += entry_size;
 	}
 	if (!terminated || !found)
 		return(EIO);
-	if (value_inum != 0)
-		return(EOPNOTSUPP);
 	if (value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN)
 		return(EOPNOTSUPP);
 
-	area_size = inode_size - entries_offset;
-	value_offset = value_offs;
-	if (value_size != 0 || value_offset != 0) {
-		if (value_offset < entries_end - entries_offset ||
-		    value_offset > area_size)
-			return(EIO);
-
+	if (value_inum != 0) {
 		/*
-		 * Values are packed into the area after the xattr entries.  Do not
-		 * treat space occupied by another xattr as spare inline-data
-		 * capacity: stop at the next value that follows system.data.
+		 * ea_inode volumes are read-only in this server. Resolve the
+		 * system.data value into the in-core inline payload after checking
+		 * its entry hash, EA inode metadata, allocation, and value checksum.
 		 */
-		value_limit = area_size;
-		pos = entries_offset;
-		while (pos < entries_end - 4) {
-			entry_size = (EXT4_XATTR_ENTRY_SIZE + raw[pos] + 3U) & ~3U;
-			other_value_inum = ext4_inode_read32(raw, pos + 4);
-			other_value_size = ext4_inode_read32(raw, pos + 8);
-			if (pos + 8 != value_size_offset &&
-			    other_value_size != 0 && other_value_inum == 0) {
-				size_t other_offset;
-
-				other_offset = ext4_inode_read16(raw, pos + 2);
-				if (other_offset < entries_end - entries_offset ||
-				    other_offset > area_size ||
-				    other_value_size > area_size - other_offset)
-					return(EIO);
-				if (other_offset < value_offset &&
-				    other_value_size > value_offset - other_offset)
-					return(EIO);
-				if (other_offset >= value_offset &&
-				    other_offset < value_limit)
-					value_limit = other_offset;
-			}
-			pos += entry_size;
-		}
-		if (value_size > value_limit - value_offset)
+		if (!HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_EA_INODE) ||
+		    value_name == NULL || name_len != 4 ||
+		    ext4_validate_ea_inode(rip->i_sp, rip->i_dev, rip->i_num,
+		    ext4_inode_read32(raw, 100), value_inum, entry_hash,
+		    value_name, name_len, value_size,
+		    rip->i_inline_data + EXT4_INLINE_DATA_MIN) != OK)
 			return(EIO);
-		value_capacity = value_limit - value_offset;
+		value_capacity = value_size;
+	} else {
+		area_size = inode_size - entries_offset;
+		value_offset = value_offs;
+		if (value_size != 0 || value_offset != 0) {
+			if (value_offset < entries_end - entries_offset ||
+			    value_offset > area_size)
+				return(EIO);
+
+			/*
+			 * Values are packed into the area after the xattr entries. Do not
+			 * treat space occupied by another xattr as spare inline-data
+			 * capacity: stop at the next value that follows system.data.
+			 */
+			value_limit = area_size;
+			pos = entries_offset;
+			while (pos < entries_end - 4) {
+				entry_size = (EXT4_XATTR_ENTRY_SIZE + raw[pos] + 3U) &
+				    ~3U;
+				other_value_inum = ext4_inode_read32(raw, pos + 4);
+				other_value_size = ext4_inode_read32(raw, pos + 8);
+				if (pos + 8 != value_size_offset &&
+				    other_value_size != 0 && other_value_inum == 0) {
+					size_t other_offset;
+
+					other_offset = ext4_inode_read16(raw, pos + 2);
+					if (other_offset < entries_end - entries_offset ||
+					    other_offset > area_size ||
+					    other_value_size > area_size - other_offset)
+						return(EIO);
+					if (other_offset < value_offset &&
+					    other_value_size > value_offset - other_offset)
+						return(EIO);
+					if (other_offset >= value_offset &&
+					    other_offset < value_limit)
+						value_limit = other_offset;
+				}
+				pos += entry_size;
+			}
+			if (value_size > value_limit - value_offset)
+				return(EIO);
+			value_capacity = value_limit - value_offset;
+		}
 	}
 	if (rip->i_size < 0 ||
 	    (u64_t)rip->i_size > EXT4_INLINE_DATA_MIN + value_size)
@@ -542,10 +560,10 @@ ext4_decode_inline_data(struct inode *rip, const unsigned char *raw,
 
 	/* i_block is byte-oriented inline content, not an extent root. */
 	memcpy(rip->i_inline_data, raw + 40, EXT4_INLINE_DATA_MIN);
-	if (value_size != 0)
+	if (value_size != 0 && value_inum == 0)
 		memcpy(rip->i_inline_data + EXT4_INLINE_DATA_MIN,
 		    raw + entries_offset + value_offset, value_size);
-	rip->i_inline_value_offset = value_capacity != 0 ?
+	rip->i_inline_value_offset = value_capacity != 0 && value_inum == 0 ?
 	    (u32_t)(entries_offset + value_offset) : 0;
 	rip->i_inline_value_size_offset = (u32_t)value_size_offset;
 	rip->i_inline_value_size = value_size;
@@ -1174,7 +1192,7 @@ int
 ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
 	ino_t parent_ino, u32_t parent_generation, u32_t ea_ino,
 	u32_t entry_hash, const unsigned char *name, size_t name_len,
-	u32_t value_size)
+	u32_t value_size, unsigned char *value_data)
 {
 	struct group_desc *gd;
 	struct buf *bp;
@@ -1196,7 +1214,9 @@ ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
 	    ea_ino == 0 || ea_ino == ROOT_INODE ||
 	    ea_ino > sp->s_inodes_count || ea_ino == parent_ino ||
 	    name == NULL || name_len == 0 || name_len > EXT2_NAME_MAX ||
-	    value_size > 65536U)
+	    value_size > 65536U ||
+	    (value_data != NULL &&
+	    value_size > EXT4_INLINE_DATA_MAX - EXT4_INLINE_DATA_MIN))
 		return(EIO);
 
 	inode_size = EXT2_INODE_SIZE(sp);
@@ -1310,6 +1330,8 @@ ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
 		if ((u64_t)chunk > (u64_t)value_size - pos)
 			chunk = (size_t)((u64_t)value_size - pos);
 		value_hash = ext4_crc32c(value_hash, b_data(bp), chunk);
+		if (value_data != NULL)
+			memcpy(value_data + (size_t)pos, b_data(bp), chunk);
 		put_block(bp);
 		pos += chunk;
 	}
