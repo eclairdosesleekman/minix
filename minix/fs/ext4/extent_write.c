@@ -698,7 +698,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	size_t parent_records_size;
 	unsigned int i;
 	int parent_is_external, grow_root, split_parent;
-	int split_parent_ancestor;
+	int split_parent_ancestor, r;
 
 	parent_bp = NULL;
 	new_parent_bp = NULL;
