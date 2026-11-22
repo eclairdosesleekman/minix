@@ -927,12 +927,17 @@ parents; verify that the target inode is freed, the parent's link count
 decreases once, and the image passes `e2fsck -fn`. A nonempty inline
 directory, a mismatched stored parent, incorrect child link count, external
 xattr block, or nonzero block allocation must be rejected without changing
-either directory or its link counts. Rmdir of `.` or `..`, renaming with an
-inline parent, moving an inline directory across parents, and replacing an
-inline directory during rename must fail before mutation. Corrupt the stored
-parent inode and each dirent area's record lengths, inode numbers, and names;
-lookup or readdir must report `EIO`. Run `e2fsck -fn` on the unmounted images
-after testing.
+either directory or its link counts. Rmdir of `.` or `..` must fail before
+mutation. In a non-indexed inline parent, rename to an unused name should
+succeed only when its aligned size fits the source record; verify lookup of the
+new name, absence of the old name, unchanged record length, and a clean
+`e2fsck -fn`. A destination that names the same inode is a no-op. A name that
+does not fit must return `ENOSPC`, while replacement of a different
+destination inode and cross-parent rename must fail without mutation. Moving
+an inline directory across parents must also fail. Corrupt the stored parent
+inode and each dirent area's record lengths, inode numbers, and names; lookup
+or readdir must report `EIO`. Run `e2fsck -fn` on the unmounted images after
+testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
 `metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:
