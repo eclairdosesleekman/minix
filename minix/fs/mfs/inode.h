@@ -23,6 +23,7 @@
  */
 EXTERN struct inode {
   u16_t i_mode;		/* file type, protection, etc. */
+  u16_t i_flags;		/* common format-specific inode flags */
   u32_t i_nlinks;		/* common 32-bit link count */
   u32_t i_uid;		/* common 32-bit user ID */
   u32_t i_gid;		/* common 32-bit group ID */
@@ -30,7 +31,19 @@ EXTERN struct inode {
   i64_t i_atime;		/* signed Unix seconds */
   i64_t i_mtime;		/* signed Unix seconds */
   i64_t i_ctime;		/* signed Unix seconds */
-  u32_t i_zone[V2_NR_TZONES]; /* MFS3 slots; slot 9 reserved by MFS3 */
+  u32_t i_atime_nsec;	/* nanoseconds, zero for MFS3 */
+  u32_t i_mtime_nsec;	/* nanoseconds, zero for MFS3 */
+  u32_t i_ctime_nsec;	/* nanoseconds, zero for MFS3 */
+  u32_t i_generation;	/* inode reuse generation */
+  /*
+   * MFS3 uses direct[0..6], single[7], double[8] and leaves slot 9
+   * unused. MFS4 will use slot 9 for the triple-indirect root.
+   */
+  u32_t i_zone[V2_NR_TZONES];
+  u32_t i_xattr_head;	/* MFS4 xattr chain head; zero means none */
+  u32_t i_orphan_next;	/* MFS4 orphan chain link; zero means end */
+  u64_t i_rdev;		/* MFS4 packed major/minor device number */
+  u32_t i_project_id;	/* reserved for future grouping */
   
   /* The following items are not present on the disk. */
   dev_t i_dev;			/* which device is the inode on */
