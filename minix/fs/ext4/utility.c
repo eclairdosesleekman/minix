@@ -370,6 +370,131 @@ invalid:
 }
 
 /*
+ * Validate EA-inode references stored in an inode-body xattr area. The inode
+ * checksum (when enabled) is verified by rw_inode() before this routine is
+ * called. First bound the complete entry array and inline value ranges; only
+ * then follow any EA inode numbers from the validated entries.
+ */
+int
+ext4_validate_inode_xattrs(struct super_block *sp, dev_t dev,
+	ino_t parent_ino, const unsigned char *raw, size_t inode_size)
+{
+	size_t header_offset, entries_offset, entries_end, pos, entry_size;
+	size_t area_size, value_offset, padded_size;
+	u16_t extra_isize;
+	u32_t value_inum, value_size, entry_hash, generation;
+	unsigned int name_len, i;
+	int terminated = FALSE;
+
+	if (!sp->s_is_ext4 ||
+	    !HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE))
+		return(OK);
+	if (sp->s_creator_os != EXT4_OS_LINUX || raw == NULL ||
+	    parent_ino == 0)
+		return(EIO);
+
+	/* i_extra_isize and inode-body xattrs follow the original 128 bytes. */
+	if (inode_size < 132)
+		return(OK);
+	extra_isize = ext4_csum_read16(raw + 128);
+	if ((extra_isize & 3U) != 0 ||
+	    extra_isize > inode_size - 128)
+		return(EIO);
+	if (extra_isize == 0)
+		return(OK);
+
+	header_offset = 128 + extra_isize;
+	if (header_offset > inode_size - sizeof(u32_t))
+		return(OK);
+	if (ext4_csum_read32(raw + header_offset) != EXT4_XATTR_MAGIC)
+		return(OK);
+
+	entries_offset = header_offset + sizeof(u32_t);
+	pos = entries_offset;
+	while (pos <= inode_size - sizeof(u32_t)) {
+		if (ext4_csum_read32(raw + pos) == 0) {
+			entries_end = pos + sizeof(u32_t);
+			terminated = TRUE;
+			break;
+		}
+		if (inode_size - pos < EXT4_XATTR_ENTRY_SIZE)
+			return(EIO);
+
+		name_len = raw[pos];
+		if (name_len == 0)
+			return(EIO);
+		entry_size = (EXT4_XATTR_ENTRY_SIZE + name_len + 3U) & ~3U;
+		if (entry_size > inode_size - pos)
+			return(EIO);
+		for (i = 0; i < name_len; i++) {
+			if (raw[pos + EXT4_XATTR_ENTRY_SIZE + i] == '\0')
+				return(EIO);
+		}
+		pos += entry_size;
+	}
+	if (!terminated)
+		return(EIO);
+
+	/*
+	 * Validate every value descriptor before following an EA inode pointer.
+	 * In-inode values are offsets from the first byte after the xattr header.
+	 */
+	area_size = inode_size - entries_offset;
+	pos = entries_offset;
+	while (pos < entries_end - sizeof(u32_t)) {
+		value_offset = ext4_csum_read16(raw + pos + 2);
+		value_inum = ext4_csum_read32(raw + pos + 4);
+		value_size = ext4_csum_read32(raw + pos + 8);
+		if (value_size > EXT4_XATTR_SIZE_MAX)
+			return(EIO);
+
+		if (value_inum != 0) {
+			if (value_inum == ROOT_INODE ||
+			    value_inum > sp->s_inodes_count)
+				return(EIO);
+		} else if (value_size != 0) {
+			padded_size = ((size_t)value_size + 3U) & ~(size_t)3U;
+			if ((value_offset & 3U) != 0 ||
+			    value_offset < entries_end - entries_offset ||
+			    value_offset > area_size ||
+			    value_size > area_size - value_offset ||
+			    padded_size > area_size - value_offset)
+				return(EIO);
+		}
+
+		name_len = raw[pos];
+		entry_size = (EXT4_XATTR_ENTRY_SIZE + name_len + 3U) & ~3U;
+		pos += entry_size;
+	}
+
+	/*
+	 * The entry table and all value ranges are now bounded. Validate EA
+	 * inodes with the same value/hash/backpointer checks used for external
+	 * xattr blocks.
+	 */
+	generation = ext4_csum_read32(raw + 100);
+	pos = entries_offset;
+	while (pos < entries_end - sizeof(u32_t)) {
+		name_len = raw[pos];
+		entry_size = (EXT4_XATTR_ENTRY_SIZE + name_len + 3U) & ~3U;
+		value_inum = ext4_csum_read32(raw + pos + 4);
+		if (value_inum != 0) {
+			entry_hash = ext4_csum_read32(raw + pos + 12);
+			value_size = ext4_csum_read32(raw + pos + 8);
+			if (ext4_validate_ea_inode(sp, dev, parent_ino,
+			    generation, value_inum, entry_hash,
+			    raw + pos + EXT4_XATTR_ENTRY_SIZE, name_len,
+			    value_size) != OK)
+				return(EIO);
+		}
+		pos += entry_size;
+	}
+
+	return(OK);
+}
+
+
+/*
  * Verify one ext4 directory block. Leaf blocks end in a fake dirent checksum
  * tail; htree root and internal nodes instead have a dx_tail after their
  * count/limit and entry array.
