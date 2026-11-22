@@ -298,9 +298,12 @@ implementation.
   scans the leaves, modifies only the matching dirent, and regenerates the
   leaf checksum without changing index keys. Removing a non-indexed child
   directory from an indexed parent is also supported; removing a directory
-  that itself carries `EXT2_INDEX_FL` remains unsupported. Rename is rejected
-  before mutation whenever either parent is indexed, avoiding a partial
-  two-directory update. Moving an indexed directory across parents or
+  that itself carries `EXT2_INDEX_FL` remains unsupported. When the parent
+  uses the ext4 `DIR_NLINK` convention, removing a non-indexed child directory
+  preserves its `i_links_count == 1` sentinel instead of decrementing it to
+  zero; the same rule applies to ordinary and inline child directories. Rename
+  is rejected before mutation whenever either parent is indexed, avoiding a
+  partial two-directory update. Moving an indexed directory across parents or
   replacing one remains unsupported. HTree lookup and linear enumeration
   remain available, including for `large_dir` indexes.
 - **BIGALLOC is read-only:** block bitmap interpretation and read-only
@@ -1071,8 +1074,14 @@ files and remove a non-indexed child directory; then verify that remaining
 names are still found by HTree lookup and appear in readdir. Creating or
 linking entries, renaming with either parent indexed, and removing the
 indexed directory itself must fail with `EOPNOTSUPP` without changing either
-directory. Repeat with `metadata_csum` enabled and disabled, unmount, and
-run `e2fsck -fn` to verify that the image is clean.
+directory. For `DIR_NLINK` coverage, prepare an indexed parent on Linux with
+more than 65,000 subdirectories so its on-disk link count is the sentinel
+value 1. On MINIX, remove one ordinary non-indexed child and one empty inline
+child from that parent; after each operation verify the parent link count
+remains 1, the children are freed, and `e2fsck -fn` accepts the image. A
+normal indexed parent with an ordinary on-disk link count must still decrement
+its count once per removed child. Repeat with `metadata_csum` enabled and
+disabled, unmount, and run `e2fsck -fn` to verify that the image is clean.
 
 For read-only `large_dir` coverage, create an ext4 image with
 `large_dir` and `dir_index` enabled (and `orphan_file` disabled), populate
