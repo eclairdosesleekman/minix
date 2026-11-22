@@ -114,7 +114,8 @@ int ext4_validate_ea_inode(struct super_block *sp, dev_t dev,
 	u32_t value_size, unsigned char *value);
 int ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 	unsigned int logical_block);
-int ext4_update_dir_block_csum(struct inode *rip, unsigned char *data);
+int ext4_update_dir_block_csum(struct inode *rip, unsigned char *data,
+	u64_t logical_block);
 unsigned conv2(int norm, int w);
 long conv4(int norm, long x);
 unsigned int ext4_dir_rec_len(const struct ext2_disk_dir_desc *dp,
