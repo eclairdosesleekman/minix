@@ -162,7 +162,7 @@
 #define INCOMPAT_CASEFOLD          0x20000
 
 /* Ext4 features understood by this server. */
-/* LARGEDIR is read-only: directory blocks are scanned linearly. */
+/* LARGEDIR adds depth-three HTree reads; indexed directories stay immutable. */
 #define SUPPORTED_INCOMPAT_FEATURES (INCOMPAT_FILETYPE | INCOMPAT_EXTENTS | \
                                      INCOMPAT_64BIT | INCOMPAT_FLEX_BG | \
                                      INCOMPAT_META_BG | INCOMPAT_CSUM_SEED | \

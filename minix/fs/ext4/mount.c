@@ -140,14 +140,13 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 		goto bad_mount;
 	}
 	/*
-	 * large_dir permits deeper HTree indexes.  Lookup and readdir can
-	 * enumerate these directories by scanning logical blocks, but the
-	 * server does not update HTree indexes when a directory is modified.
+	 * large_dir only permits deeper HTree indexes. Lookup and readdir
+	 * handle all supported levels; namespace operations on EXT2_INDEX_FL
+	 * directories are rejected by search_dir() and fs_unlink() before
+	 * changing their contents. Ordinary directories and regular files
+	 * remain safe to update, so this feature does not by itself require a
+	 * read-only mount.
 	 */
-	if (!readonly && HAS_INCOMPAT_FEATURE(sp, INCOMPAT_LARGEDIR)) {
-		printf("ext4: large_dir is supported only on read-only mounts\\n");
-		goto bad_mount;
-	}
 	/* META_BG and sparse_super2 move backup descriptor copies away from
 	 * the single primary GDT. write_super() updates only primary metadata.
 	 */

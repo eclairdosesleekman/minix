@@ -159,13 +159,15 @@ read-write mode.
   linear lookup. Directory enumeration remains linear. Namespace mutations
   on directories carrying `EXT2_INDEX_FL` are rejected; non-indexed
   directories on the same filesystem remain writable.
-- Linear directory traversal of htree leaf blocks; the dx root metadata after
+- Linear directory traversal of HTree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block. The `large_dir` incompat
-  feature is accepted for read-only mounts: internal HTree nodes are skipped
-  as inode-zero dummy directory entries, so lookup and readdir do not depend
-  on the HTree depth. The root's depth field is checked against the ext4
-  limit (two levels normally, three with `large_dir`), even without
-  `metadata_csum`.
+  feature is accepted for both read-only and writable mounts: internal HTree
+  nodes are skipped as inode-zero dummy directory entries, so lookup and
+  readdir support the HTree depth limit (two levels normally, three with
+  `large_dir`). Namespace mutations on directories carrying
+  `EXT2_INDEX_FL` remain rejected, while ordinary non-indexed directories
+  and regular files can be modified on a writable mount. The root's depth
+  field is checked even without `metadata_csum`.
 - Inline-data support for regular files and symlinks. The first 60 payload
   bytes are stored in `i_block`; an optional remainder is stored in the
   inode-body `system.data` xattr. The xattr header, entry table, terminator,
@@ -259,8 +261,10 @@ implementation.
   directory within the same parent is allowed, but moving one across parents
   or replacing an indexed directory is rejected before either parent is
   modified. HTree lookup and linear enumeration remain available. The
-  `large_dir` incompat feature is still read-only, including its multi-level
-  indexes.
+  `large_dir` incompat feature is also accepted on writable mounts: it only
+  extends the HTree depth limit and does not change ordinary directory-entry
+  layout. Indexed directories, including multi-level indexes, remain
+  read-only; non-indexed directories on the same volume remain writable.
 - **BIGALLOC is read-only:** block bitmap interpretation and read-only
   extent mapping understand clusters, but allocation, release, and truncation
   still operate in individual blocks. Writable mounts are therefore rejected.
@@ -938,13 +942,26 @@ directory. Include enough entries to force enumeration across multiple leaf
 and internal-index blocks. Mount read-only; modifying indexed directories is
 still intentionally rejected. Run `e2fsck -fn` again after testing.
 
+For writable `large_dir` compatibility, create a disposable ext4
+image with `large_dir` and `dir_index` enabled and journaling/orphan-file
+support disabled. On Linux, create a large indexed directory and a separate
+small, non-indexed directory. Populate the indexed directory until
+`debugfs -R 'htree_dump /indexed' image` reports a three-level HTree, run
+`e2fsck -fn`, and attach the image read-write on MINIX. Confirm that ordinary
+files can be created, written, renamed, and removed, and that entries can be
+created and removed in the non-indexed directory. HTree lookup and
+`getdents` must still work in the indexed directory, but create/link/unlink/
+rename operations that modify that directory (including `rmdir` of an
+indexed directory) must fail with `EOPNOTSUPP` without changing either the
+directory or its parent. Unmount cleanly and run `e2fsck -fn` on the image.
+
 The large-file read path should be tested with files larger than 2 TiB on
 4 KiB-block volumes and with sizes near the 32-bit logical-block boundary on
 larger-block volumes. Verify reported `st_blocks` in 512-byte units. As with
 the rest of this experimental server, run `e2fsck -fn` after clean unmount.
 
 The META_BG and sparse_super2 read-only layouts, extended timestamp, 64 KiB directory-record,
-`huge_file`, `metadata_csum`, bounded external-extent-leaf update, and writable
-legacy `gdt_csum` changes have not yet been compiled or runtime-tested in a
-MINIX build environment. Treat this as a review candidate and test it on
-disposable images only.
+`huge_file`, `metadata_csum`, bounded external-extent-leaf update, writable
+legacy `gdt_csum`, and writable `large_dir` mount-compatibility changes have
+not yet been compiled or runtime-tested in a MINIX build environment. Treat
+this as a review candidate and test it on disposable images only.
