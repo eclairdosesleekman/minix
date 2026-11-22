@@ -311,7 +311,8 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 	const unsigned char *node = (const unsigned char *)rip->i_block;
 	size_t node_size = sizeof(rip->i_block);
 	struct buf *bp = NULL;
-	int expected_depth = -1;
+	u32_t expected_first_key = 0;
+	int expected_depth = -1, have_expected_first = FALSE;
 
 	for (;;) {
 		u16_t magic, entries, max_entries, depth;
@@ -337,6 +338,21 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 		    entries > max_entries ||
 		    (entries == 0 && (bp != NULL || depth != 0)))
 			goto corrupt;
+
+		/*
+		 * The first extent/index key in a child node must match the key
+		 * stored in its parent index entry (ext4_ext_check semantics).
+		 */
+		if (bp != NULL) {
+			u32_t first_key;
+
+			if (!have_expected_first || entries == 0)
+				goto corrupt;
+			memcpy(&first_key, node + 12, sizeof(first_key));
+			first_key = (u32_t)conv4(le_CPU, first_key);
+			if (first_key != expected_first_key)
+				goto corrupt;
+		}
 
 		/* External extent nodes carry a checksum after their max array. */
 		if (bp != NULL &&
@@ -413,6 +429,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 		{
 			block64_t selected_child = 0, child;
 			u32_t previous_key = 0, logical_first, child_lo;
+			u32_t selected_key = 0;
 			u16_t child_hi;
 			int have_previous = FALSE, found = FALSE;
 
@@ -436,6 +453,7 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 				have_previous = TRUE;
 				if (logical_first <= logical) {
 					selected_child = child;
+					selected_key = logical_first;
 					found = TRUE;
 				}
 			}
@@ -454,6 +472,8 @@ ext4_extent_map(struct inode *rip, u32_t logical)
 			node = (const unsigned char *)b_data(bp);
 			node_size = rip->i_sp->s_block_size;
 			expected_depth = depth - 1;
+			expected_first_key = selected_key;
+			have_expected_first = TRUE;
 		}
 	}
 
