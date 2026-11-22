@@ -731,6 +731,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	block64_t new_block, new_parent_block, new_grandparent_block;
 	block64_t selected_block;
 	u32_t first_key, right_key, root_key, split_parent_key;
+	u32_t grandparent_root_key;
 	u32_t split_grandparent_key;
 	u16_t left_entries, right_entries, parent_new_max;
 	u16_t split_left_entries, split_right_entries;
@@ -889,19 +890,18 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	    extent_get32(parent_node + 12) != grandparent_key)
 		goto corrupt;
 	if (split_grandparent) {
-		u32_t root_key_check;
-
-		root_key_check = extent_get32(root_node + 12 +
+		if (root_entries >= root_max || root_index >= root_entries)
+			goto corrupt;
+		grandparent_root_key = extent_get32(root_node + 12 +
 		    (size_t)root_index * 12);
-		if (root_entries >= root_max || root_index >= root_entries ||
-		    grandparent_upper_bound <= root_key_check ||
+		if (grandparent_upper_bound <= grandparent_root_key ||
 		    grandparent_upper_bound > (u64_t)UINT32_MAX + 1 ||
 		    (root_index + 1 < root_entries &&
 		    grandparent_upper_bound != extent_get32(root_node + 12 +
 		    (size_t)(root_index + 1) * 12)) ||
 		    !extent_root_grandparent_matches(rip, root_node,
 		    root_entries, root_max, root_index, grandparent_block,
-		    root_key_check))
+		    grandparent_root_key))
 			goto corrupt;
 	}
 
@@ -1134,9 +1134,12 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(r);
 		}
-		if (grandparent_index + 1 < grandparent_entries &&
+		if ((split_grandparent &&
+		    extent_get32(grandparent_node + 12) !=
+		    grandparent_root_key) ||
+		    (grandparent_index + 1 < grandparent_entries &&
 		    parent_upper_bound != extent_get32(grandparent_node + 12 +
-		    (size_t)(grandparent_index + 1) * 12)) {
+		    (size_t)(grandparent_index + 1) * 12))) {
 			extent_release_leaf(rip, grandparent_bp, FALSE);
 			extent_release_leaf(rip, new_parent_bp, FALSE);
 			free_block(rip->i_sp, new_parent_block);
