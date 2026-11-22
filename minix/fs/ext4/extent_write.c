@@ -739,7 +739,7 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    block_to_free == parent_block ||
 			    (root_depth == 1 &&
 			    (root_entries != 1 || parent_index != 0 ||
-			    parent_key_node != NULL))) {
+			    parent_block != NO_BLOCK))) {
 				extent_release_leaf(rip, leaf_bp, FALSE);
 				return(EOPNOTSUPP);
 			}
