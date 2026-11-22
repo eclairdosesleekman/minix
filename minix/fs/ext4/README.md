@@ -182,14 +182,20 @@ read-write mode.
   validated before the payload is exposed. Regular-file writes and truncation
   update the existing inline payload in place, but cannot grow the on-disk
   `system.data` value or exceed the capacity already present in the inode.
-  Inline directories support lookup, enumeration, and deletion of non-dot
-  entries. The implicit `.` and `..` entries are synthesized; the 56-byte
-  dirent area after the parent inode and the `system.data` continuation are
-  validated and edited as separate regions. Deletion leaves a first dirent
-  as an unused slot or merges a later dirent into its predecessor within the
-  same area; it never shifts data across the inline/xattr boundary. Creation,
-  hard-link insertion, rename involving an inline parent, and rmdir of an
-  inline directory remain unsupported. EA-inode-backed `system.data` values
+  Inline directories support lookup, enumeration, insertion into existing
+  record slack, and deletion of non-dot entries. The implicit `.` and `..`
+  entries are synthesized; the 56-byte dirent area after the parent inode and
+  the `system.data` continuation are validated and edited as separate
+  regions. Insertion reuses an unused record or splits slack from a live
+  record, preserving any usable tail as a free record; deletion leaves a
+  first dirent as an unused slot or merges a later dirent into its predecessor
+  within the same area. Neither operation shifts data across the inline/xattr
+  boundary, changes the directory size, or grows the `system.data` value.
+  Creating files, directories, special files, and symlinks, and hard-linking
+  non-directory inodes, is supported only when an existing record area has
+  enough slack; otherwise creation returns `ENOSPC`. Rename involving an
+  inline parent and rmdir of an inline directory remain unsupported.
+  EA-inode-backed `system.data` values
   are read and checksum/hash validated for inline files, symlinks, and
   directories on read-only mounts, up to the 64 KiB xattr-value limit. No
   get/list-xattr API is provided; VM page mapping remains unsupported.
@@ -349,8 +355,10 @@ implementation.
   detach remain unsupported.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
-- Existing restrictions still apply: recovery, MMP, inline
-  directories, inline-data xattr growth, encryption, casefold, and unsupported feature flags are rejected. The filesystem must be clean,
+- Existing restrictions still apply: recovery, MMP, rename involving an
+  inline parent, rmdir of an inline directory, inline-data xattr growth,
+  encryption, casefold, and unsupported feature flags are rejected. The
+  filesystem must be clean,
   with an empty legacy orphan list. `orphan_file` is supported only on
   read-only mounts with no pending orphan recovery, as described above.
 - Without `huge_file`, inode writes fail with `EFBIG` rather than silently
@@ -889,18 +897,24 @@ page mapping remain unsupported.
 For inline-directory coverage, create nested small directories so some entries
 remain in the 56-byte inode area and others spill into `system.data`. Verify
 lookup of ordinary names, `.`, and `..`, plus repeated getdents calls with
-small output buffers and seeks to returned cookies. Unlink regular files from
-both dirent areas, including the first record and a later record in each area;
-also remove an empty non-inline child directory whose parent entry is in each
-area. Verify surviving lookup/readdir results, unchanged inline size and xattr
-value length, updated parent link counts, and valid inode checksums after
-unmount. Repeat on an ordinary inline-data image with `metadata_csum` enabled
-and `ea_inode` disabled. Creating/linking entries, renaming with an inline
-parent, moving an inline directory across parents, replacing an inline
-directory during rename, and rmdir of an inline directory must fail before
-mutation. Corrupt the stored parent inode and each dirent area's record
-lengths, inode numbers, and names; lookup or readdir must report `EIO`. Run
-`e2fsck -fn` on the unmounted images after testing.
+small output buffers and seeks to returned cookies. Create files, directories,
+symlinks, and special files, and add hard links to regular files, when the
+existing dirent records have enough slack in each area. Exercise both reuse
+of an unused record and splitting the trailing slack from a live record;
+verify that any remainder is a valid unused record and that names in both
+areas remain reachable. Fill both areas so no record can fit another name:
+creation must return `ENOSPC` without changing the parent or leaking the
+tentative inode. Unlink regular files from both dirent areas, including the
+first record and a later record in each area; also remove an empty non-inline
+child directory whose parent entry is in each area. Verify surviving
+lookup/readdir results, unchanged directory size and xattr value length,
+updated parent link counts, and valid inode checksums after unmount. Repeat on
+an ordinary inline-data image with `metadata_csum` enabled and `ea_inode`
+disabled. Renaming with an inline parent, moving an inline directory across
+parents, replacing an inline directory during rename, and rmdir of an inline
+directory must fail before mutation. Corrupt the stored parent inode and each
+dirent area's record lengths, inode numbers, and names; lookup or readdir must
+report `EIO`. Run `e2fsck -fn` on the unmounted images after testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
 `metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:
