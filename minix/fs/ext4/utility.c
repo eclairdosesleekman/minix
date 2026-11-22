@@ -3,6 +3,7 @@
  */
 
 #include "fs.h"
+#include <string.h>
 #include "buf.h"
 #include "inode.h"
 #include "super.h"
@@ -697,7 +698,7 @@ int ext4_valid_dirent(const struct ext2_disk_dir_desc *dp,
 
         /* A POSIX filename cannot contain NUL or slash. */
         for (i = 0; i < dp->d_name_len; i++) {
-            if (dp->d_name[i] == '\\0' || dp->d_name[i] == '/')
+            if (dp->d_name[i] == '\0' || dp->d_name[i] == '/')
                 return FALSE;
         }
 
