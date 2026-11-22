@@ -286,8 +286,9 @@ implementation.
   free entry, and full depth-one plus depth-two nodes can split together under
   a depth-three inode root or a depth-four root's depth-three external node
   when that ancestor has room. Exclusive logical-block bounds inherited from
-  every ancestor are revalidated before publication. A full inode root, a full
-  depth-three ancestor, a deeper cascade, or an insertion that would change
+  every ancestor are revalidated before publication. A full depth-two or
+  depth-three inode root when a new root entry is required, a full depth-three
+  external ancestor, a deeper cascade, or an insertion that would change
   the selected leaf's first key without supported ancestor propagation is
   rejected with `EOPNOTSUPP` or `EFBIG` before changing the mapping. General
   index-node rebalancing and inode-root growth beyond the documented
@@ -628,9 +629,9 @@ new root key equals the first key in the new index node, the old root key is
 unchanged, all child pointers are in order, both index-node checksums and both
 leaf checksums validate with `metadata_csum`, and `i_blocks` accounts for
 the data block plus two new metadata blocks. Repeat without `metadata_csum`.
-A full inode root, or an ancestor chain beyond the bounded root-depth-three
-and depth-four cases below, must remain unsupported and leave the image
-unchanged.
+A depth-two inode root with no free entry, or an ancestor chain beyond the
+bounded root-depth-three and depth-four cases below, must remain unsupported
+and leave the image unchanged.
 Unmount and run `e2fsck -fn`.
 
 For depth-three and deeper root trees, prepare a full depth-one external
@@ -659,9 +660,9 @@ key. Verify all six modified/new external nodes (two leaves, two depth-one
 nodes, two depth-two nodes) pass checksums with `metadata_csum`, the original
 first keys and inherited bounds remain intact, and `i_blocks` includes the
 data block plus three metadata blocks. Repeat without `metadata_csum`.
-A full inode root, a full depth-two ancestor under a depth-four root whose
-selected depth-three node has no free slot, or any further cascading split
-remains unsupported. Run `e2fsck -fn` after unmount.
+A depth-three inode root with no free entry, a full depth-two ancestor under
+a depth-four root whose selected depth-three node has no free slot, or any
+further cascading split remains unsupported. Run `e2fsck -fn` after unmount.
 
 For a depth-four inode root, prepare a tree whose selected depth-one parent and
 depth-two ancestor are full while their containing depth-three external node
