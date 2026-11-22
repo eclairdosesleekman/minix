@@ -493,9 +493,19 @@ int read_super(register struct super_block *sp)
 			sp->s_csum_seed = ext4_crc32c(~0U, sp->s_uuid,
 			    sizeof(sp->s_uuid));
 		}
-	} else if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_CSUM_SEED)) {
-		/* A checksum seed has no meaning without metadata_csum. */
-		return(EINVAL);
+	} else {
+		if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_CSUM_SEED)) {
+			/* A checksum seed has no meaning without metadata_csum. */
+			return(EINVAL);
+		}
+		/*
+		 * EA inode value hashes use the UUID-derived CRC32C seed even
+		 * when metadata_csum is disabled. Linux ext4 initializes this
+		 * seed for either metadata_csum or ea_inode filesystems.
+		 */
+		if (HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE))
+			sp->s_csum_seed = ext4_crc32c(~0U, sp->s_uuid,
+			    sizeof(sp->s_uuid));
 	}
 	sp->s_is_ext4 = TRUE;
 	if (sp->s_magic != SUPER_MAGIC || sp->s_log_block_size > 6)
