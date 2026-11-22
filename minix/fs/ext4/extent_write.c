@@ -892,7 +892,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		return(EIO);
 	}
 
-	if (split_parent) {
+	if (split_parent || split_parent_ancestor) {
 		parent_records_size = (size_t)(parent_entries + 1) * 12;
 		parent_records = malloc(parent_records_size);
 		if (parent_records == NULL) {
