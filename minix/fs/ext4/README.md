@@ -57,10 +57,11 @@ read-write mode.
   offsets are bounded before EA inode references are followed. Legacy
   Lustre-style EA inode backpointers are recognized. EA storage inodes remain
   outside the pathname namespace, and attribute values are not exposed through
-  a get/list-xattr API. Inline-data `system.data` values stored in EA inodes
-  are still unsupported by the inline-data decoder. Writable mounts are
-  rejected because xattr reference counts and EA inode lifetimes are not
-  maintained.
+  a get/list-xattr API. Small inline-data `system.data` values may be read from
+  EA inodes for inline regular files, symlinks, and directories; their data is
+  copied into the in-core inline payload only after the EA inode value and
+  hashes have been verified. Writable mounts are rejected because xattr
+  reference counts and EA inode lifetimes are not maintained.
 
 - External xattr blocks are structurally validated before an inode is exposed,
   even when `metadata_csum` is disabled. The 32-byte header, reference count,
@@ -144,8 +145,9 @@ read-write mode.
   Inline directories can be searched and enumerated read-only. Their
   implicit `.` and `..` entries are synthesized; the 56-byte dirent area
   after the parent inode and the `system.data` continuation are validated as
-  separate regions. Inline-directory mutation, EA-inode-backed values, and
-  VM page mapping remain unsupported.
+  separate regions. EA-inode-backed `system.data` values are read-only and
+  limited by the 196-byte in-core continuation buffer. Inline-directory
+  mutation and VM page mapping remain unsupported.
 - Read-write support for clean filesystems without a journal or indexed
   directories. Lazy `BLOCK_UNINIT` and `INODE_UNINIT` bitmaps are synthesized
   from backup-super/GDT locations and each group's block bitmap, inode bitmap,
@@ -520,9 +522,13 @@ already allocated inline payload capacity, and shrink/extend it with
 truncate. Writes or truncates beyond the current inline capacity must fail
 without changing the inode. Corrupt the inode-body xattr header, entry
 terminator, duplicate `system.data` entry, value offset/size, or inode size
-independently and confirm the inode is rejected with `EIO`. Payloads larger
-than the in-core 256-byte bound, external xattr-inode values, growth requiring
-a larger `system.data` xattr value, and page mapping must remain unsupported.
+independently and confirm the inode is rejected with `EIO`. For a read-only
+`ea_inode,inline_data` test image containing an EA-inode-backed
+`system.data` entry, verify the value bytes are returned intact and mutations
+to the EA inode's value hash, entry hash, extent mapping, or inode checksum
+cause `EIO`. Payloads larger than the in-core 256-byte bound, external xattr
+values, growth requiring a larger `system.data` xattr value, and page mapping
+must remain unsupported.
 For inline-directory coverage, create nested small directories so some entries
 remain in the 56-byte inode area and others spill into `system.data`. Verify
 lookup of ordinary names, `.`, and `..`, plus repeated getdents calls with
