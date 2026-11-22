@@ -575,26 +575,44 @@ ext4_verify_dir_block(struct inode *rip, const unsigned char *data,
 
 
 /*
- * Regenerate the checksum on an ordinary ext4 directory leaf block. Indexed
- * directories use dx tails and require HTree mutation support; keep those
- * updates explicitly unsupported rather than writing a leaf checksum there.
+ * Regenerate an ext4 directory-leaf checksum. HTree leaves use the same
+ * 12-byte checksum tail as ordinary directories; the indexed root and
+ * internal dx nodes have different checksum layouts and must not be passed
+ * to this routine. logical_block identifies the root block explicitly.
  */
 int
-ext4_update_dir_block_csum(struct inode *rip, unsigned char *data)
+ext4_update_dir_block_csum(struct inode *rip, unsigned char *data,
+	u64_t logical_block)
 {
 	unsigned int block_size, tail_offset;
 	unsigned char *tail;
 	u32_t crc;
 
-	if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM))
-		return(OK);
-	if (rip->i_sp->s_creator_os != EXT4_OS_LINUX ||
-	    (rip->i_flags & EXT2_INDEX_FL))
-		return(EOPNOTSUPP);
-
 	block_size = rip->i_sp->s_block_size;
 	if (block_size < 32)
 		return(EIO);
+	if ((rip->i_flags & EXT2_INDEX_FL) && logical_block == 0)
+		return(EOPNOTSUPP);
+	if (!HAS_RO_COMPAT_FEATURE(rip->i_sp, RO_COMPAT_METADATA_CSUM))
+		return(OK);
+	if (rip->i_sp->s_creator_os != EXT4_OS_LINUX)
+		return(EOPNOTSUPP);
+
+	/*
+	 * An internal dx node starts with a fake full-block dirent and stores
+	 * its count/limit overlay at offset eight. It has a dx checksum tail,
+	 * not the leaf checksum tail handled below.
+	 */
+	if ((rip->i_flags & EXT2_INDEX_FL) &&
+	    ext4_csum_read32(data) == 0 && data[6] == 0 &&
+	    ext4_dir_rec_len((const struct ext2_disk_dir_desc *)data,
+	    block_size) == block_size &&
+	    ext4_csum_read16(data + 8) != 0 &&
+	    ext4_csum_read16(data + 10) != 0 &&
+	    ext4_csum_read16(data + 10) <= ext4_csum_read16(data + 8) &&
+	    ext4_csum_read16(data + 8) <= (block_size - 16) / 8)
+		return(EOPNOTSUPP);
+
 	tail_offset = block_size - 12;
 	tail = data + tail_offset;
 	if (ext4_csum_read32(tail) != 0 ||
