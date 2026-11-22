@@ -470,8 +470,13 @@ int truncate_inode(
   file_type = rip->i_mode & I_TYPE;	/* check to see if file is special */
   if (file_type == I_CHAR_SPECIAL || file_type == I_BLOCK_SPECIAL)
 	return(EINVAL);
-  if (newsize > rip->i_sp->s_max_size)	/* don't let inode grow too big */
-	return(EFBIG);
+  if (newsize < 0)
+	return EINVAL;
+  if (rip->i_sp->s_version == V4) {
+	if ((u64_t)newsize > rip->i_sp->s_mfs4_max_file_size)
+		return EFBIG;
+  } else if (newsize > rip->i_sp->s_max_size)
+	return EFBIG;
 
   /* Free the actual space if truncating. */
   if (newsize < rip->i_size) {
@@ -543,9 +548,16 @@ static int freesp_inode(
 	 */
 	e = end/zone_size;
 	if(end == rip->i_size && (end % zone_size)) e++;
-	for(p = nextblock(start, zone_size)/zone_size; p < e; p ++) {
-		if((r = write_map(rip, p*zone_size, NO_ZONE, WMAP_FREE)) != OK)
-			return(r);
+	p = nextblock(start, zone_size)/zone_size;
+	if (rip->i_sp->s_version == V4) {
+		if ((r = mfs4_free_map_range(rip, (u64_t)p, (u64_t)e)) != OK)
+			return r;
+	} else {
+		for (; p < e; p++) {
+			if ((r = write_map(rip, p*zone_size, NO_ZONE,
+			    WMAP_FREE)) != OK)
+				return r;
+		}
 	}
 
   }
