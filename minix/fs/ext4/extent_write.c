@@ -1898,14 +1898,16 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 
 	if (op & WMAP_FREE) {
 		struct buf *parent_key_bp, *grandparent_bp, *ancestor_bp;
+		struct buf *greatgrandparent_bp;
 		unsigned char *parent_key_node, *parent_key_entry;
 		unsigned char *grandparent_node, *grandparent_entry;
 		unsigned char *ancestor_node, *ancestor_entry;
+		unsigned char *greatgrandparent_node, *greatgrandparent_entry;
 		u64_t block_to_free, sectors, blocks_to_free;
 		u32_t new_parent_key;
 		int update_parent_key, remove_empty_leaf, remove_empty_parent;
 		int detach_from_root, detach_from_grandparent;
-		int detach_from_ancestor;
+		int detach_from_ancestor, detach_from_greatgrandparent;
 
 		parent_key_bp = NULL;
 		parent_key_node = NULL;
@@ -1913,12 +1915,15 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		grandparent_node = NULL;
 		ancestor_bp = NULL;
 		ancestor_node = NULL;
+		greatgrandparent_bp = NULL;
+		greatgrandparent_node = NULL;
 		update_parent_key = FALSE;
 		remove_empty_leaf = FALSE;
 		remove_empty_parent = FALSE;
 		detach_from_root = FALSE;
 		detach_from_grandparent = FALSE;
 		detach_from_ancestor = FALSE;
+		detach_from_greatgrandparent = FALSE;
 		if (i == entries) {
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(OK);	/* A hole needs no work. */
@@ -1944,10 +1949,23 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    parent_entries == 1 && parent_index == 0 &&
 			    grandparent_entries == 1 && grandparent_index == 0 &&
 			    ancestor_entries > 1 && ancestor_index > 0;
+			/*
+			 * At root depth five, the selected depth-three ancestor may
+			 * itself be a sole-child node. Detach it only from a non-first
+			 * slot in a depth-four parent that retains another child.
+			 */
+			detach_from_greatgrandparent = root_depth == 5 &&
+			    parent_entries == 1 && parent_index == 0 &&
+			    grandparent_entries == 1 && grandparent_index == 0 &&
+			    ancestor_entries == 1 && ancestor_index == 0 &&
+			    greatgrandparent_entries > 1 &&
+			    greatgrandparent_index > 0;
 			remove_empty_parent = detach_from_root ||
-			    detach_from_grandparent || detach_from_ancestor;
-			blocks_to_free = detach_from_ancestor ? 4 :
-			    (remove_empty_parent ? 3 : 2);
+			    detach_from_grandparent || detach_from_ancestor ||
+			    detach_from_greatgrandparent;
+			blocks_to_free = detach_from_greatgrandparent ? 5 :
+			    (detach_from_ancestor ? 4 :
+			    (remove_empty_parent ? 3 : 2));
 			if ((parent_entries <= 1 && root_depth != 1 &&
 			    !remove_empty_parent) ||
 			    sectors == 0 || sectors > ~(u64_t)0 / blocks_to_free ||
