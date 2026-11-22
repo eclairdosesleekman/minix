@@ -2005,6 +2005,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    greatgrandparent_block == parent_block ||
 			    greatgrandparent_block == leaf_block ||
 			    greatgrandparent_block == block_to_free ||
+			    ancestor_block == grandparent_block ||
+			    ancestor_block == parent_block ||
+			    ancestor_block == leaf_block ||
+			    ancestor_block == block_to_free ||
 			    ancestor_key != grandparent_key ||
 			    grandparent_key != parent_key ||
 			    greatgrandparent_key != ancestor_first_key ||
@@ -2094,6 +2098,35 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 						extent_release_leaf(rip, parent_key_bp, FALSE);
 						extent_release_leaf(rip, leaf_bp, FALSE);
 						return(r);
+					}
+					if (greatgrandparent_index + 1 <
+					    greatgrandparent_entries) {
+						u64_t expected_upper;
+
+						expected_upper = extent_get32(
+						    greatgrandparent_node + 12 +
+						    (size_t)(greatgrandparent_index + 1) * 12);
+						if (ancestor_upper_bound != expected_upper) {
+							extent_release_leaf(rip,
+							    greatgrandparent_bp, FALSE);
+							extent_release_leaf(rip, ancestor_bp,
+							    FALSE);
+							extent_release_leaf(rip, grandparent_bp,
+							    FALSE);
+							extent_release_leaf(rip, parent_key_bp,
+							    FALSE);
+							extent_release_leaf(rip, leaf_bp, FALSE);
+							return(EIO);
+						}
+					} else if (ancestor_upper_bound !=
+					    greatgrandparent_upper_bound) {
+						extent_release_leaf(rip, greatgrandparent_bp,
+						    FALSE);
+						extent_release_leaf(rip, ancestor_bp, FALSE);
+						extent_release_leaf(rip, grandparent_bp, FALSE);
+						extent_release_leaf(rip, parent_key_bp, FALSE);
+						extent_release_leaf(rip, leaf_bp, FALSE);
+						return(EIO);
 					}
 				}
 			}
