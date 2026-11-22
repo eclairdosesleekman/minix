@@ -803,10 +803,14 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 			return(ENOSPC);
 		}
 		if (new_parent_block < rip->i_sp->s_first_data_block ||
-		    new_parent_block >= rip->i_sp->s_blocks_count ||
-		    new_parent_block > 0xffffffffffffULL ||
-		    new_parent_block == new_block) {
-			free_block(rip->i_sp, new_parent_block);
+		    new_parent_block >= rip->i_sp->s_blocks_count)
+			panic("ext4: allocator returned invalid extent-tree block");
+		if (new_parent_block > 0xffffffffffffULL ||
+		    new_parent_block == new_block ||
+		    new_parent_block == physical) {
+			if (new_parent_block != new_block &&
+			    new_parent_block != physical)
+				free_block(rip->i_sp, new_parent_block);
 			extent_release_leaf(rip, new_bp, FALSE);
 			free_block(rip->i_sp, new_block);
 			free(records);
