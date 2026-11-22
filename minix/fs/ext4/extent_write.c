@@ -1150,6 +1150,139 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		}
 	}
 
+	if (split_grandparent) {
+		grandparent_records_size =
+		    (size_t)(grandparent_entries + 1) * 12;
+		grandparent_records = malloc(grandparent_records_size);
+		if (grandparent_records == NULL) {
+			extent_release_leaf(rip, grandparent_bp, FALSE);
+			extent_release_leaf(rip, new_parent_bp, FALSE);
+			free_block(rip->i_sp, new_parent_block);
+			extent_release_leaf(rip, new_bp, FALSE);
+			free_block(rip->i_sp, new_block);
+			free(parent_records);
+			free(records);
+			extent_release_leaf(rip, parent_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(ENOMEM);
+		}
+		grandparent_left_entries =
+		    (u16_t)((grandparent_entries + 1) / 2);
+		grandparent_right_entries =
+		    (u16_t)(grandparent_entries + 1 -
+		    grandparent_left_entries);
+		memcpy(grandparent_records, grandparent_node + 12,
+		    (size_t)(grandparent_index + 1) * 12);
+		extent_put32(grandparent_records +
+		    (size_t)(grandparent_index + 1) * 12, split_parent_key);
+		extent_put32(grandparent_records +
+		    (size_t)(grandparent_index + 1) * 12 + 4,
+		    (u32_t)new_parent_block);
+		extent_put16(grandparent_records +
+		    (size_t)(grandparent_index + 1) * 12 + 8,
+		    (u16_t)(new_parent_block >> 32));
+		extent_put16(grandparent_records +
+		    (size_t)(grandparent_index + 1) * 12 + 10, 0);
+		memcpy(grandparent_records +
+		    (size_t)(grandparent_index + 2) * 12,
+		    grandparent_node + 12 +
+		    (size_t)(grandparent_index + 1) * 12,
+		    (size_t)(grandparent_entries - grandparent_index - 1) * 12);
+		split_grandparent_key = extent_get32(grandparent_records +
+		    (size_t)grandparent_left_entries * 12);
+		if (grandparent_left_entries == 0 ||
+		    grandparent_right_entries == 0 ||
+		    grandparent_left_entries > grandparent_max ||
+		    grandparent_right_entries > grandparent_max ||
+		    split_grandparent_key <= extent_get32(grandparent_records) ||
+		    (u64_t)split_grandparent_key >= grandparent_upper_bound) {
+			extent_release_leaf(rip, grandparent_bp, FALSE);
+			free(grandparent_records);
+			extent_release_leaf(rip, new_parent_bp, FALSE);
+			free_block(rip->i_sp, new_parent_block);
+			extent_release_leaf(rip, new_bp, FALSE);
+			free_block(rip->i_sp, new_block);
+			free(parent_records);
+			free(records);
+			extent_release_leaf(rip, parent_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EIO);
+		}
+
+		new_grandparent_block = alloc_block(rip, NO_BLOCK);
+		if (new_grandparent_block == NO_BLOCK) {
+			extent_release_leaf(rip, grandparent_bp, FALSE);
+			free(grandparent_records);
+			extent_release_leaf(rip, new_parent_bp, FALSE);
+			free_block(rip->i_sp, new_parent_block);
+			extent_release_leaf(rip, new_bp, FALSE);
+			free_block(rip->i_sp, new_block);
+			free(parent_records);
+			free(records);
+			extent_release_leaf(rip, parent_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(ENOSPC);
+		}
+		if (new_grandparent_block < rip->i_sp->s_first_data_block ||
+		    new_grandparent_block >= rip->i_sp->s_blocks_count)
+			panic("ext4: allocator returned invalid extent-tree block");
+		if (new_grandparent_block > 0xffffffffffffULL ||
+		    new_grandparent_block == new_parent_block ||
+		    new_grandparent_block == new_block ||
+		    new_grandparent_block == physical ||
+		    new_grandparent_block == parent_block ||
+		    new_grandparent_block == grandparent_block ||
+		    new_grandparent_block == leaf_block) {
+			if (new_grandparent_block != new_parent_block &&
+			    new_grandparent_block != new_block &&
+			    new_grandparent_block != physical &&
+			    new_grandparent_block != parent_block &&
+			    new_grandparent_block != grandparent_block &&
+			    new_grandparent_block != leaf_block)
+				free_block(rip->i_sp, new_grandparent_block);
+			extent_release_leaf(rip, grandparent_bp, FALSE);
+			free(grandparent_records);
+			extent_release_leaf(rip, new_parent_bp, FALSE);
+			free_block(rip->i_sp, new_parent_block);
+			extent_release_leaf(rip, new_bp, FALSE);
+			free_block(rip->i_sp, new_block);
+			free(parent_records);
+			free(records);
+			extent_release_leaf(rip, parent_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EIO);
+		}
+		new_grandparent_bp = get_block(rip->i_dev,
+		    new_grandparent_block, NO_READ);
+		if (new_grandparent_bp == NULL) {
+			free_block(rip->i_sp, new_grandparent_block);
+			extent_release_leaf(rip, grandparent_bp, FALSE);
+			free(grandparent_records);
+			extent_release_leaf(rip, new_parent_bp, FALSE);
+			free_block(rip->i_sp, new_parent_block);
+			extent_release_leaf(rip, new_bp, FALSE);
+			free_block(rip->i_sp, new_block);
+			free(parent_records);
+			free(records);
+			extent_release_leaf(rip, parent_bp, FALSE);
+			extent_release_leaf(rip, leaf_bp, FALSE);
+			return(EIO);
+		}
+		new_grandparent_node =
+		    (unsigned char *)b_data(new_grandparent_bp);
+		memset(new_grandparent_node, 0, rip->i_sp->s_block_size);
+		extent_put16(new_grandparent_node, EXT4_EXTENT_MAGIC);
+		extent_put16(new_grandparent_node + 2,
+		    grandparent_right_entries);
+		extent_put16(new_grandparent_node + 4, grandparent_max);
+		extent_put16(new_grandparent_node + 6, 2);
+		extent_put32(new_grandparent_node + 8, 0);
+		memcpy(new_grandparent_node + 12,
+		    grandparent_records +
+		    (size_t)grandparent_left_entries * 12,
+		    (size_t)grandparent_right_entries * 12);
+	}
+
 	/* The existing leaf keeps its key; the new leaf gets the upper half. */
 	memcpy(leaf + 12, records, (size_t)left_entries * 12);
 	memset(leaf + 12 + (size_t)left_entries * 12, 0,
