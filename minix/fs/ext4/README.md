@@ -627,8 +627,8 @@ a left node retaining its original first key and a right sibling; the
 depth-two ancestor must receive the sibling key/pointer immediately after
 the original child, including when the original child is entry zero. Verify
 the new sibling key is within the selected parent's inherited upper bound,
-the ancestor first key remains unchanged, all three external checksums are
-regenerated with `metadata_csum`, and `i_blocks` includes the new leaf,
+the ancestor first key remains unchanged, all five modified external
+node/leaf checksums are regenerated with `metadata_csum`, and `i_blocks` includes the new leaf,
 sibling index node, and data block. Repeat at root depths three, four, and
 five when fixtures can be generated, with and without `metadata_csum`.
 A full depth-two ancestor and any cascading ancestor split must fail without
