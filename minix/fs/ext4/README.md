@@ -180,10 +180,13 @@ read-write mode.
   Sibling subtrees are checked when traversed rather than eagerly scanned at
   mount.
 - Inline extent roots and existing external extent-tree leaves can be updated
-  in place while allocating, writing, and truncating files. External-leaf
-  updates are bounded: they must preserve the leaf's first logical-block key
-  and fit in the existing leaf. Writes into unwritten extents convert the
-  affected block to an initialized extent.
+  in place while allocating, writing, and truncating files. When an external
+  leaf is full, a depth-one inode root can split it into two leaves if the
+  root has a spare index slot. The old leaf keeps its first logical-block key;
+  the new leaf's first key is inserted immediately after it in the inode root.
+  Both leaf checksums and the inode block count are updated. This does not
+  rebalance deeper trees or grow a full inode root. Writes into unwritten
+  extents convert the affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
 
@@ -237,12 +240,14 @@ implementation.
   operations do not maintain the orphan file.
 - **Explicit read-only feature:** `RO_COMPAT_READONLY` always rejects a
   writable mount, independent of the requested mount mode.
-- **Bounded extent-tree mutation:** an external leaf can be edited only when
-  the operation fits in its existing slots and does not change its first
-  logical-block key. Operations that need a new node, split/rebalance a node,
-  insert before a leaf's first extent, or remove the first block of a leaf
-  return `EOPNOTSUPP` or `EFBIG`. These limits avoid changing parent index
-  entries without a complete tree-rebalancing implementation.
+- **Bounded extent-tree mutation:** full-leaf splitting is supported only
+  for a depth-one inode root with at least one free root index slot. If the
+  root is full, the tree is deeper than one external level, or insertion
+  would precede a leaf's first logical-block key, the operation returns
+  `EOPNOTSUPP` or `EFBIG` before changing the mapping. General deeper-tree
+  rebalancing, root growth, and removal of the first block in an external
+  leaf remain unsupported; those operations would require updating ancestor
+  keys and/or restructuring multiple levels.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, inline
@@ -531,12 +536,19 @@ sparse extension, truncating, renaming, linking, unlinking, directory creation,
 and long symlinks. Include files with unwritten extents and files whose
 inline extent root reaches its four-entry capacity. To exercise external-leaf
 updates, first populate a disposable image on Linux with a fragmented file
-containing more than four extents, then attach that image to MINIX; this server
-does not yet create or split external extent nodes. On that file, exercise
-writes into holes within a leaf, unwritten-extent conversion, and tail
-truncation while keeping the first extent of each leaf intact. Operations that
-require changing a leaf's first logical-block key or splitting a full leaf
-must fail without damaging the filesystem. Also corrupt the first
+containing several hundred extents but fewer than four full external leaves,
+so its tree has a depth-one inode root. Attach that image to MINIX and write
+one block into a hole in a full external leaf, choosing a physical allocation
+that cannot merge with either neighboring extent. The write should split the
+leaf, add a root index entry, and remain readable after unmount/remount.
+Verify the resulting extent tree with `debugfs`/ `filefrag` and `e2fsck -fn`,
+both with and without `metadata_csum`. Also test a tree whose inode root has
+all four index slots occupied: a further full-leaf split must fail with
+`EFBIG` and leave the image clean. On the supported depth-one image, also
+exercise writes into holes within a non-full leaf, unwritten-extent conversion,
+and tail truncation while keeping the first extent of each leaf intact.
+Operations that require changing a leaf's first logical-block key or growing
+a deeper/full inode root must fail without damaging the filesystem. Also corrupt the first
 logical-block key in an external child extent node without changing its parent
 index entry; lookup of a block in that subtree must fail with `EIO`, even when
 the child checksum is recomputed. Repeat for an intermediate index node and a
