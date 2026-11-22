@@ -158,9 +158,11 @@ read-write mode.
   entries must be sorted and non-overlapping, fit in the 32-bit logical-block
   address space, and map wholly within non-reserved filesystem blocks. Index
   keys must be strictly increasing and every child pointer must reference an
-  in-range non-reserved block. Empty external nodes are rejected; an empty
-  inline root remains valid. Sibling subtrees are checked when traversed rather
-  than eagerly scanned at mount.
+  in-range non-reserved block. When an external child node is traversed, its
+  first extent or index key must equal the parent index key used to reach it,
+  matching ext4's node-key invariant. Empty external nodes are rejected; an
+  empty inline root remains valid. Sibling subtrees are checked when traversed
+  rather than eagerly scanned at mount.
 - Inline extent roots and existing external extent-tree leaves can be updated
   in place while allocating, writing, and truncating files. External-leaf
   updates are bounded: they must preserve the leaf's first logical-block key
@@ -487,8 +489,12 @@ does not yet create or split external extent nodes. On that file, exercise
 writes into holes within a leaf, unwritten-extent conversion, and tail
 truncation while keeping the first extent of each leaf intact. Operations that
 require changing a leaf's first logical-block key or splitting a full leaf
-must fail without damaging the filesystem. Unmount cleanly and run
-`e2fsck -fn`. For the 64 KiB image, exercise
+must fail without damaging the filesystem. Also corrupt the first
+logical-block key in an external child extent node without changing its parent
+index entry; lookup of a block in that subtree must fail with `EIO`, even when
+the child checksum is recomputed. Repeat for an intermediate index node and a
+leaf node, and verify that a matching parent/child key remains readable.
+Unmount cleanly and run `e2fsck -fn`. For the 64 KiB image, exercise
 directory enumeration and enough create/unlink operations to split and merge
 records. Unmount cleanly and run `e2fsck -fn` on the host after each test.
 For the `huge_file` image, verify ordinary writes keep the on-disk high
