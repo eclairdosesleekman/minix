@@ -36,6 +36,7 @@ int mfs4_rw_inode(struct inode *rip, int rw_flag);
 block_t mfs4_read_map(struct inode *rip, off_t position);
 int mfs4_write_map(struct inode *rip, off_t position, zone_t new_block, int op);
 int mfs4_free_map_range(struct inode *rip, u64_t first_block, u64_t end_block);
+int mfs4_zero_eof_tail(struct inode *rip, u64_t old_eof, u64_t new_eof);
 int mfs3_inode_decode(struct inode *rip, const d2_inode *dip, int norm);
 int mfs3_inode_encode(const struct inode *rip, d2_inode *dip, int norm);
 
