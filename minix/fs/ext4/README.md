@@ -180,13 +180,15 @@ read-write mode.
   Sibling subtrees are checked when traversed rather than eagerly scanned at
   mount.
 - Inline extent roots and existing external extent-tree leaves can be updated
-  in place while allocating, writing, and truncating files. When an external
-  leaf is full, a depth-one inode root can split it into two leaves if the
-  root has a spare index slot. The old leaf keeps its first logical-block key;
-  the new leaf's first key is inserted immediately after it in the inode root.
-  Both leaf checksums and the inode block count are updated. This does not
-  rebalance deeper trees or grow a full inode root. Writes into unwritten
-  extents convert the affected block to an initialized extent.
+  in place while allocating, writing, and truncating files. Full external
+  leaves can be split under depth-one and depth-two inode roots when the
+  immediate parent index node has a free slot. The original leaf keeps its
+  first logical-block key; the new leaf key is inserted immediately after it
+  in the parent index. For depth-two trees, the external parent index checksum
+  is regenerated along with both leaf checksums. The inode block count includes
+  the extra extent-tree node. Full parents and trees deeper than two external
+  levels remain unsupported. Writes into unwritten extents convert the
+  affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
   inline extent root. Fast symlinks continue to store their target in the inode.
 
@@ -240,14 +242,14 @@ implementation.
   operations do not maintain the orphan file.
 - **Explicit read-only feature:** `RO_COMPAT_READONLY` always rejects a
   writable mount, independent of the requested mount mode.
-- **Bounded extent-tree mutation:** full-leaf splitting is supported only
-  for a depth-one inode root with at least one free root index slot. If the
-  root is full, the tree is deeper than one external level, or insertion
-  would precede a leaf's first logical-block key, the operation returns
-  `EOPNOTSUPP` or `EFBIG` before changing the mapping. General deeper-tree
-  rebalancing, root growth, and removal of the first block in an external
-  leaf remain unsupported; those operations would require updating ancestor
-  keys and/or restructuring multiple levels.
+- **Bounded extent-tree mutation:** full-leaf splitting is supported for
+  depth-one roots when the inode root has a free index slot, and for depth-two
+  roots when the selected external depth-one parent has a free slot. A full
+  parent, a tree deeper than two external levels, or an insertion that would
+  change the selected leaf's first logical-block key is rejected with
+  `EOPNOTSUPP` or `EFBIG` before changing the mapping. Splitting a full
+  intermediate index node, growing/rebalancing the inode root, and removing
+  the first block in an external leaf remain unsupported.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, inline
@@ -542,13 +544,25 @@ one block into a hole in a full external leaf, choosing a physical allocation
 that cannot merge with either neighboring extent. The write should split the
 leaf, add a root index entry, and remain readable after unmount/remount.
 Verify the resulting extent tree with `debugfs`/ `filefrag` and `e2fsck -fn`,
-both with and without `metadata_csum`. Also test a tree whose inode root has
-all four index slots occupied: a further full-leaf split must fail with
-`EFBIG` and leave the image clean. On the supported depth-one image, also
-exercise writes into holes within a non-full leaf, unwritten-extent conversion,
-and tail truncation while keeping the first extent of each leaf intact.
-Operations that require changing a leaf's first logical-block key or growing
-a deeper/full inode root must fail without damaging the filesystem. Also corrupt the first
+both with and without `metadata_csum`.
+
+For depth-two coverage, prepare a larger fragmented file whose inode root has
+depth two and whose selected depth-one external index node has at least one
+free entry while one of its external leaves is full. Write a block into a hole
+inside that full leaf, again ensuring the allocated physical block cannot
+merge with neighboring extents. The leaf should split and the new key should
+be inserted into the external parent index. Verify the parent and leaf
+checksums with `metadata_csum`, then inspect the tree and run `e2fsck -fn`.
+Also exercise a depth-two parent index node with no free entry: splitting its
+full leaf must fail with `EFBIG` and leave the image clean. Repeat the
+supported parent-with-space scenario on an image without `metadata_csum`.
+
+On the supported depth-one and depth-two images, also exercise writes into
+holes within a non-full leaf, unwritten-extent conversion, and tail truncation
+while keeping the first extent of each leaf intact. Operations that require
+changing a leaf's first logical-block key, splitting a full parent index node,
+or growing a depth-three-or-deeper tree must fail without damaging the
+filesystem. Also corrupt the first
 logical-block key in an external child extent node without changing its parent
 index entry; lookup of a block in that subtree must fail with `EIO`, even when
 the child checksum is recomputed. Repeat for an intermediate index node and a
