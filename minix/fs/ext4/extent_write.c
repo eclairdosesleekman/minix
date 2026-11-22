@@ -669,8 +669,8 @@ extent_prepare_parent_index(struct inode *rip,
 /*
  * Split a full external leaf when its immediate parent index node has room.
  * A full depth-one inode root can grow to depth two. A full external depth-one
- * index node can also split when its depth-two inode root has room. The
- * inherited exclusive upper bounds keep new entries inside their subtrees.
+ * index node can also split when its depth-two ancestor has room, including
+ * below deeper roots. The inherited bounds keep new entries in their subtrees.
  */
 static int
 extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
