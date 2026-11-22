@@ -44,6 +44,13 @@ int fs_chown(ino_t ino_nr, uid_t uid, gid_t gid, mode_t *mode)
   if( (rip = get_inode(fs_dev, ino_nr)) == NULL)
 	  return(EINVAL);
 
+  /* MFS3 cannot represent IDs wider than its 16-bit disk fields. */
+  if (rip->i_sp->s_version == V3 &&
+      (uid > 0xffffU || gid > 0xffffU)) {
+      put_inode(rip);
+      return(EOVERFLOW);
+  }
+
   rip->i_uid = uid;
   rip->i_gid = gid;
   rip->i_mode &= ~(I_SET_UID_BIT | I_SET_GID_BIT);
