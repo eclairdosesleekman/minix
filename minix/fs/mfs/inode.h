@@ -17,16 +17,20 @@
 
 #include "super.h"
 
+/*
+ * Format-independent in-memory inode. The MFS3 disk representation remains
+ * d2_inode (64 bytes) and must only be accessed through its codec.
+ */
 EXTERN struct inode {
   u16_t i_mode;		/* file type, protection, etc. */
-  u16_t i_nlinks;		/* how many links to this file */
-  u16_t i_uid;			/* user id of the file's owner */
-  u16_t i_gid;			/* group number */
-  i32_t i_size;			/* current file size in bytes */
-  u32_t i_atime;		/* time of last access (V2 only) */
-  u32_t i_mtime;		/* when was file data last changed */
-  u32_t i_ctime;		/* when was inode itself changed (V2 only)*/
-  u32_t i_zone[V2_NR_TZONES]; /* zone numbers for direct, ind, and dbl ind */
+  u32_t i_nlinks;		/* common 32-bit link count */
+  u32_t i_uid;		/* common 32-bit user ID */
+  u32_t i_gid;		/* common 32-bit group ID */
+  u64_t i_size;		/* common 64-bit file size in bytes */
+  i64_t i_atime;		/* signed Unix seconds */
+  i64_t i_mtime;		/* signed Unix seconds */
+  i64_t i_ctime;		/* signed Unix seconds */
+  u32_t i_zone[V2_NR_TZONES]; /* MFS3 slots; slot 9 reserved by MFS3 */
   
   /* The following items are not present on the disk. */
   dev_t i_dev;			/* which device is the inode on */
