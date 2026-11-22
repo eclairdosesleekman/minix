@@ -2151,6 +2151,20 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 				memset(ancestor_node + 12 +
 				    (size_t)(ancestor_entries - 1) * 12, 0, 12);
 				extent_put16(ancestor_node + 2, ancestor_entries - 1);
+			} else if (detach_from_greatgrandparent) {
+				/*
+				 * Remove the now-empty depth-three node from its
+				 * non-first slot in the depth-four index node.
+				 */
+				greatgrandparent_entry = greatgrandparent_node + 12 +
+				    (size_t)greatgrandparent_index * 12;
+				memmove(greatgrandparent_entry, greatgrandparent_entry + 12,
+				    (size_t)(greatgrandparent_entries -
+				    greatgrandparent_index - 1) * 12);
+				memset(greatgrandparent_node + 12 +
+				    (size_t)(greatgrandparent_entries - 1) * 12, 0, 12);
+				extent_put16(greatgrandparent_node + 2,
+				    greatgrandparent_entries - 1);
 			} else {
 				/* Remove this child; keep its parent nonempty. */
 				parent_key_entry = parent_key_node + 12 +
@@ -2174,12 +2188,21 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 				extent_release_leaf(rip, grandparent_bp, FALSE);
 				extent_release_leaf(rip, ancestor_bp, TRUE);
 			}
+			if (detach_from_greatgrandparent) {
+				extent_release_leaf(rip, grandparent_bp, FALSE);
+				extent_release_leaf(rip, ancestor_bp, FALSE);
+				extent_release_leaf(rip, greatgrandparent_bp, TRUE);
+			}
 			free_block(rip->i_sp, block_to_free);
 			free_block(rip->i_sp, leaf_block);
 			if (remove_empty_parent)
 				free_block(rip->i_sp, parent_block);
 			if (detach_from_ancestor)
 				free_block(rip->i_sp, grandparent_block);
+			if (detach_from_greatgrandparent) {
+				free_block(rip->i_sp, grandparent_block);
+				free_block(rip->i_sp, ancestor_block);
+			}
 			rip->i_blocks -= sectors * blocks_to_free;
 			if (!remove_empty_parent)
 				extent_release_leaf(rip, parent_key_bp, TRUE);
