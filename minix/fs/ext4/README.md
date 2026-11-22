@@ -193,8 +193,12 @@ read-write mode.
   boundary, changes the directory size, or grows the `system.data` value.
   Creating files, directories, special files, and symlinks, and hard-linking
   non-directory inodes, is supported only when an existing record area has
-  enough slack; otherwise creation returns `ENOSPC`. Rename involving an
-  inline parent and rmdir of an inline directory remain unsupported.
+  enough slack; otherwise creation returns `ENOSPC`. An empty inline
+  directory can be removed when its stored parent, two implicit links, and
+  zero-block/no-external-xattr state are consistent; rmdir decrements the
+  child's implicit self link and the parent's directory link count. Nonempty
+  inline directories, directories with external storage, rename involving an
+  inline parent, and rmdir through `.` or `..` remain rejected.
   EA-inode-backed `system.data` values
   are read and checksum/hash validated for inline files, symlinks, and
   directories on read-only mounts, up to the 64 KiB xattr-value limit. No
@@ -356,8 +360,9 @@ implementation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, rename involving an
-  inline parent, rmdir of an inline directory, inline-data xattr growth,
-  encryption, casefold, and unsupported feature flags are rejected. The
+  inline parent, nonempty or externally-backed inline-directory rmdir,
+  inline-data xattr growth, encryption, casefold, and unsupported feature
+  flags are rejected. The
   filesystem must be clean,
   with an empty legacy orphan list. `orphan_file` is supported only on
   read-only mounts with no pending orphan recovery, as described above.
@@ -910,11 +915,17 @@ child directory whose parent entry is in each area. Verify surviving
 lookup/readdir results, unchanged directory size and xattr value length,
 updated parent link counts, and valid inode checksums after unmount. Repeat on
 an ordinary inline-data image with `metadata_csum` enabled and `ea_inode`
-disabled. Renaming with an inline parent, moving an inline directory across
-parents, replacing an inline directory during rename, and rmdir of an inline
-directory must fail before mutation. Corrupt the stored parent inode and each
-dirent area's record lengths, inode numbers, and names; lookup or readdir must
-report `EIO`. Run `e2fsck -fn` on the unmounted images after testing.
+disabled. Remove empty inline directories from both ordinary and inline
+parents; verify that the target inode is freed, the parent's link count
+decreases once, and the image passes `e2fsck -fn`. A nonempty inline
+directory, a mismatched stored parent, incorrect child link count, external
+xattr block, or nonzero block allocation must be rejected without changing
+either directory or its link counts. Rmdir of `.` or `..`, renaming with an
+inline parent, moving an inline directory across parents, and replacing an
+inline directory during rename must fail before mutation. Corrupt the stored
+parent inode and each dirent area's record lengths, inode numbers, and names;
+lookup or readdir must report `EIO`. Run `e2fsck -fn` on the unmounted images
+after testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
 `metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:
