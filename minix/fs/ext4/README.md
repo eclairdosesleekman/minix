@@ -238,11 +238,14 @@ read-write mode.
   data, leaf, depth-one, and depth-two blocks are freed. Emptying the
   depth-three parent or changing its first-child key remains unsupported.
   At root depth five, a sole-child chain consisting of a depth-one parent,
-  depth-two parent, and depth-three parent can also be detached from a
-  non-first slot in its depth-four parent when that parent retains another
-  child. The depth-four checksum is refreshed and the data, leaf, depth-one,
-  depth-two, and depth-three blocks are freed. First-child removal, emptying
-  the depth-four parent, and deeper detach cascades remain unsupported.
+  depth-two parent, and depth-three parent can be detached from a non-first
+  slot in its depth-four parent when that parent retains another child. If
+  the depth-four parent is itself a sole-child node, it can instead be
+  detached from a non-first inode-root entry. This latter case removes six
+  blocks (data, leaf, depth-one through depth-four metadata nodes) and
+  compacts the inode root while retaining depth five. First-child removal,
+  emptying a depth-four parent that is not itself detached, and deeper
+  detach cascades remain unsupported.
   Full-parent splitting remains limited to the bounded depth-one and depth-two
   cascades described above; deeper split cascades and root rebalancing remain
   unsupported. Writes
