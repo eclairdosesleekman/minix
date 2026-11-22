@@ -96,6 +96,9 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	u16_t *root_depthp, block64_t *parent_blockp,
 	u16_t *parent_entriesp, u16_t *parent_maxp,
 	u16_t *parent_indexp, u32_t *parent_keyp,
+	block64_t *grandparent_blockp, u16_t *grandparent_entriesp,
+	u16_t *grandparent_maxp, u16_t *grandparent_indexp,
+	u32_t *grandparent_keyp,
 	u64_t *leaf_upper_boundp, block64_t *leaf_blockp)
 {
 	unsigned char *node;
@@ -120,6 +123,11 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 	*parent_maxp = 0;
 	*parent_indexp = 0;
 	*parent_keyp = 0;
+	*grandparent_blockp = NO_BLOCK;
+	*grandparent_entriesp = 0;
+	*grandparent_maxp = 0;
+	*grandparent_indexp = 0;
+	*grandparent_keyp = 0;
 	*leaf_blockp = NO_BLOCK;
 	expected_depth = -1;
 	have_expected_key = FALSE;
@@ -287,6 +295,18 @@ extent_leaf(struct inode *rip, u32_t logical, unsigned char **nodep,
 				*parent_indexp = (u16_t)selected_index;
 				*parent_keyp = selected_key;
 			}
+			/*
+			 * For trees deeper than two, retain the depth-two index node
+			 * that owns the immediate depth-one parent. It can safely lose
+			 * a non-first child without changing any ancestor key.
+			 */
+			if (depth == 2 && bp != NULL) {
+				*grandparent_blockp = current_block;
+				*grandparent_entriesp = entries;
+				*grandparent_maxp = max_entries;
+				*grandparent_indexp = (u16_t)selected_index;
+				*grandparent_keyp = selected_key;
+			}
 			upper_bound = child_upper_bound;
 			if (bp != NULL) {
 				put_block(bp);
@@ -368,6 +388,81 @@ extent_i_blocks_can_add(struct inode *rip, u64_t sectors)
 }
 
 /*
+ * Reacquire a depth-two ancestor before removing its selected depth-one child.
+ * Only a non-first child can be detached without propagating a new first key
+ * into the ancestor above it.
+ */
+static int
+extent_prepare_grandparent_index(struct inode *rip,
+	block64_t grandparent_block, block64_t parent_block,
+	u16_t grandparent_entries, u16_t grandparent_max,
+	u16_t grandparent_index, u32_t grandparent_key,
+	struct buf **grandparent_bpp, unsigned char **grandparent_nodep)
+{
+	struct buf *bp;
+	unsigned char *node, *entry;
+	block64_t selected_block;
+	size_t tail_offset;
+
+	*grandparent_bpp = NULL;
+	*grandparent_nodep = NULL;
+	if (grandparent_block == NO_BLOCK ||
+	    grandparent_block >= rip->i_sp->s_blocks_count ||
+	    parent_block == NO_BLOCK ||
+	    parent_block >= rip->i_sp->s_blocks_count ||
+	    parent_block == grandparent_block ||
+	    grandparent_entries <= 1 ||
+	    grandparent_index == 0 ||
+	    grandparent_index >= grandparent_entries ||
+	    grandparent_max < grandparent_entries ||
+	    grandparent_max == 0 ||
+	    grandparent_max > (rip->i_sp->s_block_size - 12) / 12)
+		return(EOPNOTSUPP);
+
+	bp = get_block(rip->i_dev, grandparent_block, NORMAL);
+	if (bp == NULL)
+		return(EIO);
+	node = (unsigned char *)b_data(bp);
+	if (extent_get16(node) != EXT4_EXTENT_MAGIC ||
+	    extent_get16(node + 2) != grandparent_entries ||
+	    extent_get16(node + 4) != grandparent_max ||
+	    extent_get16(node + 6) != 2) {
+		extent_release_leaf(rip, bp, FALSE);
+		return(EIO);
+	}
+	if (HAS_RO_COMPAT_FEATURE(rip->i_sp,
+	    RO_COMPAT_METADATA_CSUM)) {
+		u32_t stored, calculated;
+
+		tail_offset = 12 + (size_t)grandparent_max * 12;
+		if (tail_offset > rip->i_sp->s_block_size - sizeof(stored)) {
+			extent_release_leaf(rip, bp, FALSE);
+			return(EIO);
+		}
+		stored = extent_get32(node + tail_offset);
+		calculated = ext4_crc32c(ext4_inode_csum_seed(rip),
+		    node, tail_offset);
+		if (stored != calculated) {
+			extent_release_leaf(rip, bp, FALSE);
+			return(EIO);
+		}
+	}
+
+	entry = node + 12 + (size_t)grandparent_index * 12;
+	selected_block = ((u64_t)extent_get16(entry + 8) << 32) |
+	    extent_get32(entry + 4);
+	if (selected_block != parent_block ||
+	    extent_get32(entry) != grandparent_key) {
+		extent_release_leaf(rip, bp, FALSE);
+		return(EIO);
+	}
+
+	*grandparent_bpp = bp;
+	*grandparent_nodep = node;
+	return(OK);
+}
+
+/*
  * A depth-two tree can detach a one-child intermediate node from the inode
  * root when its only leaf is removed. Revalidate the root's child pointer and
  * key before allowing that special case.
@@ -426,8 +521,7 @@ extent_prepare_parent_index(struct inode *rip,
 	    parent_entries == 0 || parent_index >= parent_entries ||
 	    parent_max < parent_entries ||
 	    (root_depth > 1 && parent_index == 0 &&
-	    !(allow_single_child_detach && root_depth == 2 &&
-	    parent_entries == 1)))
+	    !(allow_single_child_detach && parent_entries == 1)))
 		return(EOPNOTSUPP);
 
 	bp = NULL;
@@ -711,9 +805,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	size_t node_size;
 	u16_t entries, max_entries, root_entries, root_max;
 	u16_t root_index, root_depth, parent_entries, parent_max;
-	u16_t parent_index;
-	block64_t parent_block, leaf_block;
-	u32_t parent_key;
+	u16_t parent_index, grandparent_entries, grandparent_max;
+	u16_t grandparent_index;
+	block64_t parent_block, grandparent_block, leaf_block;
+	u32_t parent_key, grandparent_key;
 	u64_t logical64, physical, leaf_upper_bound;
 	u32_t logical, offset, new_length;
 	unsigned int i, insert;
@@ -732,8 +827,9 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	if ((r = extent_leaf(rip, logical, &root, &node_size, &entries,
 	    &max_entries, &leaf_bp, &root_node, &root_entries, &root_max,
 	    &root_index, &root_depth, &parent_block, &parent_entries,
-	    &parent_max, &parent_index, &parent_key, &leaf_upper_bound,
-	    &leaf_block)) != OK)
+	    &parent_max, &parent_index, &parent_key, &grandparent_block,
+	    &grandparent_entries, &grandparent_max, &grandparent_index,
+	    &grandparent_key, &leaf_upper_bound, &leaf_block)) != OK)
 		return(r);
 	(void)node_size;	/* The selected node has already been bounded. */
 
@@ -747,17 +843,23 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 	}
 
 	if (op & WMAP_FREE) {
-		struct buf *parent_key_bp;
+		struct buf *parent_key_bp, *grandparent_bp;
 		unsigned char *parent_key_node, *parent_key_entry;
+		unsigned char *grandparent_node, *grandparent_entry;
 		u64_t block_to_free, sectors, blocks_to_free;
 		u32_t new_parent_key;
 		int update_parent_key, remove_empty_leaf, remove_empty_parent;
+		int detach_from_root, detach_from_grandparent;
 
 		parent_key_bp = NULL;
 		parent_key_node = NULL;
+		grandparent_bp = NULL;
+		grandparent_node = NULL;
 		update_parent_key = FALSE;
 		remove_empty_leaf = FALSE;
 		remove_empty_parent = FALSE;
+		detach_from_root = FALSE;
+		detach_from_grandparent = FALSE;
 		if (i == entries) {
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			return(OK);	/* A hole needs no work. */
@@ -769,8 +871,13 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 		    ex.length == 1 && offset == 0;
 		if (remove_empty_leaf) {
 			sectors = rip->i_sp->s_sectors_in_block;
-			remove_empty_parent = root_depth == 2 &&
+			detach_from_root = root_depth == 2 &&
 			    parent_entries == 1 && parent_index == 0;
+			detach_from_grandparent = root_depth > 2 &&
+			    parent_entries == 1 && parent_index == 0 &&
+			    grandparent_entries > 1 && grandparent_index > 0;
+			remove_empty_parent = detach_from_root ||
+			    detach_from_grandparent;
 			blocks_to_free = remove_empty_parent ? 3 : 2;
 			if ((parent_entries <= 1 && root_depth != 1 &&
 			    !remove_empty_parent) ||
@@ -779,7 +886,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			    block_to_free == leaf_block ||
 			    block_to_free == parent_block ||
 			    leaf_block == parent_block ||
-			    (remove_empty_parent &&
+			    block_to_free == grandparent_block ||
+			    leaf_block == grandparent_block ||
+			    parent_block == grandparent_block ||
+			    (detach_from_root &&
 			    !extent_root_parent_matches(rip, root_node, root_entries,
 			    root_max, root_index, parent_block, parent_key)) ||
 			    (root_depth == 1 &&
@@ -796,6 +906,18 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 				extent_release_leaf(rip, leaf_bp, FALSE);
 				return(r);
 			}
+			if (detach_from_grandparent) {
+				r = extent_prepare_grandparent_index(rip,
+				    grandparent_block, parent_block,
+				    grandparent_entries, grandparent_max,
+				    grandparent_index, grandparent_key,
+				    &grandparent_bp, &grandparent_node);
+				if (r != OK) {
+					extent_release_leaf(rip, parent_key_bp, FALSE);
+					extent_release_leaf(rip, leaf_bp, FALSE);
+					return(r);
+				}
+			}
 
 			if (root_depth == 1 && parent_entries == 1) {
 				/*
@@ -806,11 +928,10 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 				extent_put16(parent_key_node + 6, 0);
 				memset(parent_key_node + 12, 0,
 				    sizeof(rip->i_block) - 12);
-			} else if (remove_empty_parent) {
+			} else if (detach_from_root) {
 				/*
-				 * The intermediate node has no leaves left. Remove it
-				 * from the inode root; no ancestor key exists above the
-				 * inode root, so its first entry may also be removed.
+				 * Detach the now-empty depth-one index node from the
+				 * inode root. The root has no ancestor whose key changes.
 				 */
 				parent_key_entry = root_node + 12 +
 				    (size_t)root_index * 12;
@@ -824,6 +945,20 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 					memset(root_node + 12, 0,
 					    sizeof(rip->i_block) - 12);
 				}
+			} else if (detach_from_grandparent) {
+				/*
+				 * Remove the now-empty depth-one node from its
+				 * non-first slot in the depth-two index node.
+				 */
+				grandparent_entry = grandparent_node + 12 +
+				    (size_t)grandparent_index * 12;
+				memmove(grandparent_entry, grandparent_entry + 12,
+				    (size_t)(grandparent_entries -
+				    grandparent_index - 1) * 12);
+				memset(grandparent_node + 12 +
+				    (size_t)(grandparent_entries - 1) * 12, 0, 12);
+				extent_put16(grandparent_node + 2,
+				    grandparent_entries - 1);
 			} else {
 				/* Remove this child; keep its parent nonempty. */
 				parent_key_entry = parent_key_node + 12 +
@@ -841,6 +976,8 @@ ext4_extent_write_map(struct inode *rip, off_t position,
 			extent_release_leaf(rip, leaf_bp, FALSE);
 			if (remove_empty_parent)
 				extent_release_leaf(rip, parent_key_bp, FALSE);
+			if (detach_from_grandparent)
+				extent_release_leaf(rip, grandparent_bp, TRUE);
 			free_block(rip->i_sp, block_to_free);
 			free_block(rip->i_sp, leaf_block);
 			if (remove_empty_parent)
