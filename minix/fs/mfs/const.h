@@ -26,7 +26,8 @@
 #define SUPER_V3      0x4d5a	/* magic # for V3 file systems */
 
 #define V2		   2	/* version number of V2 file systems */ 
-#define V3		   3	/* version number of V3 file systems */ 
+#define V3		   3	/* version number of V3 file systems */
+#define V4		   4	/* version number of MFS4 file systems */ 
 
 /* Miscellaneous constants */
 #define NO_BIT   ((bit_t) 0)	/* returned by alloc_bit() to signal failure */
