@@ -235,8 +235,9 @@ read-write mode.
   can also be removed from a non-first slot in its depth-three parent when that
   parent retains another child. The depth-three checksum is refreshed and the
   data, leaf, depth-one, and depth-two blocks are freed. Emptying the
-  depth-three parent or changing its first-child key remains unsupported. Full-parent splitting is limited
-  to the bounded depth-one and depth-two cascades described above; full
+  depth-three parent or changing its first-child key remains unsupported.
+  Full-parent splitting is limited to the bounded depth-one and depth-two
+  cascades described above; full
   depth-three ancestors, deeper cascades, and root rebalancing remain
   unsupported. Writes
   into unwritten extents convert the affected block to an initialized extent.
@@ -781,11 +782,11 @@ extent. Truncate that data block. Verify that the depth-two child is removed
 from the depth-three ancestor, the ancestor keeps its original first key and
 has a valid checksum, and the data, leaf, depth-one, and depth-two blocks are
 freed. Check the four-block decrease in inode `i_blocks`, group/free-block
-counters, and `e2fsck -fn`; repeat without `metadata_csum`. A first depth-two
-child, a depth-three ancestor with only one child, or the same cascade under
-a root deeper than four must remain unsupported and leave the tree unchanged. Verify
-`i_blocks`, group and free-block counters, and `e2fsck -fn` after unmount, with and without
-`metadata_csum`. Also exercise writes into holes within a non-full leaf,
+counters, and `e2fsck -fn` after unmount; repeat without
+`metadata_csum`. A first depth-two child, a depth-three ancestor with only
+one child, or the same cascade under a root deeper than four must remain
+unsupported and leave the tree unchanged. Also exercise writes into holes
+within a non-full leaf,
 unwritten-extent conversion, and tail truncation. Full-parent splitting must
 succeed only in the bounded cases above; unsupported cascades and index-node
 rebalancing must fail without damaging the filesystem. Also corrupt the first
