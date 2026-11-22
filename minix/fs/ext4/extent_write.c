@@ -1344,12 +1344,31 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		    (u16_t)(new_parent_block >> 32));
 		extent_put16(grandparent_entry + 10, 0);
 		extent_put16(grandparent_node + 2, grandparent_entries + 1);
+	} else if (split_grandparent) {
+		memcpy(grandparent_node + 12, grandparent_records,
+		    (size_t)grandparent_left_entries * 12);
+		memset(grandparent_node + 12 +
+		    (size_t)grandparent_left_entries * 12, 0,
+		    (size_t)(grandparent_max - grandparent_left_entries) * 12);
+		extent_put16(grandparent_node + 2, grandparent_left_entries);
+
+		root_entry = root_node + 12 +
+		    (size_t)(root_index + 1) * 12;
+		memmove(root_entry + 12, root_entry,
+		    (size_t)(root_entries - root_index - 1) * 12);
+		extent_put32(root_entry, split_grandparent_key);
+		extent_put32(root_entry + 4, (u32_t)new_grandparent_block);
+		extent_put16(root_entry + 8,
+		    (u16_t)(new_grandparent_block >> 32));
+		extent_put16(root_entry + 10, 0);
+		extent_put16(root_node + 2, root_entries + 1);
 	}
 
 	/* Checksums cover every modified external node and both leaves. */
 	extent_release_leaf(rip, new_bp, TRUE);
 	extent_release_leaf(rip, leaf_bp, TRUE);
-	if (grow_root || split_parent || split_parent_ancestor)
+	if (grow_root || split_parent || split_parent_ancestor ||
+	    split_grandparent)
 		extent_release_leaf(rip, new_parent_bp, TRUE);
 	if (parent_is_external)
 		extent_release_leaf(rip, parent_bp, TRUE);
@@ -1366,6 +1385,7 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 	return(OK);
 
 corrupt:
+	free(grandparent_records);
 	free(parent_records);
 	extent_release_leaf(rip, parent_bp, FALSE);
 	extent_release_leaf(rip, leaf_bp, FALSE);
