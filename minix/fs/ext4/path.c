@@ -91,22 +91,96 @@ struct inode *advance(struct inode *dirp, const char *string)
 
 
 /*
+ * Populate a slot wholly contained in one inline-directory dirent area.
+ * Preserve any useful tail as a separate unused record.
+ */
+static void
+ext4_fill_inline_dirent(struct inode *dir,
+	struct ext2_disk_dir_desc *dp, unsigned int slot_len,
+	unsigned int area_len, const char *string, unsigned int name_len,
+	ino_t child, int ftype)
+{
+	unsigned int entry_len, unused_len;
+	struct ext2_disk_dir_desc *unused;
+
+	entry_len = MIN_DIR_ENTRY_SIZE + name_len;
+	entry_len += (DIR_ENTRY_ALIGN -
+	    (entry_len & (DIR_ENTRY_ALIGN - 1))) &
+	    (DIR_ENTRY_ALIGN - 1);
+	unused_len = slot_len - entry_len;
+	if (unused_len < MIN_DIR_ENTRY_SIZE) {
+		entry_len = slot_len;
+		unused_len = 0;
+	}
+
+	memset(dp, 0, slot_len);
+	ext4_set_dir_rec_len(dp, entry_len, area_len);
+	dp->d_ino = (u32_t)conv4(le_CPU, child);
+	dp->d_name_len = (u8_t)name_len;
+	if (HAS_INCOMPAT_FEATURE(dir->i_sp, INCOMPAT_FILETYPE)) {
+		if (ftype == I_REGULAR)
+			dp->d_file_type = EXT2_FT_REG_FILE;
+		else if (ftype == I_DIRECTORY)
+			dp->d_file_type = EXT2_FT_DIR;
+		else if (ftype == I_SYMBOLIC_LINK)
+			dp->d_file_type = EXT2_FT_SYMLINK;
+		else if (ftype == I_BLOCK_SPECIAL)
+			dp->d_file_type = EXT2_FT_BLKDEV;
+		else if (ftype == I_CHAR_SPECIAL)
+			dp->d_file_type = EXT2_FT_CHRDEV;
+		else if (ftype == I_NAMED_PIPE)
+			dp->d_file_type = EXT2_FT_FIFO;
+		else
+			dp->d_file_type = EXT2_FT_UNKNOWN;
+	}
+	memcpy(dp->d_name, string, name_len);
+
+	if (unused_len != 0) {
+		unused = (struct ext2_disk_dir_desc *)
+		    ((unsigned char *)dp + entry_len);
+		memset(unused, 0, unused_len);
+		unused->d_ino = NO_ENTRY;
+		ext4_set_dir_rec_len(unused, unused_len, area_len);
+	}
+}
+
+
+/*
  * Search the two independent dirent areas of an ext4 inline directory.
  * "." and ".." are implicit: only the parent inode number is stored in
- * i_block[0..4]. Deletion edits one area in place; insertion is unsupported.
+ * i_block[0..4]. Insertions and deletions are bounded to each existing area;
+ * neither operation changes the inline payload or xattr value length.
  */
 static int
 ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
-	int flag)
+	int flag, int ftype)
 {
 	unsigned char *areas[2];
 	unsigned int lengths[2], area, offset, rec_len, name_len;
-	unsigned int previous_len;
-	struct ext2_disk_dir_desc *dp, *previous;
+	unsigned int previous_len, insert_name_len, required_space;
+	unsigned int actual_size, slot_len;
+	struct ext2_disk_dir_desc *dp, *previous, *slot;
 	ino_t child;
 
-	if (flag == ENTER)
-		return(EOPNOTSUPP);
+	insert_name_len = 0;
+	required_space = 0;
+	if (flag == ENTER) {
+		if (string == NULL || numb == NULL || *numb == NO_ENTRY ||
+		    *numb > dir->i_sp->s_inodes_count)
+			return(EINVAL);
+		insert_name_len = strlen(string);
+		if (insert_name_len == 0)
+			return(ENOENT);
+		if (insert_name_len > EXT2_NAME_MAX ||
+		    insert_name_len > NAME_MAX)
+			return(ENAMETOOLONG);
+		if (strcmp(string, ".") == 0 || strcmp(string, "..") == 0)
+			return(EEXIST);
+		required_space = MIN_DIR_ENTRY_SIZE + insert_name_len;
+		required_space += (DIR_ENTRY_ALIGN -
+		    (required_space & (DIR_ENTRY_ALIGN - 1))) &
+		    (DIR_ENTRY_ALIGN - 1);
+	}
 	if (flag == DELETE && (string == NULL ||
 	    strcmp(string, ".") == 0 || strcmp(string, "..") == 0))
 		return(EOPNOTSUPP);
@@ -149,6 +223,14 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 			if (rec_len > lengths[area] - offset)
 				return(EIO);
 			if (dp->d_ino == NO_ENTRY) {
+				if (flag == ENTER && rec_len >= required_space) {
+					ext4_fill_inline_dirent(dir, dp, rec_len,
+					    lengths[area], string, insert_name_len,
+					    *numb, ftype);
+					dir->i_update |= CTIME | MTIME;
+					dir->i_dirt = IN_DIRTY;
+					return(OK);
+				}
 				previous = dp;
 				continue;
 			}
@@ -166,6 +248,10 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 			if (child == NO_ENTRY ||
 			    child > dir->i_sp->s_inodes_count)
 				return(EIO);
+
+			if (flag == ENTER &&
+			    ansi_strcmp(dp->d_name, string, name_len) == 0)
+				return(EEXIST);
 
 			if ((flag == LOOK_UP || flag == DELETE) &&
 			    ansi_strcmp(dp->d_name, string, name_len) == 0) {
@@ -198,11 +284,31 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 			}
 			if (flag == IS_EMPTY)
 				return(ENOTEMPTY);
+
+			if (flag == ENTER) {
+				actual_size = DIR_ENTRY_ACTUAL_SIZE(dp);
+				if (actual_size > rec_len)
+					return(EIO);
+				if (required_space <= rec_len - actual_size) {
+					slot = (struct ext2_disk_dir_desc *)
+					    ((unsigned char *)dp + actual_size);
+					slot_len = rec_len - actual_size;
+					ext4_set_dir_rec_len(dp, actual_size,
+					    lengths[area]);
+					ext4_fill_inline_dirent(dir, slot, slot_len,
+					    lengths[area], string, insert_name_len,
+					    *numb, ftype);
+					dir->i_update |= CTIME | MTIME;
+					dir->i_dirt = IN_DIRTY;
+					return(OK);
+				}
+			}
 			previous = dp;
 		}
 	}
 
-	return(flag == IS_EMPTY ? OK : ENOENT);
+	return(flag == IS_EMPTY ? OK :
+	    (flag == ENTER ? ENOSPC : ENOENT));
 }
 
 
@@ -734,7 +840,7 @@ int search_dir(register struct inode *ldir_ptr, const char *string,
   if (ldir_ptr->i_sp->s_is_ext4 &&
       HAS_INCOMPAT_FEATURE(ldir_ptr->i_sp, INCOMPAT_INLINE_DATA) &&
       (ldir_ptr->i_flags & EXT4_INLINE_DATA_FL))
-	return(ext4_search_inline_dir(ldir_ptr, string, numb, flag));
+	return(ext4_search_inline_dir(ldir_ptr, string, numb, flag, ftype));
 
   /*
    * Indexed ext4 directories use their HTree to find the likely leaf first.
