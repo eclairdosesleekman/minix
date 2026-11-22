@@ -590,9 +590,10 @@ extent_prepare_parent_index(struct inode *rip,
 
 /*
  * Split a full external leaf when its immediate parent index node has room.
- * The inherited exclusive upper bound comes from the complete selected path,
- * so the new leaf remains inside every ancestor's logical-block interval.
- * On failure, the original inode and leaf remain unchanged.
+ * A full depth-one inode root is promoted to depth two through a newly
+ * allocated external index node. The inherited exclusive upper bound comes
+ * from the complete selected path, so the new leaf remains inside every
+ * ancestor's logical-block interval. On failure, the old tree stays intact.
  */
 static int
 extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
