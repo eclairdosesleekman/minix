@@ -236,9 +236,14 @@ read-write mode.
   parent retains another child. The depth-three checksum is refreshed and the
   data, leaf, depth-one, and depth-two blocks are freed. Emptying the
   depth-three parent or changing its first-child key remains unsupported.
-  Full-parent splitting is limited to the bounded depth-one and depth-two
-  cascades described above; full
-  depth-three ancestors, deeper cascades, and root rebalancing remain
+  At root depth five, a sole-child chain consisting of a depth-one parent,
+  depth-two parent, and depth-three parent can also be detached from a
+  non-first slot in its depth-four parent when that parent retains another
+  child. The depth-four checksum is refreshed and the data, leaf, depth-one,
+  depth-two, and depth-three blocks are freed. First-child removal, emptying
+  the depth-four parent, and deeper detach cascades remain unsupported.
+  Full-parent splitting remains limited to the bounded depth-one and depth-two
+  cascades described above; deeper split cascades and root rebalancing remain
   unsupported. Writes
   into unwritten extents convert the affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
@@ -326,8 +331,12 @@ implementation.
   only its depth-one child can also be detached from a non-first slot in a
   depth-three ancestor that retains another child; the data, leaf, depth-one,
   and depth-two blocks are freed and the depth-three checksum is regenerated.
-  Removing the first depth-two child, emptying the depth-three ancestor, and
-  higher-level cascading detach remain unsupported.
+  At root depth five, a sole-child depth-three node can be detached from a
+  non-first slot in a depth-four parent that retains another child; the data,
+  leaf, depth-one, depth-two, and depth-three blocks are freed and the
+  depth-four checksum is regenerated. Removing first children, emptying the
+  depth-three/depth-four parent, and higher-level cascading detach remain
+  unsupported.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, inline
@@ -784,9 +793,19 @@ has a valid checksum, and the data, leaf, depth-one, and depth-two blocks are
 freed. Check the four-block decrease in inode `i_blocks`, group/free-block
 counters, and `e2fsck -fn` after unmount; repeat without
 `metadata_csum`. A first depth-two child, a depth-three ancestor with only
-one child, or the same cascade under a root deeper than four must remain
-unsupported and leave the tree unchanged. Also exercise writes into holes
-within a non-full leaf,
+one child, or a root deeper than five must remain unsupported and leave the
+tree unchanged. Also prepare a depth-five inode root whose selected depth-four
+external parent has at least two children. Choose a non-first depth-three child
+whose only child is a depth-two node; that depth-two node must have only one
+depth-one child, and the depth-one node must contain a single leaf with one
+one-block extent. Truncate that data block. Verify that the depth-three child
+is removed from the depth-four parent, the parent's first key and inode-root
+pointer stay unchanged, and the data, leaf, depth-one, depth-two, and depth-three
+blocks are freed. Check the five-block decrease in inode `i_blocks`,
+group/free-block counters, the depth-four checksum, and `e2fsck -fn` after
+unmount; repeat without `metadata_csum`. Removing the first depth-three child
+or emptying the depth-four parent must remain unsupported and leave the tree
+unchanged. Also exercise writes into holes within a non-full leaf,
 unwritten-extent conversion, and tail truncation. Full-parent splitting must
 succeed only in the bounded cases above; unsupported cascades and index-node
 rebalancing must fail without damaging the filesystem. Also corrupt the first
