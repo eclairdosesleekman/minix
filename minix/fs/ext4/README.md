@@ -182,14 +182,17 @@ read-write mode.
   validated before the payload is exposed. Regular-file writes and truncation
   update the existing inline payload in place, but cannot grow the on-disk
   `system.data` value or exceed the capacity already present in the inode.
-  Inline directories can be searched and enumerated read-only. Their
-  implicit `.` and `..` entries are synthesized; the 56-byte dirent area
-  after the parent inode and the `system.data` continuation are validated as
-  separate regions. EA-inode-backed `system.data` values are read and
-  checksum/hash validated for inline files, symlinks, and directories on
-  read-only mounts, up to the 64 KiB xattr-value limit. No get/list-xattr API
-  is provided; inline-directory mutation and VM page mapping remain
-  unsupported.
+  Inline directories support lookup, enumeration, and deletion of non-dot
+  entries. The implicit `.` and `..` entries are synthesized; the 56-byte
+  dirent area after the parent inode and the `system.data` continuation are
+  validated and edited as separate regions. Deletion leaves a first dirent
+  as an unused slot or merges a later dirent into its predecessor within the
+  same area; it never shifts data across the inline/xattr boundary. Creation,
+  hard-link insertion, rename involving an inline parent, and rmdir of an
+  inline directory remain unsupported. EA-inode-backed `system.data` values
+  are read and checksum/hash validated for inline files, symlinks, and
+  directories on read-only mounts, up to the 64 KiB xattr-value limit. No
+  get/list-xattr API is provided; VM page mapping remains unsupported.
 - Read-write support for clean filesystems without a journal or indexed
   directories. Lazy `BLOCK_UNINIT` and `INODE_UNINIT` bitmaps are synthesized
   from backup-super/GDT locations and each group's block bitmap, inode bitmap,
@@ -886,11 +889,18 @@ page mapping remain unsupported.
 For inline-directory coverage, create nested small directories so some entries
 remain in the 56-byte inode area and others spill into `system.data`. Verify
 lookup of ordinary names, `.`, and `..`, plus repeated getdents calls with
-small output buffers and seeks to returned cookies. Corrupt the stored parent
-inode and each dirent area's record lengths, inode numbers, and names; lookup
-or readdir must report `EIO`. Inline-directory create, unlink, rename, and
-rmdir mutations must fail without partially changing the inode or parent
-directory. Run `e2fsck -fn` on the unmounted image after testing.
+small output buffers and seeks to returned cookies. Unlink regular files from
+both dirent areas, including the first record and a later record in each area;
+also remove an empty non-inline child directory whose parent entry is in each
+area. Verify surviving lookup/readdir results, unchanged inline size and xattr
+value length, updated parent link counts, and valid inode checksums after
+unmount. Repeat on an ordinary inline-data image with `metadata_csum` enabled
+and `ea_inode` disabled. Creating/linking entries, renaming with an inline
+parent, moving an inline directory across parents, replacing an inline
+directory during rename, and rmdir of an inline directory must fail before
+mutation. Corrupt the stored parent inode and each dirent area's record
+lengths, inode numbers, and names; lookup or readdir must report `EIO`. Run
+`e2fsck -fn` on the unmounted images after testing.
 
 For legacy `gdt_csum` coverage, create disposable ext4 images with
 `metadata_csum` disabled. Test both 32-byte and 64-byte group descriptors:

@@ -162,10 +162,12 @@ int fs_unlink(ino_t dir_nr, char *name, int call)
   } else {
 	  if ((rip->i_mode & I_TYPE) != I_DIRECTORY)
 		  r = ENOTDIR;
-	  /* remove_dir() edits "." and ".." after unlinking the parent entry,
-	   * so reject indexed targets before that first mutation. */
+	  /* remove_dir() edits "." and ".." after unlinking the parent entry.
+	   * Indexed and inline targets cannot safely update those entries. */
 	  else if (rip->i_sp->s_is_ext4 &&
-	      (rip->i_flags & EXT2_INDEX_FL))
+	      ((rip->i_flags & EXT2_INDEX_FL) ||
+	      (HAS_INCOMPAT_FEATURE(rip->i_sp, INCOMPAT_INLINE_DATA) &&
+	      (rip->i_flags & EXT4_INLINE_DATA_FL))))
 		  r = EOPNOTSUPP;
 	  else if (has_external_extent_tree(rip))
 		  r = EOPNOTSUPP;
@@ -349,13 +351,17 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 
   /*
    * Rename changes two directory entries and may perform them in separate
-   * steps. Keep it out of indexed parents until both HTree insertion and
-   * transactional rename handling are implemented.
+   * steps. Keep it out of indexed and inline parents until HTree insertion,
+   * inline-dir insertion, and transactional rename handling are implemented.
    */
   if ((old_dirp->i_sp->s_is_ext4 &&
-      (old_dirp->i_flags & EXT2_INDEX_FL)) ||
+      ((old_dirp->i_flags & EXT2_INDEX_FL) ||
+      (HAS_INCOMPAT_FEATURE(old_dirp->i_sp, INCOMPAT_INLINE_DATA) &&
+      (old_dirp->i_flags & EXT4_INLINE_DATA_FL)))) ||
       (new_dirp->i_sp->s_is_ext4 &&
-      (new_dirp->i_flags & EXT2_INDEX_FL))) {
+      ((new_dirp->i_flags & EXT2_INDEX_FL) ||
+      (HAS_INCOMPAT_FEATURE(new_dirp->i_sp, INCOMPAT_INLINE_DATA) &&
+      (new_dirp->i_flags & EXT4_INLINE_DATA_FL))))) {
 	put_inode(old_ip);
 	put_inode(old_dirp);
 	put_inode(new_dirp);
@@ -381,14 +387,15 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 	same_pdir = (old_dirp == new_dirp);
 
 	/*
-	 * Moving an indexed directory between parents also requires updating
-	 * its ".." entry.  The generic directory writer cannot update HTree
-	 * metadata, so reject this case before creating or deleting any names.
-	 * Renaming an indexed directory within the same parent is safe: its
-	 * own contents and parent link do not change.
+	 * Moving an indexed or inline directory between parents also requires
+	 * updating its ".." entry, which is unsupported. Reject before creating
+	 * or deleting names. Same-parent rename leaves its contents and parent
+	 * reference unchanged.
 	 */
 	if (odir && !same_pdir && old_ip->i_sp->s_is_ext4 &&
-	    (old_ip->i_flags & EXT2_INDEX_FL))
+	    ((old_ip->i_flags & EXT2_INDEX_FL) ||
+	    (HAS_INCOMPAT_FEATURE(old_ip->i_sp, INCOMPAT_INLINE_DATA) &&
+	    (old_ip->i_flags & EXT4_INLINE_DATA_FL))))
 		r = EOPNOTSUPP;
 
 	/* The old inode must not be a superdirectory of the new last dir. */
@@ -442,7 +449,9 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 		 * changes the destination name in its parent.
 		 */
 		if (r == OK && ndir && new_ip->i_sp->s_is_ext4 &&
-		    (new_ip->i_flags & EXT2_INDEX_FL))
+		    ((new_ip->i_flags & EXT2_INDEX_FL) ||
+		    (HAS_INCOMPAT_FEATURE(new_ip->i_sp, INCOMPAT_INLINE_DATA) &&
+		    (new_ip->i_flags & EXT4_INLINE_DATA_FL))))
 			r = EOPNOTSUPP;
 		/* Replacing the last name would otherwise leak external extents. */
 		if (r == OK && has_external_extent_tree(new_ip) &&

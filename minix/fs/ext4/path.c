@@ -93,18 +93,22 @@ struct inode *advance(struct inode *dirp, const char *string)
 /*
  * Search the two independent dirent areas of an ext4 inline directory.
  * "." and ".." are implicit: only the parent inode number is stored in
- * i_block[0..4]. Inline directory mutation is deliberately unsupported.
+ * i_block[0..4]. Deletion edits one area in place; insertion is unsupported.
  */
 static int
 ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 	int flag)
 {
-	const unsigned char *areas[2];
+	unsigned char *areas[2];
 	unsigned int lengths[2], area, offset, rec_len, name_len;
-	struct ext2_disk_dir_desc *dp;
+	unsigned int previous_len;
+	struct ext2_disk_dir_desc *dp, *previous;
 	ino_t child;
 
-	if (flag == ENTER || flag == DELETE)
+	if (flag == ENTER)
+		return(EOPNOTSUPP);
+	if (flag == DELETE && (string == NULL ||
+	    strcmp(string, ".") == 0 || strcmp(string, "..") == 0))
 		return(EOPNOTSUPP);
 	if (dir->i_inline_size < EXT4_INLINE_DATA_MIN ||
 	    dir->i_inline_size > EXT4_INLINE_DATA_TOTAL_MAX ||
@@ -136,6 +140,7 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 		if (lengths[area] < MIN_DIR_ENTRY_SIZE ||
 		    (lengths[area] & (DIR_ENTRY_ALIGN - 1)) != 0)
 			return(EIO);
+		previous = NULL;
 		for (offset = 0; offset < lengths[area]; offset += rec_len) {
 			dp = (struct ext2_disk_dir_desc *)(areas[area] + offset);
 			if (!ext4_valid_dirent(dp, offset, lengths[area]))
@@ -143,8 +148,10 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 			rec_len = ext4_dir_rec_len(dp, lengths[area]);
 			if (rec_len > lengths[area] - offset)
 				return(EIO);
-			if (dp->d_ino == NO_ENTRY)
+			if (dp->d_ino == NO_ENTRY) {
+				previous = dp;
 				continue;
+			}
 
 			name_len = dp->d_name_len;
 			if (name_len == 0 || name_len > EXT2_NAME_MAX ||
@@ -160,13 +167,38 @@ ext4_search_inline_dir(struct inode *dir, const char *string, ino_t *numb,
 			    child > dir->i_sp->s_inodes_count)
 				return(EIO);
 
-			if (flag == LOOK_UP &&
+			if ((flag == LOOK_UP || flag == DELETE) &&
 			    ansi_strcmp(dp->d_name, string, name_len) == 0) {
-				*numb = child;
+				if (flag == LOOK_UP) {
+					*numb = child;
+					return(OK);
+				}
+
+				/*
+				 * Inline directory areas are separate ext4 dirent
+				 * blocks. Never merge a record across their boundary.
+				 * A first record becomes an unused slot; otherwise
+				 * extend the immediately preceding record.
+				 */
+				dp->d_ino = NO_ENTRY;
+				if (previous != NULL) {
+					previous_len = ext4_dir_rec_len(previous,
+					    lengths[area]);
+					if (previous_len > lengths[area] - rec_len) {
+						/* Restore the live entry on malformed layout. */
+						dp->d_ino = conv4(le_CPU, child);
+						return(EIO);
+					}
+					ext4_set_dir_rec_len(previous,
+					    previous_len + rec_len, lengths[area]);
+				}
+				dir->i_update |= CTIME | MTIME;
+				dir->i_dirt = IN_DIRTY;
 				return(OK);
 			}
 			if (flag == IS_EMPTY)
 				return(ENOTEMPTY);
+			previous = dp;
 		}
 	}
 
