@@ -942,7 +942,9 @@ static int rw_scattered(
 		transferred = bdev_scatter(dev, pos, iovec, niovecs, BDEV_NOFLAGS);
 
 	if (transferred < 0) {
-		error = (int)transferred;
+		error = (int)-transferred;
+		if (error <= 0)
+			error = EIO;
 		printf("fs cache: I/O error %d on device %d/%d, "
 		    "block %"PRIu64"\n", error, major(dev), minor(dev),
 		    bufq[0]->lmfs_blocknr);
@@ -1353,7 +1355,7 @@ void lmfs_buf_pool(int new_nr_bufs)
 int lmfs_flushall_err(void)
 {
 	struct buf *bp;
-int r;
+	int r;
 
 	for (bp = &buf[0]; bp < &buf[nr_bufs]; bp++) {
 		if (bp->lmfs_dev == NO_DEV || lmfs_isclean(bp))
@@ -1364,7 +1366,7 @@ int r;
 	}
 
 	/* Do not resize or otherwise reclaim cache memory after a failed flush. */
-lmfs_change_blockusage(0);
+	lmfs_change_blockusage(0);
 
 	return OK;
 }

@@ -150,7 +150,7 @@ int fs_unmount(void)
 /* Unmount a file system only after all metadata has reached the device.
  * Keep the root inode pinned if an error prevents VFS from completing unmount.
  */
-  int count, r, close_error;
+  int count, r, close_error, restore_error;
   struct inode *rip, *root_ip;
 
   count = 0;
@@ -182,7 +182,15 @@ int fs_unmount(void)
 		 * image before returning, so a later retry cannot flush CLEAN.
 		 */
 		superblock.s_flags = old_flags;
-		(void)write_super(&superblock);
+		restore_error = write_super(&superblock);
+		if (restore_error != OK) {
+			/* Do not accept further mutations if the dirty marker could
+			 * not be restored after a failed clean-marker write.
+			 */
+			superblock.s_rd_only = 1;
+			printf("MFS: unable to restore dirty superblock (%d)\n",
+			    restore_error);
+		}
 		if (get_inode(fs_dev, ROOT_INODE) == NULL)
 			printf("MFS: unable to repin root inode after superblock error\n");
 		return r;
@@ -195,12 +203,12 @@ int fs_unmount(void)
 	if (!superblock.s_rd_only) {
 		superblock.s_flags &= ~MFSFLAG_CLEAN;
 		r = write_super(&superblock);
-		if (r != OK) {
-			superblock.s_rd_only = 1;
+		if (r != OK)
 			printf("MFS: unable to restore dirty flag after close error (%d)\n",
 			    r);
-		}
 	}
+	/* Keep the still-mounted filesystem read-only after a failed close. */
+	superblock.s_rd_only = 1;
 	if (get_inode(fs_dev, ROOT_INODE) == NULL)
 		printf("MFS: unable to repin root inode after close error\n");
 	return close_error;
