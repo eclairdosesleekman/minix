@@ -280,6 +280,24 @@ service up /service/ext4
 mount -t ext4 /dev/c0d0p1 /mnt
 ```
 
+To verify full-width owner and group IDs, create a no-journal Linux ext4
+image, create a test inode, and set its IDs above 65535 with `debugfs`.
+Mount the image read-write on MINIX: `ls -ln` must show the full values.
+Then change them with `chown`, unmount, and use `debugfs stat` to confirm
+that the updated values survived. Run `e2fsck -fn` after unmount to verify
+the inode checksum and the rest of the filesystem.
+
+```sh
+truncate -s 256M ext4-uidgid.img
+mke2fs -F -t ext4 -O 64bit,metadata_csum,^has_journal,^orphan_file,^dir_index \
+  ext4-uidgid.img
+debugfs -w -R "write README.md /uidgid-test" ext4-uidgid.img
+debugfs -w -R "set_inode_field /uidgid-test uid 70000" ext4-uidgid.img
+debugfs -w -R "set_inode_field /uidgid-test gid 80000" ext4-uidgid.img
+debugfs -R "stat /uidgid-test" ext4-uidgid.img | grep -E 'User:|Group:'
+e2fsck -fn ext4-uidgid.img
+```
+
 To exercise writable lazy-bitmap initialization, create a fresh ext4 image
 with uninitialized block/inode bitmaps and no journal. Confirm that
 `dumpe2fs` reports `BLOCK_UNINIT` and/or `INODE_UNINIT` on nonzero groups.
