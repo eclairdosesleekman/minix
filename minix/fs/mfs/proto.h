@@ -26,7 +26,9 @@ void init_inode_cache(void);
 struct inode *get_inode(dev_t dev, ino_t numb);
 void put_inode(struct inode *rip);
 void update_times(struct inode *rip);
-void rw_inode(struct inode *rip, int rw_flag);
+int rw_inode(struct inode *rip, int rw_flag);
+int mfs3_inode_decode(struct inode *rip, const d2_inode *dip, int norm);
+int mfs3_inode_encode(const struct inode *rip, d2_inode *dip, int norm);
 
 /* link.c */
 int fs_trunc(ino_t ino_nr, off_t start, off_t end);
