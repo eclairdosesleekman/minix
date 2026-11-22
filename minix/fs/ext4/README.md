@@ -575,6 +575,20 @@ leaf, add a root index entry, and remain readable after unmount/remount.
 Verify the resulting extent tree with `debugfs`/ `filefrag` and `e2fsck -fn`,
 both with and without `metadata_csum`.
 
+For root-growth coverage, first prepare a depth-one file whose inode-resident
+extent root uses all four index entries and whose selected external leaf is
+full. Write one block into a hole in that leaf, choosing a physical allocation
+that cannot merge with its neighbors. The operation must split the leaf,
+copy the four old root entries plus the new leaf entry into a newly allocated
+depth-one external index node, and change the inode root to depth two with one
+child. Verify the root key, all five child keys/pointers, both leaf checksums,
+the new index-node checksum when `metadata_csum` is enabled, and `i_blocks`
+(accounting for the data block, new leaf, and new index node). Repeat without
+`metadata_csum`. The new external index node must have room for the fifth
+entry; further growth or splitting a full external index node remains
+unsupported and must fail without changing the tree. Unmount and run
+`e2fsck -fn`.
+
 For depth-two and deeper coverage, prepare fragmented files whose inode roots
 have depths two and three (and greater, when the host tools can generate them).
 Choose a selected depth-one external index node with at least one free entry
