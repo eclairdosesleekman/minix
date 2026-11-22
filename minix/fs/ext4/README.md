@@ -196,9 +196,15 @@ read-write mode.
   enough slack; otherwise creation returns `ENOSPC`. An empty inline
   directory can be removed when its stored parent, two implicit links, and
   zero-block/no-external-xattr state are consistent; rmdir decrements the
-  child's implicit self link and the parent's directory link count. Nonempty
-  inline directories, directories with external storage, rename involving an
-  inline parent, and rmdir through `.` or `..` remain rejected.
+  child's implicit self link and the parent's directory link count. A
+  same-parent rename in a non-indexed inline parent is supported by rewriting
+  the source dirent in place when the destination name is unused (or already
+  names the same inode) and its aligned size fits the existing record. The
+  operation preserves the record length and never moves data across the
+  inline/xattr boundary. Cross-parent rename, replacement of a different
+  destination inode, and names too large for the existing source record remain
+  unsupported. Nonempty inline directories, directories with external storage,
+  and rmdir through `.` or `..` remain rejected.
   EA-inode-backed `system.data` values
   are read and checksum/hash validated for inline files, symlinks, and
   directories on read-only mounts, up to the 64 KiB xattr-value limit. No
@@ -359,10 +365,11 @@ implementation.
   detach remain unsupported.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
-- Existing restrictions still apply: recovery, MMP, rename involving an
-  inline parent, nonempty or externally-backed inline-directory rmdir,
-  inline-data xattr growth, encryption, casefold, and unsupported feature
-  flags are rejected. The
+- Existing restrictions still apply: recovery, MMP, cross-parent or
+  destination-replacing rename in inline parents, inline-parent names that
+  exceed the source record's current capacity, nonempty or externally-backed
+  inline-directory rmdir, inline-data xattr growth, encryption, casefold, and
+  unsupported feature flags are rejected. The
   filesystem must be clean,
   with an empty legacy orphan list. `orphan_file` is supported only on
   read-only mounts with no pending orphan recovery, as described above.
