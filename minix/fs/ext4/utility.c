@@ -386,11 +386,9 @@ ext4_validate_inode_xattrs(struct super_block *sp, dev_t dev,
 	unsigned int name_len, i;
 	int terminated = FALSE;
 
-	if (!sp->s_is_ext4 ||
-	    !HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE))
+	if (!sp->s_is_ext4 || sp->s_creator_os != EXT4_OS_LINUX)
 		return(OK);
-	if (sp->s_creator_os != EXT4_OS_LINUX || raw == NULL ||
-	    parent_ino == 0)
+	if (raw == NULL || parent_ino == 0)
 		return(EIO);
 
 	/* i_extra_isize and inode-body xattrs follow the original 128 bytes. */
@@ -449,7 +447,8 @@ ext4_validate_inode_xattrs(struct super_block *sp, dev_t dev,
 			return(EIO);
 
 		if (value_inum != 0) {
-			if (value_inum == ROOT_INODE ||
+			if (!HAS_INCOMPAT_FEATURE(sp, INCOMPAT_EA_INODE) ||
+			    value_inum == ROOT_INODE ||
 			    value_inum > sp->s_inodes_count)
 				return(EIO);
 		} else if (value_size != 0) {
