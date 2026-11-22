@@ -837,6 +837,9 @@ extent_split_full_leaf(struct inode *rip, unsigned char *leaf,
 		extent_release_leaf(rip, leaf_bp, FALSE);
 		return(EFBIG);
 	}
+	if (split_parent_ancestor &&
+	    extent_get32(parent_node + 12) != grandparent_key)
+		goto corrupt;
 
 	upper = leaf_upper_bound;
 	if (upper <= parent_key ||
