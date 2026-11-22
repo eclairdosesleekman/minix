@@ -196,9 +196,12 @@ read-write mode.
   the root is collapsed back to an empty depth-zero inline extent header. At
   depth two, an intermediate node containing only the leaf being removed can
   also be detached from the inode root; its data block, leaf, and metadata
-  block are freed, and a sole-child root becomes depth zero. Emptying
-  intermediate parents at greater depths or changing a first-child key that
-  requires ancestor propagation remains unsupported. Full parents,
+  block are freed, and a sole-child root becomes depth zero. At greater depths,
+  a one-leaf depth-one node can be removed from a non-first slot in its
+  depth-two parent when that parent has another child; the
+  depth-two parent's checksum is refreshed and its first key is unchanged.
+  Emptying that depth-two parent or changing a first-child key that requires
+  ancestor propagation remains unsupported. Full parents,
   index-node splits, and root growth or rebalancing remain unsupported. Writes
   into unwritten extents convert the affected block to an initialized extent.
 - New regular files, directories, and long symlinks are initialized with an
@@ -271,9 +274,11 @@ implementation.
   inode root to an empty depth-zero extent header instead of rejecting it. At
   depth two, a one-child intermediate node can also be detached from the
   inode root, freeing the data, leaf, and intermediate index blocks; a root
-  with no remaining child is reset to depth zero. Emptying intermediate
-  parents at greater depths and first-child ancestor propagation remain
-  unsupported.
+  with no remaining child is reset to depth zero. At greater depths, a
+  non-first depth-one child can be detached from a depth-two parent that
+  retains at least one sibling. Emptying that depth-two parent or changing its
+  first-child key remains unsupported because either operation would require
+  ancestor propagation.
 - Removing the final name of an inode with an external extent tree is rejected
   rather than freeing the inode while leaking its data blocks.
 - Existing restrictions still apply: recovery, MMP, inline
@@ -607,10 +612,14 @@ free the data block, leaf, and intermediate index block. The root depth must
 remain two when sibling intermediate nodes remain, and become zero when the
 removed node was its only child. At greater depths, deleting a non-first child
 from a parent that has another child must compact that parent, refresh its
-checksum, and free both blocks. Deleting the only child of an intermediate
-parent at depth greater than two, or a first child whose removal would require
-ancestor propagation, must fail without changing either node. Verify `i_blocks`, group/free-block
-counters, and `e2fsck -fn` after unmount, with and without
+checksum, and free both blocks. Also test depth-three and deeper trees where a
+depth-one node contains only the selected leaf and is a non-first child of its
+depth-two parent: deleting the leaf must remove the depth-one node, free the
+data, leaf, and depth-one metadata blocks, compact the depth-two parent, and
+refresh its checksum while leaving its first key unchanged. A first child of
+that depth-two parent, or its only child, must remain unsupported because
+removal would require ancestor propagation or empty that parent. Verify
+`i_blocks`, group and free-block counters, and `e2fsck -fn` after unmount, with and without
 `metadata_csum`. Also exercise writes into holes within a non-full leaf,
 unwritten-extent conversion, and tail truncation. Splitting a full parent index node or growing/rebalancing an
 index node must fail without damaging the filesystem. Also corrupt the first
