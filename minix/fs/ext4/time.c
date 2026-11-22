@@ -4,6 +4,7 @@
 
 #include "fs.h"
 #include "inode.h"
+#include "super.h"
 #include <sys/time.h>
 #include <sys/stat.h>
 
