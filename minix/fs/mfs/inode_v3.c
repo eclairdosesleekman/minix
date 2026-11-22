@@ -40,12 +40,14 @@ mfs3_inode_decode(struct inode *rip, const d2_inode *dip, int norm)
     rip->i_rdev = 0;
     rip->i_project_id = 0;
 
-    /* Keep the legacy signed-seconds interpretation, including pre-epoch
-     * timestamps, while extending it to the common 64-bit representation.
+    /*
+     * The legacy in-memory MFS3 fields were u32_t. Preserve that effective
+     * unsigned interpretation even though the disk structure spells them
+     * i32_t: values with bit 31 set must round-trip unchanged.
      */
-    rip->i_atime = (i64_t)(i32_t)conv4(norm, (long)dip->d2_atime);
-    rip->i_mtime = (i64_t)(i32_t)conv4(norm, (long)dip->d2_mtime);
-    rip->i_ctime = (i64_t)(i32_t)conv4(norm, (long)dip->d2_ctime);
+    rip->i_atime = (i64_t)(u32_t)conv4(norm, (long)dip->d2_atime);
+    rip->i_mtime = (i64_t)(u32_t)conv4(norm, (long)dip->d2_mtime);
+    rip->i_ctime = (i64_t)(u32_t)conv4(norm, (long)dip->d2_ctime);
 
     rip->i_ndzones = V2_NR_DZONES;
     rip->i_nindirs = V2_INDIRECTS(rip->i_sp->s_block_size);
@@ -68,9 +70,13 @@ mfs3_inode_encode(const struct inode *rip, d2_inode *dip, int norm)
         return(EMLINK);
     if (rip->i_size > 0x7fffffffULL)
         return(EFBIG);
-    if (rip->i_atime < -2147483648LL || rip->i_atime > 2147483647LL ||
-        rip->i_mtime < -2147483648LL || rip->i_mtime > 2147483647LL ||
-        rip->i_ctime < -2147483648LL || rip->i_ctime > 2147483647LL)
+    /*
+     * MFS3 historically treated these fields as unsigned 32-bit values in
+     * memory. Keep the full raw field range (through 2106-02-07) available.
+     */
+    if (rip->i_atime < 0 || rip->i_atime > 0xffffffffULL ||
+        rip->i_mtime < 0 || rip->i_mtime > 0xffffffffULL ||
+        rip->i_ctime < 0 || rip->i_ctime > 0xffffffffULL)
         return(EOVERFLOW);
 
     dip->d2_mode = (u16_t)conv2(norm, rip->i_mode);
@@ -78,9 +84,9 @@ mfs3_inode_encode(const struct inode *rip, d2_inode *dip, int norm)
     dip->d2_nlinks = (u16_t)conv2(norm, (u16_t)rip->i_nlinks);
     dip->d2_gid = (u16_t)conv2(norm, (u16_t)rip->i_gid);
     dip->d2_size = (i32_t)conv4(norm, (long)(i32_t)rip->i_size);
-    dip->d2_atime = (i32_t)conv4(norm, (long)(i32_t)rip->i_atime);
-    dip->d2_mtime = (i32_t)conv4(norm, (long)(i32_t)rip->i_mtime);
-    dip->d2_ctime = (i32_t)conv4(norm, (long)(i32_t)rip->i_ctime);
+    dip->d2_atime = (i32_t)conv4(norm, (long)(u32_t)rip->i_atime);
+    dip->d2_mtime = (i32_t)conv4(norm, (long)(u32_t)rip->i_mtime);
+    dip->d2_ctime = (i32_t)conv4(norm, (long)(u32_t)rip->i_ctime);
     for (i = 0; i < V2_NR_TZONES; i++)
         dip->d2_zone[i] =
             (zone_t)conv4(norm, (long)rip->i_zone[i]);
