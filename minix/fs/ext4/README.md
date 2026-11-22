@@ -14,6 +14,14 @@ read-write mode.
   depth-one index node and the inode root is promoted to depth two. The new
   index checksum (when enabled) and inode `i_blocks` are updated. Splitting
   full external index nodes and cascading growth remain unsupported.
+- Writable splitting of a full external depth-one index node beneath a
+  depth-two inode root, when the inode root has a free slot. The full parent
+  and the newly added leaf entry are divided between the existing node and a
+  new sibling node; the sibling index is inserted immediately after the old
+  parent in the inode root. Both external index checksums are regenerated
+  when `metadata_csum` is enabled, and `i_blocks` accounts for the data
+  block plus the new leaf and index nodes. Full inode roots and full parents
+  above depth two remain unsupported.
 - Written extents and unwritten extents (unwritten ranges read as zeroes).
 - 64-bit physical block numbers, 64-byte group descriptors, and high block
   counters from the ext4 superblock. Group descriptor bitmap and inode-table
