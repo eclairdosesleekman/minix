@@ -112,6 +112,15 @@ read-write mode.
   file-type incompat feature continue to report `DT_UNKNOWN`.
 - 64 KiB blocks are supported; ext4's extended `rec_len` encoding is
   decoded and encoded consistently by directory traversal and mutation paths.
+- Read-only indexed-directory lookup uses the ext4 HTree for the first
+  candidate leaf with legacy, half-MD4, and TEA hashes (signed and unsigned
+  variants). When `metadata_csum` is enabled, root and internal-node checksums
+  are verified. Count/limit arrays, hash ordering, child logical-block bounds,
+  and depth are validated for every traversed index node. A candidate miss
+  falls back to the complete linear scan so hash-collision continuation leaves
+  and unusual layouts remain discoverable. SipHash/hash-in-dirent modes
+  continue to use linear lookup. Directory enumeration remains linear;
+  indexed-directory mutation is still unsupported.
 - Linear directory traversal of htree leaf blocks; the dx root metadata after
   `..` is skipped in the first directory block. The `large_dir` incompat
   feature is accepted for read-only mounts: internal HTree nodes are skipped
@@ -609,6 +618,20 @@ byte-level edit, so rejection is attributable to malformed xattr structure
 rather than a stale checksum. Also test a valid `ea_inode` image and a block with an
 EA-inode reference but without the incompat feature. Run `e2fsck -fn` on the
 unmounted images after testing.
+
+For indexed-directory lookup, create disposable Linux ext4 images with
+`dir_index` enabled and separate legacy, half-MD4, and TEA hash defaults.
+Populate directories until their HTree spans multiple leaf blocks; also create
+a `large_dir` image with multiple internal-index levels. Verify lookups for
+names at the beginning and end of each hash range, long names, and names with
+high-bit bytes. Include duplicate-hash names that may be split across
+continuation leaves; a candidate-leaf miss must still be found by the linear
+fallback. Repeat on `metadata_csum` images and corrupt the dx root and internal
+node count/limit fields, hash ordering, logical child block numbers, and dx
+checksums one at a time; malformed index metadata must report `EIO`. Compare
+lookup results with a complete directory listing and run `e2fsck -fn` on
+unmounted images after testing. SipHash/hash-in-dirent mode remains on the
+linear path.
 
 For read-only `large_dir` coverage, create an ext4 image with
 `large_dir` and `dir_index` enabled (and `orphan_file` disabled), populate
