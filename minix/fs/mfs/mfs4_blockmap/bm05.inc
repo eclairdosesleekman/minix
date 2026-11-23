@@ -49,22 +49,41 @@
 	r = EIO;
 
 rollback:
-	/* Best-effort unlink/free of only the nodes created by this insertion. */
+	/*
+	 * Free a new indirect block only after its parent is confirmed not to
+	 * reference it.  A failed write/flush has an ambiguous persistence
+	 * result; leaking the block is safer than leaving a dangling pointer
+	 * to a block that the allocator may reuse.
+	 */
 	cleanup_error = 0;
 	for (j = created_count; j > 0; j--) {
 		unsigned int n = j - 1;
 		uint32_t fresh = created[n];
+		int detached = 0;
+
 		if (parents[n] == 0) {
-			if (inode_pointers[path.root_slot] == fresh)
+			if (inode_pointers[path.root_slot] == fresh) {
 				inode_pointers[path.root_slot] = 0;
+				detached = 1;
+			}
 		} else {
 			uint32_t pp[MFS4_BM_FANOUT];
-			if (mfs4_read_ptrs(map, parents[n], pp) == 0 &&
-			    pp[parent_indexes[n]] == fresh) {
-				pp[parent_indexes[n]] = 0;
-				if (mfs4_write_ptrs(map, parents[n], pp) != 0)
-					cleanup_error = EIO;
+
+			if (mfs4_read_ptrs(map, parents[n], pp) == 0) {
+				if (pp[parent_indexes[n]] == fresh) {
+					pp[parent_indexes[n]] = 0;
+					if (mfs4_write_ptrs(map, parents[n],
+					    pp) == 0)
+						detached = 1;
+				} else {
+					/* The parent no longer refers to this block. */
+					detached = 1;
+				}
 			}
+		}
+		if (!detached) {
+			cleanup_error = EIO;
+			continue;
 		}
 		if (mfs4_blockmap_free(map, fresh) != 0)
 			cleanup_error = EIO;

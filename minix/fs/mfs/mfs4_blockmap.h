@@ -22,7 +22,9 @@
 /*
  * Storage callbacks operate on one complete 4096-byte filesystem block.
  * The backend is responsible for translating these calls to LMFS buffers or
- * a test image.  Indirect blocks and file data use the same read/write path.
+ * a test image.  The flush callback is mandatory and must propagate durability
+ * failures; init rejects a missing callback.  Indirect blocks and file data
+ * use the same read/write path.
  */
 struct mfs4_blockmap_io {
 	void *cookie;

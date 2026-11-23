@@ -14,6 +14,9 @@
 struct test_disk {
 	uint8_t *bytes;
 	unsigned int flushes;
+	unsigned int write_calls;
+	unsigned int fail_write_first;
+	unsigned int fail_write_second;
 };
 
 static int
@@ -45,6 +48,11 @@ test_write(void *cookie, uint32_t block, const void *buffer)
 		return EIO;
 	memcpy(disk->bytes + (size_t)block * MFS4_BM_BLOCK_SIZE, buffer,
 	    MFS4_BM_BLOCK_SIZE);
+	disk->write_calls++;
+	/* Model an ambiguous I/O failure: data reached the image before error. */
+	if (disk->write_calls == disk->fail_write_first ||
+	    disk->write_calls == disk->fail_write_second)
+		return EIO;
 	return 0;
 }
 
@@ -63,6 +71,20 @@ set_bit(uint8_t *bitmap, unsigned int bit)
 }
 
 static int
+test_block_is_allocated(const struct test_disk *disk, uint32_t block)
+{
+	const uint8_t *zmap;
+	uint64_t bit;
+
+	if (block < TEST_DATA_START || block >= TEST_BACKUP)
+		return 0;
+	bit = (uint64_t)block - TEST_DATA_START;
+	zmap = disk->bytes +
+	    (size_t)TEST_ZMAP_START * MFS4_BM_BLOCK_SIZE;
+	return (zmap[bit >> 3] & (uint8_t)(1U << (bit & 7U))) != 0;
+}
+
+static int
 init_disk(struct test_disk *disk, struct mfs4_blockmap *map)
 {
 	struct mfs4_blockmap_io io;
@@ -73,6 +95,9 @@ init_disk(struct test_disk *disk, struct mfs4_blockmap *map)
 	if (disk->bytes == NULL)
 		return ENOMEM;
 	disk->flushes = 0;
+	disk->write_calls = 0;
+	disk->fail_write_first = 0;
+	disk->fail_write_second = 0;
 	zmap = disk->bytes + (size_t)TEST_ZMAP_START * MFS4_BM_BLOCK_SIZE;
 	/* Formatter reserves root directory data block at data index zero. */
 	set_bit(zmap, 0);
