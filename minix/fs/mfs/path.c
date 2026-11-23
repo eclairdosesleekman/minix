@@ -10,6 +10,7 @@
 #include "super.h"
 
 #include <minix/mfs4_disk.h>
+#include "mfs4_journal.h"
 
 static ino_t
 mfs4_dirent_inode(const struct inode *dir, const struct direct *dp)
@@ -238,7 +239,7 @@ int search_dir(
 			else if (flag == DELETE) {
 				/* Save d_ino for recovery. */
 				t = MFS_NAME_MAX - sizeof(ino_t);
-				if (sp != NULL && sp->s_version == V4) {
+				if (ldir_ptr->i_sp->s_version == V4) {
 					mfs4_put_le32((uint8_t *)dp +
 					    MFS4_DIRENT_NAME + t,
 					    (uint32_t)mfs4_dirent_inode(ldir_ptr, dp));
