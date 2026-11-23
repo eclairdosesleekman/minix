@@ -243,8 +243,8 @@ int search_dir(
 					    MFS4_DIRENT_NAME + t,
 					    (uint32_t)mfs4_dirent_inode(ldir_ptr, dp));
 				} else {
-					*((ino_t *) &dp->mfs_d_name[t]) =
-					    mfs4_dirent_inode(ldir_ptr, dp);
+					/* Preserve the legacy on-disk byte order in MFS3. */
+					*((ino_t *) &dp->mfs_d_name[t]) = dp->mfs_d_ino;
 				}
 				mfs4_set_dirent_inode(ldir_ptr, dp, NO_ENTRY);
 				if (ldir_ptr->i_sp->s_version != V4)
