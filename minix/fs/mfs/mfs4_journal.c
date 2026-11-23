@@ -1,9 +1,11 @@
 /*
- * MINIX block-cache adapter for the portable MFS4 journal core.
+ * MINIX block-cache adapter for the portable MFS4 redo journal.
  *
- * The transaction core is usable by MFS metadata writers through the tx
- * accessors below. Until every MFS4 metadata mutation path has been converted
- * to those accessors, writable MFS4 mount is deliberately fail-closed.
+ * VFS mutation callbacks frame each operation in one transaction. Inode,
+ * allocation-map, indirect-map, directory, and state metadata are staged as
+ * shadow images. File data remains in LMFS and is forced stable before the
+ * journal commit point. Orphan-list cleanup remains a Phase 5 operation, so
+ * writable mount refuses volumes with a nonempty orphan list.
  */
 #include "fs.h"
 #include <string.h>
@@ -19,8 +21,17 @@
 static struct mfs4_journal_io journal_io;
 static struct mfs4_journal_tx journal_tx;
 static int journal_bound;
+static int journal_open_readonly;
 static uint64_t journal_sequence = 1;
 static int64_t journal_block_delta;
+struct mfs4_journal_inode_ref {
+	struct inode *inode;
+	dev_t dev;
+	ino_t number;
+	uint32_t generation;
+};
+static struct mfs4_journal_inode_ref journal_inode_refs[NR_INODES];
+static unsigned int journal_inode_count;
 
 static int
 mfs4_jio_read(void *cookie, uint64_t block, void *data)
@@ -139,13 +150,39 @@ mfs4_journal_validate_state(struct super_block *sp, uint32_t *flags_out,
 	return OK;
 }
 
+
+/* Update the filesystem clean marker through the same redo protocol. */
+static int
+mfs4_journal_set_clean(int clean)
+{
+	uint8_t *state;
+	uint32_t flags;
+	int r;
+
+	if ((r = mfs4_tx_begin()) != OK)
+		return r;
+	if ((r = mfs4_tx_get_meta(superblock.s_mfs4_state_block,
+	    MFS4_JMETA_STATE, &state)) != OK) {
+		mfs4_tx_abort();
+		return r;
+	}
+	flags = mfs4_get_le32(state + MFS4_STATE_FLAGS);
+	if (clean)
+		flags |= MFS4_STATE_CLEAN;
+	else
+		flags &= ~MFS4_STATE_CLEAN;
+	mfs4_put_le32(state + MFS4_STATE_FLAGS, flags);
+	mfs4_put_le32(state + MFS4_STATE_CRC32C,
+	    mfs4_crc32c(state, MFS4_STATE_CRC32C));
+	return mfs4_tx_commit();
+}
+
 /*
  * MFS4 Phase 4 mount policy:
  * - RO mount is allowed only when state is clean, orphan list empty, and the
  *   journal has no committed transaction.
- * - RW mount probes DIOCFLUSH and replays a committed transaction, but is
- *   still rejected until the MFS metadata mutation callbacks have all been
- *   moved to the shadow-image API and Phase 5 orphan recovery is available.
+ * - RW mount first replays the journal, refuses orphaned inodes (Phase 5),
+ *   then durably clears CLEAN before exposing the volume to VFS.
  */
 int
 mfs4_journal_mount(struct super_block *sp, int readonly)
@@ -156,6 +193,7 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 	if (sp == NULL || sp->s_version != V4)
 		return EINVAL;
 
+	journal_open_readonly = readonly != 0;
 	mfs4_journal_bind(sp);
 	pending = mfs4_journal_pending(&journal_io);
 	if (pending < 0)
@@ -184,11 +222,15 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 	    &orphan_head)) != OK)
 		return r;
 
-	/*
-	 * Orphan-list recovery and complete shadow-image integration are not
-	 * yet available. Do not expose a read-write filesystem in this state.
-	 */
-	return EOPNOTSUPP;
+	/* Orphan cleanup is a Phase 5 operation; never mount such a volume. */
+	if (orphan_head != 0)
+		return EOPNOTSUPP;
+	/* Unknown RO-compatible features may not be modified by this driver. */
+	if (sp->s_mfs4_volume_flags != 0)
+		return EOPNOTSUPP;
+
+	/* A writable mount is not complete until CLEAN=0 is durable. */
+	return mfs4_journal_set_clean(0);
 }
 
 int
@@ -222,9 +264,35 @@ mfs4_tx_begin(void)
 		return EBUSY;
 
 	journal_block_delta = 0;
+	journal_inode_count = 0;
 	r = mfs4_journal_tx_begin(&journal_tx, &journal_io,
 	    journal_sequence++);
 	return r;
+}
+
+int
+mfs4_tx_note_inode(struct inode *rip)
+{
+	unsigned int i;
+
+	if (!journal_tx.active || rip == NULL)
+		return EINVAL;
+	for (i = 0; i < journal_inode_count; i++) {
+		if (journal_inode_refs[i].inode == rip &&
+		    journal_inode_refs[i].dev == rip->i_dev &&
+		    journal_inode_refs[i].number == rip->i_num &&
+		    journal_inode_refs[i].generation == rip->i_generation)
+			return OK;
+	}
+	if (journal_inode_count >= NR_INODES)
+		return ENOSPC;
+	journal_inode_refs[journal_inode_count].inode = rip;
+	journal_inode_refs[journal_inode_count].dev = rip->i_dev;
+	journal_inode_refs[journal_inode_count].number = rip->i_num;
+	journal_inode_refs[journal_inode_count].generation =
+	    rip->i_generation;
+	journal_inode_count++;
+	return OK;
 }
 
 int
@@ -255,8 +323,22 @@ mfs4_tx_commit(void)
 	r = mfs4_journal_tx_commit(&journal_tx);
 	if (r != OK) {
 		journal_block_delta = 0;
+		journal_inode_count = 0;
 		superblock.s_rd_only = 1;
 		return r;
+	}
+	/* The cached inode now matches the durable home image. */
+	{
+		unsigned int i;
+		for (i = 0; i < journal_inode_count; i++) {
+			struct mfs4_journal_inode_ref *ref =
+			    &journal_inode_refs[i];
+			if (ref->inode->i_dev == ref->dev &&
+			    ref->inode->i_num == ref->number &&
+			    ref->inode->i_generation == ref->generation)
+				IN_MARKCLEAN(ref->inode);
+		}
+		journal_inode_count = 0;
 	}
 	if (journal_block_delta != 0) {
 		if (journal_block_delta > 0)
@@ -277,8 +359,13 @@ mfs4_tx_commit(void)
 void
 mfs4_tx_abort(void)
 {
+	int had_images = journal_tx.active && journal_tx.count != 0;
+
 	mfs4_journal_tx_abort(&journal_tx);
 	journal_block_delta = 0;
+	/* Do not let partially mutated in-memory metadata reach the device. */
+	if (had_images)
+		superblock.s_rd_only = 1;
 }
 
 int
@@ -288,7 +375,28 @@ mfs4_journal_sync(void)
 		return EINVAL;
 	if (journal_tx.active)
 		return EBUSY;
-	if (superblock.s_rd_only)
+	/* A true RO mount cannot have dirtied data; fail-closed RW mounts can. */
+	if (superblock.s_rd_only && journal_open_readonly)
 		return OK;
 	return mfs4_jio_flush(&superblock);
+}
+
+int
+mfs4_journal_unmount(void)
+{
+	int r;
+
+	if (superblock.s_version != V4 || superblock.s_rd_only)
+		return EINVAL;
+	if ((r = mfs4_journal_sync()) != OK)
+		return r;
+	return mfs4_journal_set_clean(1);
+}
+
+int
+mfs4_journal_mark_dirty(void)
+{
+	if (superblock.s_version != V4 || superblock.s_rd_only)
+		return EINVAL;
+	return mfs4_journal_set_clean(0);
 }

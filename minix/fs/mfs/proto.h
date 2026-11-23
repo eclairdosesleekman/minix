@@ -39,8 +39,11 @@ int mfs4_free_map_range(struct inode *rip, u64_t first_block, u64_t end_block);
 int mfs4_zero_eof_tail(struct inode *rip, u64_t old_eof, u64_t new_eof);
 int mfs4_journal_mount(struct super_block *sp, int readonly);
 int mfs4_journal_sync(void);
+int mfs4_journal_unmount(void);
+int mfs4_journal_mark_dirty(void);
 int mfs4_tx_is_active(void);
 int mfs4_tx_note_block_delta(int delta);
+int mfs4_tx_note_inode(struct inode *rip);
 int mfs4_tx_begin(void);
 int mfs4_tx_get_meta(u64_t home_block, u32_t metadata_type,
     uint8_t **image_out);

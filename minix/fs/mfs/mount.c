@@ -102,6 +102,14 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
       (RES_HASPEEK | RES_64BIT) : RES_NOFLAGS;
 
   /* Mark it dirty */
+  if (!superblock.s_rd_only && superblock.s_version == V4) {
+	if ((r = mfs4_journal_unmount()) != OK) {
+		if (get_inode(fs_dev, ROOT_INODE) == NULL)
+			printf("MFS: unable to repin root inode after MFS4 journal error\\n");
+		return r;
+	}
+  }
+
   if (!superblock.s_rd_only && superblock.s_version != V4) {
 	unsigned int old_flags = superblock.s_flags;
 
@@ -182,6 +190,15 @@ int fs_unmount(void)
 	return r;
   }
 
+  /* MFS4's clean bit is itself protected by the redo journal. */
+  if (!superblock.s_rd_only && superblock.s_version == V4) {
+	if ((r = mfs4_journal_unmount()) != OK) {
+		if (get_inode(fs_dev, ROOT_INODE) == NULL)
+			printf("MFS: unable to repin root inode after MFS4 journal error\n");
+		return r;
+	}
+  }
+
   /* Mark it clean only after the preceding writeback has succeeded. */
   if (!superblock.s_rd_only && superblock.s_version != V4) {
 	unsigned int old_flags = superblock.s_flags;
@@ -210,6 +227,11 @@ int fs_unmount(void)
   close_error = bdev_close(fs_dev);
   if (close_error != OK) {
 	/* The unmount did not complete, so revoke the clean indication. */
+	if (!superblock.s_rd_only && superblock.s_version == V4) {
+		r = mfs4_journal_mark_dirty();
+		if (r != OK)
+			printf("MFS: unable to restore MFS4 dirty state (%d)\n", r);
+	}
 	if (!superblock.s_rd_only && superblock.s_version != V4) {
 		superblock.s_flags &= ~MFSFLAG_CLEAN;
 		r = write_super(&superblock);

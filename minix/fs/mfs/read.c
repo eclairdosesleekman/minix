@@ -7,6 +7,7 @@
 #include "super.h"
 #include <sys/param.h>
 #include <sys/dirent.h>
+#include <minix/mfs4_disk.h>
 #include <assert.h>
 
 
@@ -35,10 +36,10 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   
   /* Find the inode referred */
   if ((rip = find_inode(fs_dev, ino_nr)) == NULL)
-	return(EINVAL);
+	return superblock.s_version == V4 ? -EINVAL : EINVAL;
 
   if (position < 0)
-	return EINVAL;
+	return rip->i_sp->s_version == V4 ? -EINVAL : EINVAL;
 
   mode_word = rip->i_mode & I_TYPE;
   regular = (mode_word == I_REGULAR);
@@ -50,14 +51,14 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   /* If this is file i/o, check we can write */
   if (call == FSC_WRITE) {
   	  if(rip->i_sp->s_rd_only) 
-		  return EROFS;
+		  return rip->i_sp->s_version == V4 ? -EROFS : EROFS;
 
 	  /* Check in advance to see if file will grow too big. */
 	  if (rip->i_sp->s_version == V4) {
 		  u64_t start = (u64_t)position;
 		  if (start > rip->i_sp->s_mfs4_max_file_size ||
 		      (u64_t)nrbytes > rip->i_sp->s_mfs4_max_file_size - start)
-			  return EFBIG;
+			  return -EFBIG;
 	  } else if (position > (off_t)(rip->i_sp->s_max_size - nrbytes))
 		  return EFBIG;
 
@@ -70,7 +71,7 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 			  r = mfs4_zero_eof_tail(rip, (u64_t)f_size,
 			      (u64_t)position);
 			  if (r != OK)
-				  return r;
+				  return r > 0 && rip->i_sp->s_version == V4 ? -r : r;
 		  } else {
 			  clear_zone(rip, f_size, 0);
 		  }
@@ -113,7 +114,7 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   rip->i_seek = NO_SEEK;
 
   if (r != OK)
-	return r;
+	return r > 0 && rip->i_sp->s_version == V4 ? -r : r;
 
   /* even on a ROFS, writing to a device node on it is fine, 
    * just don't update the inode stats for it. And dito for reading.
@@ -123,7 +124,16 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 	  if (call == FSC_WRITE) rip->i_update |= CTIME | MTIME;
 	  IN_MARKDIRTY(rip);		/* inode is thus now dirty */
   }
-  
+
+  /* A write's size, timestamps, allocation maps and pointers belong to the
+   * same MFS4 transaction.  The data buffers are flushed before its journal
+   * commit by the transaction's ordered-write barrier.
+   */
+  if (call == FSC_WRITE && rip->i_sp->s_version == V4) {
+	  if ((r = rw_inode(rip, WRITING)) != OK)
+		  return r > 0 ? -r : r;
+  }
+
   return cum_io;
 }
 
@@ -477,6 +487,15 @@ static struct buf *rahead(
 /*===========================================================================*
  *				fs_getdents				     *
  *===========================================================================*/
+static ino_t
+mfs4_getdents_ino(const struct inode *dir, const struct direct *dp)
+{
+	if (dir->i_sp->s_version == V4)
+		return (ino_t)mfs4_get_le32((const uint8_t *)dp +
+		    MFS4_DIRENT_INODE);
+	return (ino_t)dp->mfs_d_ino;
+}
+
 ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	off_t *posp)
 {
@@ -490,6 +509,7 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
   off_t pos, off, block_pos, new_pos, ent_pos;
   struct buf *bp;
   struct direct *dp;
+  ino_t entry_ino;
   char *cp;
 
   /* Check whether the position is properly aligned */
@@ -525,7 +545,8 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	else
 		dp = &b_dir(bp)[0];
 	for (; dp < &b_dir(bp)[NR_DIR_ENTRIES(block_size)]; dp++) {
-		if (dp->mfs_d_ino == 0)
+		entry_ino = mfs4_getdents_ino(rip, dp);
+		if (entry_ino == 0)
 			continue;	/* Entry is not in use */
 
 		/* Compute the length of the name */
@@ -539,7 +560,7 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 		ent_pos = block_pos + ((char *) dp - (char *) bp->data);
 
 		/* We also need(?) the file type of the target inode. */
-		if (!(entrip = get_inode(fs_dev, (ino_t) dp->mfs_d_ino)))
+		if (!(entrip = get_inode(fs_dev, entry_ino)))
 			panic("unexpected get_inode failure");
 		type = IFTODT(entrip->i_mode);
 		put_inode(entrip);
@@ -548,7 +569,7 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 		 * fetching the mode from the inode is seriously expensive.
 		 * Userland should always be prepared to receive DT_UNKNOWN.
 		 */
-		r = fsdriver_dentry_add(&fsdentry, (ino_t) dp->mfs_d_ino,
+		r = fsdriver_dentry_add(&fsdentry, entry_ino,
 			dp->mfs_d_name, len, type);
 
 		/* If the user buffer is full, or an error occurred, stop. */
