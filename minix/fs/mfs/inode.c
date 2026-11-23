@@ -238,7 +238,15 @@ void put_inode(
 	} 
 
         rip->i_mountpoint = FALSE;
-	if (IN_ISDIRTY(rip)) rw_inode(rip, WRITING);
+	if (IN_ISDIRTY(rip)) {
+		if (rip->i_sp->s_version == V4 && rip->i_sp->s_rd_only) {
+			/* An aborted shadow transaction is never written back. */
+			rip->i_update = 0;
+			IN_MARKCLEAN(rip);
+		} else {
+			(void)rw_inode(rip, WRITING);
+		}
+	}
 
 	if (rip->i_nlinks == NO_LINK) {
 		/* free, put at the front of the LRU list */
