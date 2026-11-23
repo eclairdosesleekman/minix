@@ -57,6 +57,10 @@ int fs_utime(ino_t ino_nr, struct timespec *atime, struct timespec *mtime)
   }
 
   IN_MARKDIRTY(rip);
+  if (rip->i_sp->s_version == V4) {
+	  int r = rw_inode(rip, WRITING);
+	  if (r != OK) { put_inode(rip); return r; }
+  }
 
   put_inode(rip);
   return(OK);
