@@ -230,7 +230,7 @@ int fs_unmount(void)
 	if (!superblock.s_rd_only && superblock.s_version == V4) {
 		r = mfs4_journal_mark_dirty();
 		if (r != OK)
-			printf("MFS: unable to restore MFS4 dirty state (%d)\\n", r);
+			printf("MFS: unable to restore MFS4 dirty state (%d)\n", r);
 	}
 	if (!superblock.s_rd_only && superblock.s_version != V4) {
 		superblock.s_flags &= ~MFSFLAG_CLEAN;
