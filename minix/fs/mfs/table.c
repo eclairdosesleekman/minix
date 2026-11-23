@@ -9,6 +9,7 @@
 #include "inode.h"
 #include "buf.h"
 #include "super.h"
+#include <sys/time.h>
 
 /*
  * One VFS mutation is one MFS4 metadata transaction.  All MFS4 metadata
