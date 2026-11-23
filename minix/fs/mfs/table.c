@@ -60,6 +60,8 @@ mfs4_write_request(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 
 	if (superblock.s_version != V4 || call != FSC_WRITE)
 		return fs_readwrite(ino_nr, data, bytes, pos, call);
+	if (bytes == 0)
+		return 0;
 	if (data == NULL || pos < 0 || bytes > data->size)
 		return -EINVAL;
 	if ((uint64_t)pos > MFS4_MAX_FILE_SIZE ||
