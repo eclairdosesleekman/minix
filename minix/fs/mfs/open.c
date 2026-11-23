@@ -6,7 +6,7 @@
 #include "super.h"
 
 static struct inode *new_node(struct inode *ldirp, char *string, mode_t
-	bits, uid_t uid, gid_t gid, zone_t z0);
+	bits, uid_t uid, gid_t gid, u64_t rdev);
 
 /*===========================================================================*
  *				fs_create				     *
@@ -63,7 +63,7 @@ int fs_mknod(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid,
 	  return(EINVAL);
 
   /* Try to create the new node */
-  ip = new_node(ldirp, name, mode, uid, gid, (zone_t) dev);
+  ip = new_node(ldirp, name, mode, uid, gid, (u64_t)dev);
 
   put_inode(ip);
   put_inode(ldirp);
@@ -207,7 +207,7 @@ int fs_slink(ino_t dir_nr, char *name, uid_t uid, gid_t gid,
  *				new_node				     *
  *===========================================================================*/
 static struct inode *new_node(struct inode *ldirp,
-	char *string, mode_t bits, uid_t uid, gid_t gid, zone_t z0)
+	char *string, mode_t bits, uid_t uid, gid_t gid, u64_t rdev)
 {
 /* New_node() is called by fs_open(), fs_mknod(), and fs_mkdir().  
  * In all cases it allocates a new inode, makes a directory entry for it in
@@ -248,8 +248,24 @@ static struct inode *new_node(struct inode *ldirp,
 	 * no directory entry is much better than the opposite.
 	 */
 	rip->i_nlinks++;
-	rip->i_zone[0] = z0;		/* major/minor device numbers */
-	rw_inode(rip, WRITING);		/* force inode to disk now */
+	if (rip->i_sp->s_version == V4 &&
+	    ((bits & I_TYPE) == I_CHAR_SPECIAL ||
+	    (bits & I_TYPE) == I_BLOCK_SPECIAL)) {
+		rip->i_rdev = rdev;
+		rip->i_zone[0] = 0;
+	} else {
+		rip->i_zone[0] = (zone_t)rdev;
+	}
+	if (rip->i_sp->s_version == V4) {
+		if ((r = rw_inode(rip, WRITING)) != OK) {
+			err_code = r;
+			rip->i_nlinks = NO_LINK;
+			put_inode(rip);
+			return NULL;
+		}
+	} else {
+		(void)rw_inode(rip, WRITING);
+	}
 
 	/* New inode acquired.  Try to make directory entry. */
 	if((r=search_dir(ldirp, string, &rip->i_num, ENTER)) != OK) {
