@@ -21,6 +21,8 @@ static struct mfs4_journal_tx journal_tx;
 static int journal_bound;
 static uint64_t journal_sequence = 1;
 static int64_t journal_block_delta;
+static struct inode *journal_inode_refs[NR_INODES];
+static unsigned int journal_inode_count;
 
 static int
 mfs4_jio_read(void *cookie, uint64_t block, void *data)
@@ -252,9 +254,27 @@ mfs4_tx_begin(void)
 		return EBUSY;
 
 	journal_block_delta = 0;
+	journal_inode_count = 0;
 	r = mfs4_journal_tx_begin(&journal_tx, &journal_io,
 	    journal_sequence++);
 	return r;
+}
+
+int
+mfs4_tx_note_inode(struct inode *rip)
+{
+	unsigned int i;
+
+	if (!journal_tx.active || rip == NULL)
+		return EINVAL;
+	for (i = 0; i < journal_inode_count; i++) {
+		if (journal_inode_refs[i] == rip)
+			return OK;
+	}
+	if (journal_inode_count >= NR_INODES)
+		return ENOSPC;
+	journal_inode_refs[journal_inode_count++] = rip;
+	return OK;
 }
 
 int
@@ -285,8 +305,16 @@ mfs4_tx_commit(void)
 	r = mfs4_journal_tx_commit(&journal_tx);
 	if (r != OK) {
 		journal_block_delta = 0;
+		journal_inode_count = 0;
 		superblock.s_rd_only = 1;
 		return r;
+	}
+	/* The cached inode now matches the durable home image. */
+	{
+		unsigned int i;
+		for (i = 0; i < journal_inode_count; i++)
+			IN_MARKCLEAN(journal_inode_refs[i]);
+		journal_inode_count = 0;
 	}
 	if (journal_block_delta != 0) {
 		if (journal_block_delta > 0)
