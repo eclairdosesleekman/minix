@@ -43,6 +43,9 @@ bit_t alloc_bit(
   bitchunk_t *wptr, *wlim, k;
   bit_t i, b;
 
+  if (sp->s_version == V4)
+	return mfs4_alloc_bit(sp, map, origin);
+
   if (sp->s_rd_only)
 	panic("can't allocate bit on read-only filesys");
 
@@ -121,6 +124,11 @@ void free_bit(
   struct buf *bp;
   bitchunk_t k, mask;
   block_t start_block;
+
+  if (sp->s_version == V4) {
+	mfs4_free_bit(sp, map, bit_returned);
+	return;
+  }
 
   if (sp->s_rd_only)
 	panic("can't free bit on read-only filesys");
@@ -239,6 +247,15 @@ int read_super(struct super_block *sp)
   unsigned int magic;
   block_t offset;
   int version, native, r;
+
+  {
+	int is_mfs4;
+	r = mfs4_probe_super(sp, &is_mfs4);
+	if (r != OK)
+		return r;
+	if (is_mfs4)
+		return OK;
+  }
 
   if((r=rw_super(sp, 0)) != OK)
   	return r;

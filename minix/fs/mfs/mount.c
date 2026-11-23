@@ -37,7 +37,8 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
   }
 
   /* clean check: if rw and not clean, switch to readonly */
-  if(!(superblock.s_flags & MFSFLAG_CLEAN) && !readonly) {
+  if (superblock.s_version != V4 &&
+      !(superblock.s_flags & MFSFLAG_CLEAN) && !readonly) {
 	if(bdev_close(fs_dev) != OK)
 		panic("couldn't bdev_close after found unclean FS");
 	readonly = 1;
@@ -50,6 +51,14 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
   }
 
   if ((r = lmfs_set_blocksize_err(superblock.s_block_size)) != OK) {
+	superblock.s_dev = NO_DEV;
+	(void)bdev_close(fs_dev);
+	return r;
+  }
+
+  if (superblock.s_version == V4 &&
+      (r = mfs4_journal_mount(&superblock, readonly)) != OK) {
+	printf("MFS: MFS4 journal mount refused (%d)\n", r);
 	superblock.s_dev = NO_DEV;
 	(void)bdev_close(fs_dev);
 	return r;
@@ -89,10 +98,11 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
   root_node->fn_gid = root_ip->i_gid;
   root_node->fn_dev = NO_DEV;
 
-  *res_flags = RES_NOFLAGS;
+  *res_flags = (superblock.s_version == V4) ?
+      (RES_HASPEEK | RES_64BIT) : RES_NOFLAGS;
 
   /* Mark it dirty */
-  if (!superblock.s_rd_only) {
+  if (!superblock.s_rd_only && superblock.s_version != V4) {
 	unsigned int old_flags = superblock.s_flags;
 
 	superblock.s_flags &= ~MFSFLAG_CLEAN;
@@ -173,7 +183,7 @@ int fs_unmount(void)
   }
 
   /* Mark it clean only after the preceding writeback has succeeded. */
-  if (!superblock.s_rd_only) {
+  if (!superblock.s_rd_only && superblock.s_version != V4) {
 	unsigned int old_flags = superblock.s_flags;
 
 	superblock.s_flags |= MFSFLAG_CLEAN;
@@ -200,7 +210,7 @@ int fs_unmount(void)
   close_error = bdev_close(fs_dev);
   if (close_error != OK) {
 	/* The unmount did not complete, so revoke the clean indication. */
-	if (!superblock.s_rd_only) {
+	if (!superblock.s_rd_only && superblock.s_version != V4) {
 		superblock.s_flags &= ~MFSFLAG_CLEAN;
 		r = write_super(&superblock);
 		if (r != OK)

@@ -59,6 +59,25 @@ zone_t alloc_zone(
    */
   sp = &superblock;
 
+  if (sp->s_version == V4) {
+	if ((uint64_t)z <= sp->s_mfs4_data_start)
+		bit = sp->s_zsearch;
+	else
+		bit = (bit_t)((uint64_t)z - sp->s_mfs4_data_start);
+	b = alloc_bit(sp, ZMAP, bit);
+	if (b == NO_BIT) {
+		err_code = ENOSPC;
+		if (print_oos_msg)
+			printf("No space on device %d/%d\\n", major(sp->s_dev),
+			    minor(sp->s_dev));
+		print_oos_msg = 0;
+		return NO_ZONE;
+	}
+	print_oos_msg = 1;
+	sp->s_zsearch = b;
+	return (zone_t)(sp->s_mfs4_data_start + b);
+  }
+
   /* If z is 0, skip initial part of the map known to be fully in use. */
   if (z == sp->s_firstdatazone) {
 	bit = sp->s_zsearch;
@@ -94,6 +113,15 @@ void free_zone(
 
   /* Locate the appropriate super_block and return bit. */
   sp = &superblock;
+  if (sp->s_version == V4) {
+	if ((uint64_t)numb < sp->s_mfs4_data_start ||
+	    (uint64_t)numb >= sp->s_mfs4_backup_block)
+		return;
+	bit = (bit_t)((uint64_t)numb - sp->s_mfs4_data_start);
+	free_bit(sp, ZMAP, bit);
+	lmfs_free_block(dev, (block64_t)numb);
+	return;
+  }
   if (numb < sp->s_firstdatazone || numb >= sp->s_zones) return;
   bit = (bit_t) (numb - (zone_t) (sp->s_firstdatazone - 1));
   free_bit(sp, ZMAP, bit);
