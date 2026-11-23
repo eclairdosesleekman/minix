@@ -35,10 +35,10 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   
   /* Find the inode referred */
   if ((rip = find_inode(fs_dev, ino_nr)) == NULL)
-	return(EINVAL);
+	return superblock.s_version == V4 ? -EINVAL : EINVAL;
 
   if (position < 0)
-	return EINVAL;
+	return rip->i_sp->s_version == V4 ? -EINVAL : EINVAL;
 
   mode_word = rip->i_mode & I_TYPE;
   regular = (mode_word == I_REGULAR);
@@ -50,14 +50,14 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   /* If this is file i/o, check we can write */
   if (call == FSC_WRITE) {
   	  if(rip->i_sp->s_rd_only) 
-		  return EROFS;
+		  return rip->i_sp->s_version == V4 ? -EROFS : EROFS;
 
 	  /* Check in advance to see if file will grow too big. */
 	  if (rip->i_sp->s_version == V4) {
 		  u64_t start = (u64_t)position;
 		  if (start > rip->i_sp->s_mfs4_max_file_size ||
 		      (u64_t)nrbytes > rip->i_sp->s_mfs4_max_file_size - start)
-			  return EFBIG;
+			  return -EFBIG;
 	  } else if (position > (off_t)(rip->i_sp->s_max_size - nrbytes))
 		  return EFBIG;
 
@@ -70,7 +70,7 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 			  r = mfs4_zero_eof_tail(rip, (u64_t)f_size,
 			      (u64_t)position);
 			  if (r != OK)
-				  return r;
+				  return r > 0 && rip->i_sp->s_version == V4 ? -r : r;
 		  } else {
 			  clear_zone(rip, f_size, 0);
 		  }
@@ -113,7 +113,7 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   rip->i_seek = NO_SEEK;
 
   if (r != OK)
-	return r;
+	return r > 0 && rip->i_sp->s_version == V4 ? -r : r;
 
   /* even on a ROFS, writing to a device node on it is fine, 
    * just don't update the inode stats for it. And dito for reading.
@@ -130,7 +130,7 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
    */
   if (call == FSC_WRITE && rip->i_sp->s_version == V4) {
 	  if ((r = rw_inode(rip, WRITING)) != OK)
-		  return r;
+		  return r > 0 ? -r : r;
   }
 
   return cum_io;
