@@ -88,6 +88,12 @@ int fs_link(ino_t dir_nr, char *name, ino_t ino_nr)
 	  rip->i_nlinks++;
 	  rip->i_update |= CTIME;
 	  IN_MARKDIRTY(rip);
+	  if (rip->i_sp->s_version == V4 &&
+	      (r = rw_inode(rip, WRITING)) != OK) {
+		  put_inode(rip);
+		  put_inode(ip);
+		  return r;
+	  }
   }
   
   /* Done.  Release both inodes. */
@@ -244,6 +250,11 @@ static int unlink_file(
 	rip->i_nlinks--;	/* entry deleted from parent's dir */
 	rip->i_update |= CTIME;
 	IN_MARKDIRTY(rip);
+	if (rip->i_sp->s_version == V4 &&
+	    (r = rw_inode(rip, WRITING)) != OK) {
+		put_inode(rip);
+		return r;
+	}
   }
 
   put_inode(rip);
@@ -412,6 +423,9 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 		/* New link created. */
 		new_dirp->i_nlinks++;
 		IN_MARKDIRTY(new_dirp);
+		if (new_dirp->i_sp->s_version == V4 &&
+		    (r = rw_inode(new_dirp, WRITING)) != OK)
+			r = r;
 	}
   }
 	
