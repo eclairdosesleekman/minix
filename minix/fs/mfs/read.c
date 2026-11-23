@@ -123,7 +123,16 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 	  if (call == FSC_WRITE) rip->i_update |= CTIME | MTIME;
 	  IN_MARKDIRTY(rip);		/* inode is thus now dirty */
   }
-  
+
+  /* A write's size, timestamps, allocation maps and pointers belong to the
+   * same MFS4 transaction.  The data buffers are flushed before its journal
+   * commit by the transaction's ordered-write barrier.
+   */
+  if (call == FSC_WRITE && rip->i_sp->s_version == V4) {
+	  if ((r = rw_inode(rip, WRITING)) != OK)
+		  return r;
+  }
+
   return cum_io;
 }
 
