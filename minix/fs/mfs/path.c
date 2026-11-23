@@ -292,28 +292,46 @@ int search_dir(
    * extend directory.
    */
   if (e_hit == FALSE) { /* directory is full and no room left in last block */
-	new_slots++;		/* increase directory size by 1 entry */
-	if (new_slots == 0) return(EFBIG); /* dir size limited by slot count */
-	if ( (bp = new_block(ldir_ptr, ldir_ptr->i_size)) == NULL)
+	new_slots++;
+	if (new_slots == 0) return(EFBIG);
+	if ((bp = new_block(ldir_ptr, ldir_ptr->i_size)) == NULL)
 		return(err_code);
-	dp = &b_dir(bp)[0];
 	extended = 1;
-  }
+	if (ldir_ptr->i_sp->s_version == V4) {
+		disk_block = read_map(ldir_ptr, pos, 0);
+		if (disk_block == NO_BLOCK) {
+			put_block(bp);
+			return EIO;
+		}
+		if ((r = mfs4_tx_get_meta(disk_block,
+		    MFS4_JMETA_DIRECTORY, &dir_image)) != OK) {
+			put_block(bp);
+			return r;
+		}
+		dp = (struct direct *)(void *)dir_image;
+	} else {
+		dp = &b_dir(bp)[0];
+	}
+}
 
-  /* 'bp' now points to a directory block with space. 'dp' points to slot. */
-  (void) memset(dp->mfs_d_name, 0, (size_t) MFS_NAME_MAX); /* clear entry */
-  for (i = 0; i < MFS_NAME_MAX && string[i]; i++) dp->mfs_d_name[i] = string[i];
-  sp = ldir_ptr->i_sp; 
-  dp->mfs_d_ino = conv4(sp->s_native, (int) *numb);
-  MARKDIRTY(bp);
-  put_block(bp);
-  ldir_ptr->i_update |= CTIME | MTIME;	/* mark mtime for update later */
-  IN_MARKDIRTY(ldir_ptr);
-  if (new_slots > old_slots) {
-	ldir_ptr->i_size = (off_t) new_slots * DIR_ENTRY_SIZE;
-	/* Send the change to disk if the directory is extended. */
-	if (extended) rw_inode(ldir_ptr, WRITING);
-  }
-  return(OK);
+/* 'bp' points to a directory block with an available entry. */
+(void)memset(dp->mfs_d_name, 0, (size_t)MFS_NAME_MAX);
+for (i = 0; i < MFS_NAME_MAX && string[i]; i++)
+	dp->mfs_d_name[i] = string[i];
+mfs4_set_dirent_inode(ldir_ptr, dp, *numb);
+if (ldir_ptr->i_sp->s_version != V4)
+	MARKDIRTY(bp);
+put_block(bp);
+ldir_ptr->i_update |= CTIME | MTIME;
+IN_MARKDIRTY(ldir_ptr);
+if (new_slots > old_slots)
+	ldir_ptr->i_size = (off_t)new_slots * DIR_ENTRY_SIZE;
+if (ldir_ptr->i_sp->s_version == V4) {
+	if ((r = rw_inode(ldir_ptr, WRITING)) != OK)
+		return r;
+} else if (new_slots > old_slots && extended) {
+	(void)rw_inode(ldir_ptr, WRITING);
+}
+return(OK);
 }
 
