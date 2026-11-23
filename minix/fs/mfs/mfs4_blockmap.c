@@ -1,6 +1,7 @@
 /*	$NetBSD$	*/
 
 /* MFS4 allocator and 64-bit direct/single/double/triple block mapping. */
+#include "mfs4_blockmap.h"
 #include "mfs4_blockmap/bm00.inc"
 #include "mfs4_blockmap/bm01.inc"
 #include "mfs4_blockmap/bm02.inc"

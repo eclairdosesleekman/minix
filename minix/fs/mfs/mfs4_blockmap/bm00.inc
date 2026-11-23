@@ -12,7 +12,6 @@
  * Phase 4 replaces that backend with transaction-shadow/journal writes; this
  * module never claims crash atomicity for the Phase 3 update sequence.
  */
-#include "mfs4_blockmap.h"
 
 #include <errno.h>
 #include <limits.h>
