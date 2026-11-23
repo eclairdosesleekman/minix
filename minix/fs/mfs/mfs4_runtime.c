@@ -336,6 +336,21 @@ mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 		return NO_BIT;
 	}
 
+	/*
+	 * mkfs reserves inode 1 for the root directory and data bit 0 for the
+	 * root directory block.  Never allocate either one if its bitmap bit
+	 * has been cleared by on-disk corruption.
+	 */
+	if ((r = mfs4_tx_get_meta(start, type, &image)) != OK) {
+		err_code = r;
+		goto fail;
+	}
+	if ((map == IMAP && (image[0] & 0x02U) == 0) ||
+	    (map == ZMAP && (image[0] & 0x01U) == 0)) {
+		err_code = EIO;
+		goto fail;
+	}
+
 	for (step = 0; step < search_count; step++) {
 		index = first_allocatable +
 		    ((uint64_t)(origin - first_allocatable) + step) %
@@ -386,7 +401,8 @@ mfs4_free_bit(struct super_block *sp, int map, bit_t bit_returned)
 	if (sp == NULL || (map != IMAP && map != ZMAP) || sp->s_rd_only)
 		return;
 	bits = mfs4_bitmap_bits(sp, map);
-	if ((map == IMAP && bit_returned == 0) ||
+	if ((map == IMAP && bit_returned <= 1) ||
+	    (map == ZMAP && bit_returned == 0) ||
 	    bit_returned >= bits) {
 		sp->s_rd_only = 1;
 		return;

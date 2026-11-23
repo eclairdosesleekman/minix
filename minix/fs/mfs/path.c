@@ -163,10 +163,12 @@ int search_dir(
   for (; pos < ldir_ptr->i_size; pos += ldir_ptr->i_sp->s_block_size) {
 	assert(ldir_ptr->i_dev != NO_DEV);
 
-	/* Since directories don't have holes, 'b' cannot be NO_BLOCK. */
+	/* Since directories do not have holes, a missing MFS4 block is EIO. */
 	bp = get_block_map(ldir_ptr, pos);
 
 	assert(ldir_ptr->i_dev != NO_DEV);
+	if (bp == NULL && ldir_ptr->i_sp->s_version == V4)
+		return err_code != OK ? err_code : EIO;
 	assert(bp != NULL);
 
 	/*

@@ -10,6 +10,7 @@
 #include "buf.h"
 #include "super.h"
 #include <sys/time.h>
+#include <minix/mfs4_disk.h>
 
 /*
  * One VFS mutation is one MFS4 metadata transaction.  All MFS4 metadata

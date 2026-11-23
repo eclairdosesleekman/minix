@@ -33,6 +33,8 @@ bit_t mfs4_count_free_bits(struct super_block *sp, int map);
 int mfs4_probe_super(struct super_block *sp, int *is_mfs4);
 int mfs4_next_generation(ino_t inum, uint32_t *generation);
 int mfs4_rw_inode(struct inode *rip, int rw_flag);
+int mfs4_read_map_checked(struct inode *rip, off_t position,
+	block_t *block_out);
 block_t mfs4_read_map(struct inode *rip, off_t position);
 int mfs4_write_map(struct inode *rip, off_t position, zone_t new_block, int op);
 int mfs4_free_map_range(struct inode *rip, u64_t first_block, u64_t end_block);
