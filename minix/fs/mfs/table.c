@@ -41,25 +41,56 @@ mfs4_mutation_end(int result)
 	return r == OK ? result : r;
 }
 
+/*
+ * Keep each ordinary file write below the 64-image journal limit.  Eight
+ * blocks plus an unaligned first block touch at most nine logical data blocks;
+ * the corresponding inode, bitmap and indirect metadata fit comfortably
+ * within one fixed journal transaction.  Return only bytes whose chunk has
+ * crossed its commit point.
+ */
+#define MFS4_WRITE_TX_CHUNK_BYTES (8U * MFS4_BLOCK_SIZE)
+
 static ssize_t
 mfs4_write_request(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	off_t pos, int call)
 {
+	size_t committed = 0, chunk;
 	ssize_t result;
 	int r;
 
 	if (superblock.s_version != V4 || call != FSC_WRITE)
 		return fs_readwrite(ino_nr, data, bytes, pos, call);
-	if ((r = mfs4_mutation_begin()) != OK)
-		return -r;
-	result = fs_readwrite(ino_nr, data, bytes, pos, call);
-	if (result < 0) {
-		mfs4_tx_abort();
-		return result;
+	if (data == NULL || pos < 0 || bytes > data->size)
+		return -EINVAL;
+	if ((uint64_t)pos > MFS4_MAX_FILE_SIZE ||
+	    (uint64_t)bytes > MFS4_MAX_FILE_SIZE - (uint64_t)pos)
+		return -EFBIG;
+
+	while (committed < bytes) {
+		chunk = bytes - committed;
+		if (chunk > MFS4_WRITE_TX_CHUNK_BYTES)
+			chunk = MFS4_WRITE_TX_CHUNK_BYTES;
+
+		if ((r = mfs4_mutation_begin()) != OK)
+			return committed != 0 ? (ssize_t)committed : -r;
+		result = fs_readwrite_offset(ino_nr, data, chunk,
+		    pos + (off_t)committed, call, committed);
+		if (result < 0) {
+			mfs4_tx_abort();
+			return committed != 0 ? (ssize_t)committed : result;
+		}
+		if (result == 0) {
+			mfs4_tx_abort();
+			return (ssize_t)committed;
+		}
+		if ((r = mfs4_tx_commit()) != OK)
+			return committed != 0 ? (ssize_t)committed : -r;
+
+		committed += (size_t)result;
+		if ((size_t)result < chunk)
+			break;
 	}
-	if ((r = mfs4_tx_commit()) != OK)
-		return -r;
-	return result;
+	return (ssize_t)committed;
 }
 
 static int
