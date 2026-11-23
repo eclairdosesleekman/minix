@@ -43,6 +43,7 @@ int mfs4_journal_unmount(void);
 int mfs4_journal_mark_dirty(void);
 int mfs4_tx_is_active(void);
 int mfs4_tx_note_block_delta(int delta);
+int mfs4_tx_note_inode(struct inode *rip);
 int mfs4_tx_begin(void);
 int mfs4_tx_get_meta(u64_t home_block, u32_t metadata_type,
     uint8_t **image_out);
