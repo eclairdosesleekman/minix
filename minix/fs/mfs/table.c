@@ -50,14 +50,14 @@ mfs4_write_request(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	if (superblock.s_version != V4 || call != FSC_WRITE)
 		return fs_readwrite(ino_nr, data, bytes, pos, call);
 	if ((r = mfs4_mutation_begin()) != OK)
-		return r;
+		return -r;
 	result = fs_readwrite(ino_nr, data, bytes, pos, call);
 	if (result < 0) {
 		mfs4_tx_abort();
 		return result;
 	}
 	if ((r = mfs4_tx_commit()) != OK)
-		return r;
+		return -r;
 	return result;
 }
 
