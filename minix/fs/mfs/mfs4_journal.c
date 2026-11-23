@@ -139,13 +139,39 @@ mfs4_journal_validate_state(struct super_block *sp, uint32_t *flags_out,
 	return OK;
 }
 
+
+/* Update the filesystem clean marker through the same redo protocol. */
+static int
+mfs4_journal_set_clean(int clean)
+{
+	uint8_t *state;
+	uint32_t flags;
+	int r;
+
+	if ((r = mfs4_tx_begin()) != OK)
+		return r;
+	if ((r = mfs4_tx_get_meta(superblock.s_mfs4_state_block,
+	    MFS4_JMETA_STATE, &state)) != OK) {
+		mfs4_tx_abort();
+		return r;
+	}
+	flags = mfs4_get_le32(state + MFS4_STATE_FLAGS);
+	if (clean)
+		flags |= MFS4_STATE_CLEAN;
+	else
+		flags &= ~MFS4_STATE_CLEAN;
+	mfs4_put_le32(state + MFS4_STATE_FLAGS, flags);
+	mfs4_put_le32(state + MFS4_STATE_CRC32C,
+	    mfs4_crc32c(state, MFS4_STATE_CRC32C));
+	return mfs4_tx_commit();
+}
+
 /*
  * MFS4 Phase 4 mount policy:
  * - RO mount is allowed only when state is clean, orphan list empty, and the
  *   journal has no committed transaction.
- * - RW mount probes DIOCFLUSH and replays a committed transaction, but is
- *   still rejected until the MFS metadata mutation callbacks have all been
- *   moved to the shadow-image API and Phase 5 orphan recovery is available.
+ * - RW mount first replays the journal, refuses orphaned inodes (Phase 5),
+ *   then durably clears CLEAN before exposing the volume to VFS.
  */
 int
 mfs4_journal_mount(struct super_block *sp, int readonly)
@@ -184,11 +210,15 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 	    &orphan_head)) != OK)
 		return r;
 
-	/*
-	 * Orphan-list recovery and complete shadow-image integration are not
-	 * yet available. Do not expose a read-write filesystem in this state.
-	 */
-	return EOPNOTSUPP;
+	/* Orphan cleanup is a Phase 5 operation; never mount such a volume. */
+	if (orphan_head != 0)
+		return EOPNOTSUPP;
+	/* Unknown RO-compatible features may not be modified by this driver. */
+	if (sp->s_mfs4_volume_flags != 0)
+		return EOPNOTSUPP;
+
+	/* A writable mount is not complete until CLEAN=0 is durable. */
+	return mfs4_journal_set_clean(0);
 }
 
 int
@@ -277,8 +307,13 @@ mfs4_tx_commit(void)
 void
 mfs4_tx_abort(void)
 {
+	int had_images = journal_tx.active && journal_tx.count != 0;
+
 	mfs4_journal_tx_abort(&journal_tx);
 	journal_block_delta = 0;
+	/* Do not let partially mutated in-memory metadata reach the device. */
+	if (had_images)
+		superblock.s_rd_only = 1;
 }
 
 int
@@ -291,4 +326,24 @@ mfs4_journal_sync(void)
 	if (superblock.s_rd_only)
 		return OK;
 	return mfs4_jio_flush(&superblock);
+}
+
+int
+mfs4_journal_unmount(void)
+{
+	int r;
+
+	if (superblock.s_version != V4 || superblock.s_rd_only)
+		return EINVAL;
+	if ((r = mfs4_journal_sync()) != OK)
+		return r;
+	return mfs4_journal_set_clean(1);
+}
+
+int
+mfs4_journal_mark_dirty(void)
+{
+	if (superblock.s_version != V4 || superblock.s_rd_only)
+		return EINVAL;
+	return mfs4_journal_set_clean(0);
 }
