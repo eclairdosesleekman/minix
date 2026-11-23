@@ -115,6 +115,18 @@ int fs_mkdir(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid)
 	  rip->i_nlinks--;	/* undo the increment done in new_node() */
   }
   IN_MARKDIRTY(rip);		/* either way, i_nlinks has changed */
+  if (rip->i_sp->s_version == V4) {
+	  if ((r1 = rw_inode(rip, WRITING)) != OK) {
+		  put_inode(ldirp);
+		  put_inode(rip);
+		  return r1;
+	  }
+	  if ((r1 = rw_inode(ldirp, WRITING)) != OK) {
+		  put_inode(ldirp);
+		  put_inode(rip);
+		  return r1;
+	  }
+  }
 
   put_inode(ldirp);		/* return the inode of the parent dir */
   put_inode(rip);		/* return the inode of the newly made dir */
@@ -157,7 +169,11 @@ int fs_slink(ino_t dir_nr, char *name, uid_t uid, gid_t gid,
 
 	if(bp != NULL && r == OK) {
 		sip->i_size = (off_t) strlen(b_data(bp));
-		if(sip->i_size != bytes) {
+		IN_MARKDIRTY(sip);
+		if (sip->i_sp->s_version == V4 &&
+		    (r = rw_inode(sip, WRITING)) != OK) {
+			/* The outer MFS4 transaction will be aborted. */
+		} else if(sip->i_size != bytes) {
 			/* This can happen if the user provides a buffer
 			 * with a \0 in it. This can cause a lot of trouble
 			 * when the symlink is used later. We could just use
