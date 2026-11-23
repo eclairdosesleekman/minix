@@ -24,6 +24,10 @@ int fs_chmod(ino_t ino_nr, mode_t *mode)
   rip->i_mode = (rip->i_mode & ~ALL_MODES) | (*mode & ALL_MODES);
   rip->i_update |= CTIME;
   IN_MARKDIRTY(rip);
+  if (rip->i_sp->s_version == V4) {
+	  int r = rw_inode(rip, WRITING);
+	  if (r != OK) { put_inode(rip); return r; }
+  }
 
   /* Return full new mode to caller. */
   *mode = rip->i_mode;
@@ -56,6 +60,10 @@ int fs_chown(ino_t ino_nr, uid_t uid, gid_t gid, mode_t *mode)
   rip->i_mode &= ~(I_SET_UID_BIT | I_SET_GID_BIT);
   rip->i_update |= CTIME;
   IN_MARKDIRTY(rip);
+  if (rip->i_sp->s_version == V4) {
+	  int r = rw_inode(rip, WRITING);
+	  if (r != OK) { put_inode(rip); return r; }
+  }
 
   /* Update caller on current mode, as it may have changed. */
   *mode = rip->i_mode;
