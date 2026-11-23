@@ -42,7 +42,8 @@ test_blockmap_rollback_keeps_ambiguous_child_allocated(void)
 	CHECK(name, mfs4_blockmap_alloc(&map, &data_block) == 0,
 	    "allocate data block for mapping");
 	base_writes = disk.write_calls;
-	/* First fail the parent-pointer write, then fail its rollback clear.
+	/*
+	 * First fail the parent-pointer write, then fail its rollback clear.
 	 * The test backend copies each block before returning EIO.
 	 */
 	disk.fail_write_first = base_writes + 5;

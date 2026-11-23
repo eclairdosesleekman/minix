@@ -90,6 +90,7 @@ init_disk(struct test_disk *disk, struct mfs4_blockmap *map)
 	struct mfs4_blockmap_io io;
 	uint8_t *zmap;
 	unsigned int i;
+
 	disk->bytes = calloc(TEST_TOTAL_BLOCKS, MFS4_BM_BLOCK_SIZE);
 	if (disk->bytes == NULL)
 		return ENOMEM;
