@@ -9,6 +9,28 @@
 #include "inode.h"
 #include "super.h"
 
+#include <minix/mfs4_disk.h>
+
+static ino_t
+mfs4_dirent_inode(const struct inode *dir, const struct direct *dp)
+{
+	if (dir->i_sp->s_version == V4)
+		return (ino_t)mfs4_get_le32((const uint8_t *)dp +
+		    MFS4_DIRENT_INODE);
+	return (ino_t)conv4(dir->i_sp->s_native, (int)dp->mfs_d_ino);
+}
+
+static void
+mfs4_set_dirent_inode(const struct inode *dir, struct direct *dp,
+	ino_t inum)
+{
+	if (dir->i_sp->s_version == V4)
+		mfs4_put_le32((uint8_t *)dp + MFS4_DIRENT_INODE,
+		    (uint32_t)inum);
+	else
+		dp->mfs_d_ino = conv4(dir->i_sp->s_native, (int)inum);
+}
+
 
 /*===========================================================================*
  *                             fs_lookup				     *
@@ -107,12 +129,16 @@ int search_dir(
  * by simply considering only the first MFS_NAME_MAX bytes from 'string'.
  */
   register struct direct *dp = NULL;
+  register struct direct *dp_end = NULL;
   register struct buf *bp = NULL;
   int i, r, e_hit, t, match;
   off_t pos;
   unsigned new_slots, old_slots;
   struct super_block *sp;
   int extended = 0;
+  uint8_t *dir_image = NULL;
+  const uint8_t *shadow_image;
+  uint64_t disk_block;
 
   /* If 'ldir_ptr' is not a pointer to a dir inode, error. */
   if ( (ldir_ptr->i_mode & I_TYPE) != I_DIRECTORY)  {
@@ -143,17 +169,55 @@ int search_dir(
 	assert(ldir_ptr->i_dev != NO_DEV);
 	assert(bp != NULL);
 
-	/* Search a directory block. */
-	for (dp = &b_dir(bp)[0];
-		dp < &b_dir(bp)[NR_DIR_ENTRIES(ldir_ptr->i_sp->s_block_size)];
-		dp++) {
+	/*
+	 * MFS4 directory entries are journal metadata.  Use the active shadow
+	 * image for both reads and writes so a callback sees its own earlier
+	 * directory changes.  Mutating access without an outer transaction is
+	 * rejected rather than falling back to a dirty home buffer.
+	 */
+	dir_image = NULL;
+	if (ldir_ptr->i_sp->s_version == V4) {
+		disk_block = read_map(ldir_ptr, pos, 0);
+		if (disk_block == NO_BLOCK) {
+			put_block(bp);
+			return EIO;
+		}
+		r = mfs4_tx_find_meta(disk_block, &shadow_image);
+		if (r == OK) {
+			dir_image = (uint8_t *)(void *)shadow_image;
+		} else if (r != ENOENT) {
+			put_block(bp);
+			return r;
+		} else if (flag == ENTER || flag == DELETE) {
+			if (!mfs4_tx_is_active()) {
+				put_block(bp);
+				return EINVAL;
+			}
+			if ((r = mfs4_tx_get_meta(disk_block,
+			    MFS4_JMETA_DIRECTORY, &dir_image)) != OK) {
+				put_block(bp);
+				return r;
+			}
+		}
+	}
+
+	/* Search either the VFS buffer or the transaction's byte image. */
+	if (dir_image != NULL) {
+		dp = (struct direct *)(void *)dir_image;
+		dp_end = dp + (MFS4_BLOCK_SIZE / MFS4_DIRENT_SIZE);
+	} else {
+		dp = &b_dir(bp)[0];
+		dp_end = &b_dir(bp)[NR_DIR_ENTRIES(
+		    ldir_ptr->i_sp->s_block_size)];
+	}
+	for (; dp < dp_end; dp++) {
 		if (++new_slots > old_slots) { /* not found, but room left */
 			if (flag == ENTER) e_hit = TRUE;
 			break;
 		}
 
 		/* Match occurs if string found. */
-		if (flag != ENTER && dp->mfs_d_ino != NO_ENTRY) {
+		if (flag != ENTER && mfs4_dirent_inode(ldir_ptr, dp) != NO_ENTRY) {
 			if (flag == IS_EMPTY) {
 				/* If this test succeeds, dir is not empty. */
 				if (strcmp(dp->mfs_d_name, "." ) != 0 &&
@@ -174,9 +238,17 @@ int search_dir(
 			else if (flag == DELETE) {
 				/* Save d_ino for recovery. */
 				t = MFS_NAME_MAX - sizeof(ino_t);
-				*((ino_t *) &dp->mfs_d_name[t]) = dp->mfs_d_ino;
-				dp->mfs_d_ino = NO_ENTRY; /* erase entry */
-				MARKDIRTY(bp);
+				if (sp != NULL && sp->s_version == V4) {
+					mfs4_put_le32((uint8_t *)dp +
+					    MFS4_DIRENT_NAME + t,
+					    (uint32_t)mfs4_dirent_inode(ldir_ptr, dp));
+				} else {
+					*((ino_t *) &dp->mfs_d_name[t]) =
+					    mfs4_dirent_inode(ldir_ptr, dp);
+				}
+				mfs4_set_dirent_inode(ldir_ptr, dp, NO_ENTRY);
+				if (ldir_ptr->i_sp->s_version != V4)
+					MARKDIRTY(bp);
 				ldir_ptr->i_update |= CTIME | MTIME;
 				IN_MARKDIRTY(ldir_ptr);
 				if (pos < ldir_ptr->i_last_dpos)
@@ -191,7 +263,8 @@ int search_dir(
 		}
 
 		/* Check for free slot for the benefit of ENTER. */
-		if (flag == ENTER && dp->mfs_d_ino == 0) {
+		if (flag == ENTER &&
+		    mfs4_dirent_inode(ldir_ptr, dp) == 0) {
 			e_hit = TRUE;	/* we found a free slot */
 			break;
 		}
