@@ -172,8 +172,9 @@ int fs_slink(ino_t dir_nr, char *name, uid_t uid, gid_t gid,
 		IN_MARKDIRTY(sip);
 		if (sip->i_sp->s_version == V4 &&
 		    (r = rw_inode(sip, WRITING)) != OK) {
-			/* The outer MFS4 transaction will be aborted. */
-		} else if(sip->i_size != bytes) {
+			/* Preserve the journal error for the common cleanup below. */
+		}
+		if (r == OK && sip->i_size != bytes) {
 			/* This can happen if the user provides a buffer
 			 * with a \0 in it. This can cause a lot of trouble
 			 * when the symlink is used later. We could just use
