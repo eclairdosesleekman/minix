@@ -184,11 +184,11 @@ mfs4_probe_super(struct super_block *sp, int *is_mfs4)
 	    MFS4_SUPER_MAGIC_SIZE) == 0;
 	backup_magic = 0;
 
-	if (primary_magic && PAGE_SIZE > MFS4_BLOCK_SIZE) {
+	if (primary_magic && NBPG > MFS4_BLOCK_SIZE) {
 		(void)lmfs_set_blocksize_err(old_block_size);
 		return EINVAL;
 	}
-	if (!primary_magic && PAGE_SIZE > MFS4_BLOCK_SIZE) {
+	if (!primary_magic && NBPG > MFS4_BLOCK_SIZE) {
 		(void)lmfs_set_blocksize_err(old_block_size);
 		return OK;
 	}
@@ -214,7 +214,7 @@ mfs4_probe_super(struct super_block *sp, int *is_mfs4)
 		return OK;
 	}
 	*is_mfs4 = 1;
-	if (PAGE_SIZE > MFS4_BLOCK_SIZE)
+	if (NBPG > MFS4_BLOCK_SIZE)
 		return EINVAL;
 	if ((r = lmfs_set_blocksize_err(MFS4_BLOCK_SIZE)) != OK)
 		return r;
