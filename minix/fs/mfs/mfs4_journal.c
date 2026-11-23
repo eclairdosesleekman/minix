@@ -1,9 +1,11 @@
 /*
- * MINIX block-cache adapter for the portable MFS4 journal core.
+ * MINIX block-cache adapter for the portable MFS4 redo journal.
  *
- * The transaction core is usable by MFS metadata writers through the tx
- * accessors below. Until every MFS4 metadata mutation path has been converted
- * to those accessors, writable MFS4 mount is deliberately fail-closed.
+ * VFS mutation callbacks frame each operation in one transaction. Inode,
+ * allocation-map, indirect-map, directory, and state metadata are staged as
+ * shadow images. File data remains in LMFS and is forced stable before the
+ * journal commit point. Orphan-list cleanup remains a Phase 5 operation, so
+ * writable mount refuses volumes with a nonempty orphan list.
  */
 #include "fs.h"
 #include <string.h>
