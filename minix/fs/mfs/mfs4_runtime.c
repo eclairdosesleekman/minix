@@ -632,8 +632,14 @@ mfs4_rw_inode(struct inode *rip, int rw_flag)
 		return r;
 	}
 	mfs4_inode_encode(rip, image + slot * MFS4_INODE_SIZE);
-	if (own && (r = mfs4_tx_commit()) != OK)
-		return r;
-	IN_MARKCLEAN(rip);
+	if (own) {
+		if ((r = mfs4_tx_commit()) != OK)
+			return r;
+		IN_MARKCLEAN(rip);
+	} else {
+		/* Keep the in-core object dirty until its enclosing VFS tx commits. */
+		if ((r = mfs4_tx_note_inode(rip)) != OK)
+			return r;
+	}
 	return OK;
 }
