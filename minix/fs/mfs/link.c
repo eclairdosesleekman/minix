@@ -423,9 +423,8 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 		/* New link created. */
 		new_dirp->i_nlinks++;
 		IN_MARKDIRTY(new_dirp);
-		if (new_dirp->i_sp->s_version == V4 &&
-		    (r = rw_inode(new_dirp, WRITING)) != OK)
-			r = r;
+		if (new_dirp->i_sp->s_version == V4)
+			r = rw_inode(new_dirp, WRITING);
 	}
   }
 	
@@ -513,6 +512,10 @@ int truncate_inode(
   rip->i_size = newsize;
   rip->i_update |= CTIME | MTIME;
   IN_MARKDIRTY(rip);
+  if (rip->i_sp->s_version == V4) {
+	  if ((r = rw_inode(rip, WRITING)) != OK)
+		  return r;
+  }
 
   return(OK);
 }
@@ -586,6 +589,10 @@ static int freesp_inode(
 
   rip->i_update |= CTIME | MTIME;
   IN_MARKDIRTY(rip);
+  if (rip->i_sp->s_version == V4) {
+	  if ((r = rw_inode(rip, WRITING)) != OK)
+		  return r;
+  }
 
   return(OK);
 }
