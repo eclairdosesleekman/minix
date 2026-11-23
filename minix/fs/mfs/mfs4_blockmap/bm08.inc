@@ -45,8 +45,10 @@
 		allocated = (physical == 0);
 		if (allocated) {
 			r = mfs4_blockmap_alloc(map, &physical);
-			if (r != 0)
+			if (r != 0) {
+				*bytes_written = done;
 				return r;
+			}
 			memset(raw, 0, sizeof(raw));
 		} else if (block_offset == 0 && amount == MFS4_BM_BLOCK_SIZE) {
 			/* A complete overwrite does not need the old data read. */

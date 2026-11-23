@@ -28,8 +28,6 @@ typedef uint32_t mfs4_ptr_block[MFS4_BM_FANOUT];
 static int
 mfs4_flush(struct mfs4_blockmap *map)
 {
-	if (map->io.flush == NULL)
-		return 0;
 	return map->io.flush(map->io.cookie);
 }
 
