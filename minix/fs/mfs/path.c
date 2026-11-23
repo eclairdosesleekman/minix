@@ -335,3 +335,24 @@ if (ldir_ptr->i_sp->s_version == V4) {
 return(OK);
 }
 
+/* 'bp' points to a directory block with an available entry. */
+(void)memset(dp->mfs_d_name, 0, (size_t)MFS_NAME_MAX);
+for (i = 0; i < MFS_NAME_MAX && string[i]; i++)
+	dp->mfs_d_name[i] = string[i];
+mfs4_set_dirent_inode(ldir_ptr, dp, *numb);
+if (ldir_ptr->i_sp->s_version != V4)
+	MARKDIRTY(bp);
+put_block(bp);
+ldir_ptr->i_update |= CTIME | MTIME;
+IN_MARKDIRTY(ldir_ptr);
+if (new_slots > old_slots)
+	ldir_ptr->i_size = (off_t)new_slots * DIR_ENTRY_SIZE;
+if (ldir_ptr->i_sp->s_version == V4) {
+	if ((r = rw_inode(ldir_ptr, WRITING)) != OK)
+		return r;
+} else if (new_slots > old_slots && extended) {
+	(void)rw_inode(ldir_ptr, WRITING);
+}
+return(OK);
+}
+
