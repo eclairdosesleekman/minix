@@ -135,7 +135,6 @@ int search_dir(
   int i, r, e_hit, t, match;
   off_t pos;
   unsigned new_slots, old_slots;
-  struct super_block *sp;
   int extended = 0;
   uint8_t *dir_image = NULL;
   const uint8_t *shadow_image;
@@ -254,10 +253,13 @@ int search_dir(
 				IN_MARKDIRTY(ldir_ptr);
 				if (pos < ldir_ptr->i_last_dpos)
 					ldir_ptr->i_last_dpos = pos;
+				if (ldir_ptr->i_sp->s_version == V4 &&
+				    (r = rw_inode(ldir_ptr, WRITING)) != OK) {
+					put_block(bp);
+					return r;
+				}
 			} else {
-				sp = ldir_ptr->i_sp;	/* 'flag' is LOOK_UP */
-				*numb = (ino_t) conv4(sp->s_native,
-						      (int) dp->mfs_d_ino);
+				*numb = mfs4_dirent_inode(ldir_ptr, dp);
 			}
 			put_block(bp);
 			return(r);
