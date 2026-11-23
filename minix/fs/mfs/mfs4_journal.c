@@ -19,6 +19,7 @@
 static struct mfs4_journal_io journal_io;
 static struct mfs4_journal_tx journal_tx;
 static int journal_bound;
+static int journal_open_readonly;
 static uint64_t journal_sequence = 1;
 static int64_t journal_block_delta;
 struct mfs4_journal_inode_ref {
@@ -190,6 +191,7 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 	if (sp == NULL || sp->s_version != V4)
 		return EINVAL;
 
+	journal_open_readonly = readonly != 0;
 	mfs4_journal_bind(sp);
 	pending = mfs4_journal_pending(&journal_io);
 	if (pending < 0)
@@ -371,7 +373,8 @@ mfs4_journal_sync(void)
 		return EINVAL;
 	if (journal_tx.active)
 		return EBUSY;
-	if (superblock.s_rd_only)
+	/* A true RO mount cannot have dirtied data; fail-closed RW mounts can. */
+	if (superblock.s_rd_only && journal_open_readonly)
 		return OK;
 	return mfs4_jio_flush(&superblock);
 }
