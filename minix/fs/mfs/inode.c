@@ -262,8 +262,10 @@ struct inode *alloc_inode(dev_t dev, mode_t bits, uid_t uid, gid_t gid)
 
   register struct inode *rip;
   register struct super_block *sp;
-  int major, minor, inumb;
+  int major, minor, r;
+  ino_t inumb;
   bit_t b;
+  uint32_t generation = 0;
 
   sp = &superblock;
   if (sp->s_rd_only) {	/* can't allocate an inode on a read only device. */
@@ -287,7 +289,13 @@ struct inode *alloc_inode(dev_t dev, mode_t bits, uid_t uid, gid_t gid)
 	return(NULL);
   }
   sp->s_isearch = b;		/* next time start here */
-  inumb = (int) b;		/* be careful not to pass unshort as param */
+  inumb = (ino_t)b;
+  if (sp->s_version == V4 &&
+      (r = mfs4_next_generation(inumb, &generation)) != OK) {
+	free_bit(sp, IMAP, b);
+	err_code = r;
+	return NULL;
+  }
 
   /* Try to acquire a slot in the inode table. */
   if ((rip = get_inode(NO_DEV, inumb)) == NULL) {
@@ -319,6 +327,8 @@ struct inode *alloc_inode(dev_t dev, mode_t bits, uid_t uid, gid_t gid)
 	 * not to repeat the code twice.
 	 */
 	wipe_inode(rip);
+	if (sp->s_version == V4)
+		rip->i_generation = generation;
   }
 
   return(rip);
@@ -413,6 +423,21 @@ int rw_inode(
   /* Get the block where the inode resides. */
   sp = &superblock;
   rip->i_sp = sp;		/* inode must contain super block pointer */
+
+  if (sp->s_version == V4) {
+      if (rw_flag == WRITING) {
+          if (sp->s_rd_only)
+              return EROFS;
+          pending_updates = rip->i_update;
+          if (pending_updates)
+              update_times(rip);
+      }
+      r = mfs4_rw_inode(rip, rw_flag);
+      if (r != OK)
+          rip->i_update |= pending_updates;
+      return r;
+  }
+
   offset = START_BLOCK + sp->s_imap_blocks + sp->s_zmap_blocks;
   b = (block_t) (rip->i_num - 1)/sp->s_inodes_per_block + offset;
   bp = get_block(rip->i_dev, b, NORMAL);

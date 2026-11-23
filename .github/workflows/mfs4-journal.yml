@@ -1,0 +1,24 @@
+name: MFS4 redo journal
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mfs4-journal.yml"
+      - "minix/fs/mfs/mfs4_journal.*"
+      - "minix/include/minix/mfs4_disk.h"
+      - "minix/tests/mfs4/**"
+  push:
+    branches:
+      - master
+    paths:
+      - "minix/fs/mfs/mfs4_journal.*"
+      - "minix/include/minix/mfs4_disk.h"
+      - "minix/tests/mfs4/**"
+
+jobs:
+  journal-host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run MFS4 journal tests
+        run: make -C minix/tests/mfs4 clean test

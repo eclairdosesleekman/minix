@@ -37,6 +37,9 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
   if ((rip = find_inode(fs_dev, ino_nr)) == NULL)
 	return(EINVAL);
 
+  if (position < 0)
+	return EINVAL;
+
   mode_word = rip->i_mode & I_TYPE;
   regular = (mode_word == I_REGULAR);
   
@@ -50,20 +53,34 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 		  return EROFS;
 
 	  /* Check in advance to see if file will grow too big. */
-	  if (position > (off_t) (rip->i_sp->s_max_size - nrbytes))
-		  return(EFBIG);
+	  if (rip->i_sp->s_version == V4) {
+		  u64_t start = (u64_t)position;
+		  if (start > rip->i_sp->s_mfs4_max_file_size ||
+		      (u64_t)nrbytes > rip->i_sp->s_mfs4_max_file_size - start)
+			  return EFBIG;
+	  } else if (position > (off_t)(rip->i_sp->s_max_size - nrbytes))
+		  return EFBIG;
 
 	  /* Clear the zone containing present EOF if hole about
 	   * to be created.  This is necessary because all unwritten
 	   * blocks prior to the EOF must read as zeros.
 	   */
-	  if(position > f_size) clear_zone(rip, f_size, 0);
+	  if (position > f_size) {
+		  if (rip->i_sp->s_version == V4) {
+			  r = mfs4_zero_eof_tail(rip, (u64_t)f_size,
+			      (u64_t)position);
+			  if (r != OK)
+				  return r;
+		  } else {
+			  clear_zone(rip, f_size, 0);
+		  }
+	  }
   }
 
   cum_io = 0;
   /* Split the transfer into chunks that don't span two blocks. */
   while (nrbytes > 0) {
-	  off = ((unsigned int) position) % block_size; /* offset in blk*/
+	  off = (size_t)((u64_t)position % block_size); /* offset in block */
 	  chunk = block_size - off;
 	  if (chunk > nrbytes)
 		chunk = nrbytes;
@@ -75,7 +92,7 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 	  }
 	  
 	  /* Read or write 'chunk' bytes. */
-	  r = rw_chunk(rip, ((u64_t)((unsigned long)position)), off, chunk,
+	  r = rw_chunk(rip, (u64_t)position, off, chunk,
 		nrbytes, call, data, cum_io, block_size, &completed);
 
 	  if (r != OK) break;
@@ -138,9 +155,9 @@ static int rw_chunk(
 
   *completed = 0;
 
-  if (ex64hi(position) != 0)
+  if (rip->i_sp->s_version != V4 && ex64hi(position) != 0)
 	panic("rw_chunk: position too high");
-  b = read_map(rip, (off_t) ex64lo(position), 0);
+  b = read_map(rip, (off_t)position, 0);
   dev = rip->i_dev;
   ino = rip->i_num;
   assert(ino != VMC_NO_INODE);
@@ -161,19 +178,20 @@ static int rw_chunk(
 		/* Writing to a nonexistent block.
 		 * Create and enter in inode.
 		 */
-		if ((bp = new_block(rip, (off_t) ex64lo(position))) == NULL)
+		if ((bp = new_block(rip, (off_t)position)) == NULL)
 			return(err_code);
 	}
-  } else if (call != FSC_WRITE) {
-	/* Read and read ahead if convenient. */
+  } else if (call != FSC_WRITE && rip->i_sp->s_version != V4) {
+	/* Keep the legacy readahead path for MFS3. */
 	bp = rahead(rip, b, position, left);
   } else {
 	/* Normally an existing block to be partially overwritten is first read
 	 * in.  However, a full block need not be read in.  If it is already in
 	 * the cache, acquire it, otherwise just acquire a free buffer.
 	 */
-	n = (chunk == block_size ? NO_READ : NORMAL);
-	if (off == 0 && (off_t) ex64lo(position) >= rip->i_size)
+	n = (call == FSC_WRITE && chunk == block_size) ? NO_READ : NORMAL;
+	if (call == FSC_WRITE && off == 0 &&
+	    (off_t)position >= (off_t)rip->i_size)
 		n = NO_READ;
 	assert(ino != VMC_NO_INODE);
 	assert(!(ino_off % block_size));
@@ -185,7 +203,7 @@ static int rw_chunk(
   assert(bp != NULL);
   
   if (call == FSC_WRITE && chunk != block_size &&
-      (off_t) ex64lo(position) >= rip->i_size && off == 0) {
+      (off_t)position >= (off_t)rip->i_size && off == 0) {
 	zero_block(bp);
   }
 
@@ -224,6 +242,11 @@ block_t read_map(
   block_t b;
   unsigned long excess, zone, block_pos;
   int iomode;
+
+  if (rip->i_sp->s_version == V4)
+	return mfs4_read_map(rip, position);
+  if (position < 0)
+	return NO_BLOCK;
 
   iomode = opportunistic ? PEEK : NORMAL;
 

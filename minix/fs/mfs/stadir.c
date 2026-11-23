@@ -4,6 +4,8 @@
 #include <sys/statvfs.h>
 #include "inode.h"
 #include "super.h"
+#include <minix/mfs4_disk.h>
+#include "mfs4_map.h"
 
 /*===========================================================================*
  *				estimate_blocks				     *
@@ -17,6 +19,38 @@ static blkcnt_t estimate_blocks(struct inode *rip)
  */
   blkcnt_t zones, sindirs, dindirs, nr_indirs, sq_indirs;
   unsigned int zone_size;
+
+  if (rip->i_sp->s_version == V4) {
+    u64_t data_blocks, remaining, indirect_blocks = 0, level_data;
+    data_blocks = (rip->i_size + MFS4_BLOCK_SIZE - 1) / MFS4_BLOCK_SIZE;
+    remaining = data_blocks > MFS4_MAP_DIRECT_COUNT ?
+        data_blocks - MFS4_MAP_DIRECT_COUNT : 0;
+    if (remaining != 0) {
+        indirect_blocks++; /* single-indirect root */
+        level_data = remaining > MFS4_MAP_POINTERS ?
+            MFS4_MAP_POINTERS : remaining;
+        remaining -= level_data;
+    }
+    if (remaining != 0) {
+        indirect_blocks++; /* double-indirect root */
+        level_data = remaining >
+            (u64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS ?
+            (u64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS : remaining;
+        indirect_blocks += (level_data + MFS4_MAP_POINTERS - 1) /
+            MFS4_MAP_POINTERS;
+        remaining -= level_data;
+    }
+    if (remaining != 0) {
+        indirect_blocks++; /* triple-indirect root */
+        indirect_blocks += (remaining +
+            (u64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS - 1) /
+            ((u64_t)MFS4_MAP_POINTERS * MFS4_MAP_POINTERS);
+        indirect_blocks += (remaining + MFS4_MAP_POINTERS - 1) /
+            MFS4_MAP_POINTERS;
+    }
+    return (blkcnt_t)((data_blocks + indirect_blocks) *
+        (MFS4_BLOCK_SIZE / 512));
+  }
 
   /* Compute the number of zones used by the file. */
   zone_size = rip->i_sp->s_block_size << rip->i_sp->s_log_zone_size;

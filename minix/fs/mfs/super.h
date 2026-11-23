@@ -57,6 +57,22 @@ EXTERN struct super_block {
   int s_nindirs;		/* # indirect zones per indirect block */
   bit_t s_isearch;		/* inodes below this bit number are in use */
   bit_t s_zsearch;		/* all zones below this bit number are in use*/
+
+  /* MFS4 geometry; legacy fields above retain their MFS3 meanings. */
+  u64_t s_mfs4_total_blocks;
+  u32_t s_mfs4_total_inodes;
+  u64_t s_mfs4_imap_start;
+  u32_t s_mfs4_imap_blocks;
+  u64_t s_mfs4_zmap_start;
+  u32_t s_mfs4_zmap_blocks;
+  u64_t s_mfs4_inode_table_start;
+  u64_t s_mfs4_inode_table_blocks;
+  u64_t s_mfs4_state_block;
+  u64_t s_mfs4_data_start;
+  u64_t s_mfs4_backup_block;
+  u64_t s_mfs4_max_file_size;
+  u64_t s_mfs4_volume_generation;
+  u32_t s_mfs4_volume_flags;
 } superblock;
 
 #define IMAP		0	/* operating on the inode bit map */

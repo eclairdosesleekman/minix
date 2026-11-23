@@ -47,6 +47,13 @@ int write_map(
   long excess, zone;
   struct buf *bp_dindir = NULL, *bp = NULL;
 
+  if (rip->i_sp->s_version == V4) {
+	int map_result = mfs4_write_map(rip, position, new_zone, op);
+	if (map_result == OK)
+		IN_MARKDIRTY(rip);
+	return map_result;
+  }
+
   IN_MARKDIRTY(rip);
   scale = rip->i_sp->s_log_zone_size;		/* for zone-block conversion */
   	/* relative zone # to insert */

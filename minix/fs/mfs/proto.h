@@ -27,6 +27,26 @@ struct inode *get_inode(dev_t dev, ino_t numb);
 void put_inode(struct inode *rip);
 void update_times(struct inode *rip);
 int rw_inode(struct inode *rip, int rw_flag);
+bit_t mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin);
+void mfs4_free_bit(struct super_block *sp, int map, bit_t bit_returned);
+bit_t mfs4_count_free_bits(struct super_block *sp, int map);
+int mfs4_probe_super(struct super_block *sp, int *is_mfs4);
+int mfs4_next_generation(ino_t inum, uint32_t *generation);
+int mfs4_rw_inode(struct inode *rip, int rw_flag);
+block_t mfs4_read_map(struct inode *rip, off_t position);
+int mfs4_write_map(struct inode *rip, off_t position, zone_t new_block, int op);
+int mfs4_free_map_range(struct inode *rip, u64_t first_block, u64_t end_block);
+int mfs4_zero_eof_tail(struct inode *rip, u64_t old_eof, u64_t new_eof);
+int mfs4_journal_mount(struct super_block *sp, int readonly);
+int mfs4_journal_sync(void);
+int mfs4_tx_is_active(void);
+int mfs4_tx_note_block_delta(int delta);
+int mfs4_tx_begin(void);
+int mfs4_tx_get_meta(u64_t home_block, u32_t metadata_type,
+    uint8_t **image_out);
+int mfs4_tx_find_meta(u64_t home_block, const uint8_t **image_out);
+int mfs4_tx_commit(void);
+void mfs4_tx_abort(void);
 int mfs3_inode_decode(struct inode *rip, const d2_inode *dip, int norm);
 int mfs3_inode_encode(const struct inode *rip, d2_inode *dip, int norm);
 

@@ -25,5 +25,8 @@ int fs_sync(void)
           return(r);
   }
 
+  if (superblock.s_version == V4)
+      return mfs4_journal_sync();
+
   return lmfs_flushall_err();
 }
