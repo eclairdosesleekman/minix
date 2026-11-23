@@ -33,6 +33,8 @@ bit_t mfs4_count_free_bits(struct super_block *sp, int map);
 int mfs4_probe_super(struct super_block *sp, int *is_mfs4);
 int mfs4_next_generation(ino_t inum, uint32_t *generation);
 int mfs4_rw_inode(struct inode *rip, int rw_flag);
+int mfs4_read_map_checked(struct inode *rip, off_t position,
+	block_t *block_out);
 block_t mfs4_read_map(struct inode *rip, off_t position);
 int mfs4_write_map(struct inode *rip, off_t position, zone_t new_block, int op);
 int mfs4_free_map_range(struct inode *rip, u64_t first_block, u64_t end_block);
@@ -95,6 +97,8 @@ int fs_chown(ino_t ino, uid_t uid, gid_t gid, mode_t *mode);
 /* read.c */
 ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
 	off_t pos, int call);
+ssize_t fs_readwrite_offset(ino_t ino_nr, struct fsdriver_data *data,
+	size_t bytes, off_t pos, int call, size_t data_offset);
 block_t read_map(struct inode *rip, off_t pos, int opportunistic);
 struct buf *get_block_map(register struct inode *rip, u64_t position);
 zone_t rd_indir(struct buf *bp, int index);

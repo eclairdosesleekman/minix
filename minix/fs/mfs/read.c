@@ -15,14 +15,22 @@ static struct buf *rahead(struct inode *rip, block_t baseblock, u64_t
 	position, unsigned bytes_ahead);
 static int rw_chunk(struct inode *rip, u64_t position, unsigned off,
 	size_t chunk, unsigned left, int call, struct fsdriver_data *data,
-	unsigned buf_off, unsigned int block_size, int *completed);
+	size_t buf_off, unsigned int block_size, int *completed);
 
 
 /*===========================================================================*
  *				fs_readwrite				     *
  *===========================================================================*/
-ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
-	off_t position, int call)
+ssize_t
+fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
+    off_t position, int call)
+{
+	return fs_readwrite_offset(ino_nr, data, nrbytes, position, call, 0);
+}
+
+ssize_t
+fs_readwrite_offset(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
+    off_t position, int call, size_t data_offset)
 {
   int r;
   int regular;
@@ -94,7 +102,7 @@ ssize_t fs_readwrite(ino_t ino_nr, struct fsdriver_data *data, size_t nrbytes,
 	  
 	  /* Read or write 'chunk' bytes. */
 	  r = rw_chunk(rip, (u64_t)position, off, chunk,
-		nrbytes, call, data, cum_io, block_size, &completed);
+		nrbytes, call, data, data_offset + cum_io, block_size, &completed);
 
 	  if (r != OK) break;
 
@@ -149,7 +157,7 @@ static int rw_chunk(
   unsigned left,			/* max number of bytes wanted after position */
   int call,			/* FSC_READ, FSC_WRITE, or FSC_PEEK */
   struct fsdriver_data *data,	/* structure for (remote) user buffer */
-  unsigned buf_off,		/* offset in user buffer */
+  size_t buf_off,			/* offset in user buffer */
   unsigned int block_size,	/* block size of FS operating on */
   int *completed			/* number of bytes copied */
 )
@@ -167,7 +175,13 @@ static int rw_chunk(
 
   if (rip->i_sp->s_version != V4 && ex64hi(position) != 0)
 	panic("rw_chunk: position too high");
-  b = read_map(rip, (off_t)position, 0);
+  if (rip->i_sp->s_version == V4) {
+	  r = mfs4_read_map_checked(rip, (off_t)position, &b);
+	  if (r != OK)
+		  return -r;
+  } else {
+	  b = read_map(rip, (off_t)position, 0);
+  }
   dev = rip->i_dev;
   ino = rip->i_num;
   assert(ino != VMC_NO_INODE);
@@ -316,9 +330,23 @@ struct buf *get_block_map(register struct inode *rip, u64_t position)
 {
 	struct buf *bp;
 	int r, block_size;
-	block_t b = read_map(rip, position, 0);	/* get block number */
-	if(b == NO_BLOCK)
-		return NULL;
+	block_t b;
+
+	if (rip->i_sp->s_version == V4) {
+		r = mfs4_read_map_checked(rip, (off_t)position, &b);
+		if (r != OK) {
+			err_code = r;
+			return NULL;
+		}
+		if (b == NO_BLOCK) {
+			err_code = OK;
+			return NULL;
+		}
+	} else {
+		b = read_map(rip, (off_t)position, 0);
+		if (b == NO_BLOCK)
+			return NULL;
+	}
 	block_size = get_block_size(rip->i_dev);
 	position = rounddown(position, block_size);
 	assert(rip->i_num != VMC_NO_INODE);
@@ -535,8 +563,13 @@ ssize_t fs_getdents(ino_t ino_nr, struct fsdriver_data *data, size_t bytes,
   r = 0;
 
   for(; block_pos < rip->i_size; block_pos += block_size) {
-	/* Since directories don't have holes, 'bp' cannot be NULL. */
+	/* Since directories don't have holes, a missing MFS4 block is corruption. */
 	bp = get_block_map(rip, block_pos);	/* get a dir block */
+	if (bp == NULL && rip->i_sp->s_version == V4) {
+		r = err_code != OK ? err_code : EIO;
+		put_inode(rip);
+		return r;
+	}
 	assert(bp != NULL);
 
 	/* Search a directory block. */

@@ -95,8 +95,12 @@ mfs4_read_indirect(uint64_t block, uint32_t index, uint32_t *value)
 	return mfs4_pointer_valid(&superblock, *value) ? OK : EIO;
 }
 
-block_t
-mfs4_read_map(struct inode *rip, off_t position)
+/*
+ * Preserve mapping errors separately from a sparse hole.  Callers that
+ * allocate on NO_BLOCK must not turn a corrupt pointer tree into a new block.
+ */
+int
+mfs4_read_map_checked(struct inode *rip, off_t position, block_t *block_out)
 {
 	struct mfs4_map_path path;
 	uint64_t block;
@@ -104,29 +108,48 @@ mfs4_read_map(struct inode *rip, off_t position)
 	uint32_t level;
 	int r;
 
-	if (rip == NULL || position < 0 ||
-	    (uint64_t)position >= rip->i_sp->s_mfs4_max_file_size)
-		return NO_BLOCK;
+	if (rip == NULL || block_out == NULL || rip->i_sp == NULL)
+		return EINVAL;
+	*block_out = NO_BLOCK;
+	if (position < 0)
+		return EINVAL;
+	if ((uint64_t)position >= rip->i_sp->s_mfs4_max_file_size)
+		return EFBIG;
 	if ((r = mfs4_make_path((u64_t)position, &path)) != OK)
-		return NO_BLOCK;
+		return r;
 
 	pointer = rip->i_zone[path.root_slot];
 	if (!mfs4_pointer_valid(rip->i_sp, pointer))
-		return NO_BLOCK;
-	if (path.depth == 0)
-		return (block_t)pointer;
+		return EIO;
+	if (path.depth == 0) {
+		*block_out = (block_t)pointer;
+		return OK;
+	}
 	if (pointer == 0)
-		return NO_BLOCK;
+		return OK;
 
 	for (level = 0; level < path.depth; level++) {
 		block = pointer;
-		if ((r = mfs4_read_indirect(block, path.index[level],
-		    &pointer)) != OK)
-			return NO_BLOCK;
+		if (!mfs4_pointer_valid(rip->i_sp, (uint32_t)block))
+			return EIO;
+		r = mfs4_read_indirect(block, path.index[level], &pointer);
+		if (r != OK)
+			return r;
 		if (pointer == 0)
-			return NO_BLOCK;
+			return OK;
 	}
-	return (block_t)pointer;
+	*block_out = (block_t)pointer;
+	return OK;
+}
+
+block_t
+mfs4_read_map(struct inode *rip, off_t position)
+{
+	block_t block;
+
+	if (mfs4_read_map_checked(rip, position, &block) != OK)
+		return NO_BLOCK;
+	return block;
 }
 
 static int
@@ -353,7 +376,9 @@ mfs4_zero_eof_tail(struct inode *rip, u64_t old_eof, u64_t new_eof)
 	if (offset == 0)
 		return OK;
 	block_start = old_eof - offset;
-	block = mfs4_read_map(rip, (off_t)block_start);
+	r = mfs4_read_map_checked(rip, (off_t)block_start, &block);
+	if (r != OK)
+		return r;
 	if (block == NO_BLOCK)
 		return OK;
 	length = MFS4_BLOCK_SIZE - offset;

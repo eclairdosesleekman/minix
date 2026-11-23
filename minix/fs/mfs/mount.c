@@ -101,14 +101,11 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
   *res_flags = (superblock.s_version == V4) ?
       (RES_HASPEEK | RES_64BIT) : RES_NOFLAGS;
 
-  /* Mark it dirty */
-  if (!superblock.s_rd_only && superblock.s_version == V4) {
-	if ((r = mfs4_journal_unmount()) != OK) {
-		if (get_inode(fs_dev, ROOT_INODE) == NULL)
-			printf("MFS: unable to repin root inode after MFS4 journal error\\n");
-		return r;
-	}
-  }
+  /*
+   * MFS4's journal_mount() has already committed CLEAN=0 before VFS exposure.
+   * Do not call journal_unmount() here: that would publish CLEAN=1 while the
+   * volume is still mounted and writable.
+   */
 
   if (!superblock.s_rd_only && superblock.s_version != V4) {
 	unsigned int old_flags = superblock.s_flags;
