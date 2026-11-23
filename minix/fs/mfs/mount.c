@@ -190,6 +190,15 @@ int fs_unmount(void)
 	return r;
   }
 
+  /* MFS4's clean bit is itself protected by the redo journal. */
+  if (!superblock.s_rd_only && superblock.s_version == V4) {
+	if ((r = mfs4_journal_unmount()) != OK) {
+		if (get_inode(fs_dev, ROOT_INODE) == NULL)
+			printf("MFS: unable to repin root inode after MFS4 journal error\n");
+		return r;
+	}
+  }
+
   /* Mark it clean only after the preceding writeback has succeeded. */
   if (!superblock.s_rd_only && superblock.s_version != V4) {
 	unsigned int old_flags = superblock.s_flags;
