@@ -21,7 +21,13 @@ static struct mfs4_journal_tx journal_tx;
 static int journal_bound;
 static uint64_t journal_sequence = 1;
 static int64_t journal_block_delta;
-static struct inode *journal_inode_refs[NR_INODES];
+struct mfs4_journal_inode_ref {
+	struct inode *inode;
+	dev_t dev;
+	ino_t number;
+	uint32_t generation;
+};
+static struct mfs4_journal_inode_ref journal_inode_refs[NR_INODES];
 static unsigned int journal_inode_count;
 
 static int
@@ -268,12 +274,20 @@ mfs4_tx_note_inode(struct inode *rip)
 	if (!journal_tx.active || rip == NULL)
 		return EINVAL;
 	for (i = 0; i < journal_inode_count; i++) {
-		if (journal_inode_refs[i] == rip)
+		if (journal_inode_refs[i].inode == rip &&
+		    journal_inode_refs[i].dev == rip->i_dev &&
+		    journal_inode_refs[i].number == rip->i_num &&
+		    journal_inode_refs[i].generation == rip->i_generation)
 			return OK;
 	}
 	if (journal_inode_count >= NR_INODES)
 		return ENOSPC;
-	journal_inode_refs[journal_inode_count++] = rip;
+	journal_inode_refs[journal_inode_count].inode = rip;
+	journal_inode_refs[journal_inode_count].dev = rip->i_dev;
+	journal_inode_refs[journal_inode_count].number = rip->i_num;
+	journal_inode_refs[journal_inode_count].generation =
+	    rip->i_generation;
+	journal_inode_count++;
 	return OK;
 }
 
@@ -312,8 +326,14 @@ mfs4_tx_commit(void)
 	/* The cached inode now matches the durable home image. */
 	{
 		unsigned int i;
-		for (i = 0; i < journal_inode_count; i++)
-			IN_MARKCLEAN(journal_inode_refs[i]);
+		for (i = 0; i < journal_inode_count; i++) {
+			struct mfs4_journal_inode_ref *ref =
+			    &journal_inode_refs[i];
+			if (ref->inode->i_dev == ref->dev &&
+			    ref->inode->i_num == ref->number &&
+			    ref->inode->i_generation == ref->generation)
+				IN_MARKCLEAN(ref->inode);
+		}
 		journal_inode_count = 0;
 	}
 	if (journal_block_delta != 0) {
