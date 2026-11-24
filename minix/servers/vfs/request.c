@@ -1232,15 +1232,15 @@ req_xattr_actual(endpoint_t fs_e, ino_t inode_nr, const char *name,
 		name_grant = cpf_grant_direct(fs_e, (vir_bytes)name,
 		    name_len, CPF_READ);
 		if (name_grant == GRANT_INVALID)
-			panic("req_xattr: cpf_grant_direct failed");
+			return ENOMEM;
 	}
 	if (size != 0) {
 		value_grant = cpf_grant_magic(fs_e, user_e, user_addr, size,
 		    (copyout ? CPF_WRITE : CPF_READ) | cpflag);
 		if (value_grant == GRANT_INVALID) {
 			if (name_grant != GRANT_INVALID)
-				cpf_revoke(name_grant);
-			panic("req_xattr: cpf_grant_magic failed");
+				(void)cpf_revoke(name_grant);
+			return EFAULT;
 		}
 	}
 
