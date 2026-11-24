@@ -1,0 +1,26 @@
+name: MFS4 orphan recovery
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mfs4-orphan.yml"
+      - "minix/fs/mfs/mfs4_orphan.*"
+      - "minix/fs/mfs/mfs4_orphan_core.*"
+      - "minix/include/minix/mfs4_disk.h"
+      - "minix/tests/mfs4/**"
+  push:
+    branches:
+      - master
+    paths:
+      - "minix/fs/mfs/mfs4_orphan.*"
+      - "minix/fs/mfs/mfs4_orphan_core.*"
+      - "minix/include/minix/mfs4_disk.h"
+      - "minix/tests/mfs4/**"
+
+jobs:
+  orphan-host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run MFS4 orphan tests
+        run: make -C minix/tests/mfs4 clean test
