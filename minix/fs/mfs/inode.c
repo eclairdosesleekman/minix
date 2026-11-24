@@ -22,6 +22,7 @@
 #include "super.h"
 #include <minix/vfsif.h>
 #include <assert.h>
+#include <minix/mfs4_disk.h>
 
 static void addhash_inode(struct inode *node);
 
