@@ -154,7 +154,7 @@ test_maximum_name_and_value_fit_one_block(void)
 	memcpy(name, "user.", 5);
 	for (i = 5; i < MFS4_XATTR_MAX_NAME; i++)
 		name[i] = 'n';
-	name[MFS4_XATTR_MAX_NAME] = '\\0';
+	name[MFS4_XATTR_MAX_NAME] = '\0';
 	memset(value, 0x5a, sizeof(value));
 	memset(entries, 0, sizeof(entries));
 
