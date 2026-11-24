@@ -685,15 +685,20 @@ mfs4_rw_inode(struct inode *rip, int rw_flag)
 	own = mfs4_own_tx();
 	if (own && (r = mfs4_tx_begin()) != OK)
 		return r;
-	if ((r = mfs4_tx_get_meta(block, MFS4_JMETA_INODE, &image)) != OK) {
+	/*
+	 * Register before requesting the shadow image: even a shadow-pool or I/O
+	 * failure must leave enough information for abort to restore this cache
+	 * object from its still-authoritative home inode.
+	 */
+	if ((r = mfs4_tx_note_inode(rip)) != OK) {
 		if (own)
 			mfs4_tx_abort();
 		return r;
 	}
-	if (!own) {
-		/* Register the cache object before staging its encoded inode image. */
-		if ((r = mfs4_tx_note_inode(rip)) != OK)
-			return r;
+	if ((r = mfs4_tx_get_meta(block, MFS4_JMETA_INODE, &image)) != OK) {
+		if (own)
+			mfs4_tx_abort();
+		return r;
 	}
 	mfs4_inode_encode(rip, image + slot * MFS4_INODE_SIZE);
 	if (own) {
