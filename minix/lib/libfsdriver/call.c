@@ -1015,8 +1015,10 @@ fsdriver_getxattr(const struct fsdriver * __restrict fdp,
 	size_t size = (size_t)m_in->m9_l4;
 	int e;
 
+	if (m_in->m9_l4 < 0 || size > XATTR_SIZE_MAX)
+		return ERANGE;
 	if (fdp->fdr_getxattr == NULL)
-		return ENOSYS;
+		return EOPNOTSUPP;
 	if ((e = fsdriver_xattr_name(m_in, name)) != OK)
 		return e;
 	if (size != 0) {
@@ -1041,8 +1043,10 @@ fsdriver_setxattr(const struct fsdriver * __restrict fdp,
 	size_t size = (size_t)m_in->m9_l4;
 	int e;
 
+	if (m_in->m9_l4 < 0 || size > XATTR_SIZE_MAX)
+		return ERANGE;
 	if (fdp->fdr_setxattr == NULL)
-		return ENOSYS;
+		return EOPNOTSUPP;
 	if ((e = fsdriver_xattr_name(m_in, name)) != OK)
 		return e;
 	if (size != 0) {
@@ -1063,6 +1067,8 @@ fsdriver_listxattr(const struct fsdriver * __restrict fdp,
 	ssize_t r;
 	size_t size = (size_t)m_in->m9_l4;
 
+	if (m_in->m9_l4 < 0 || size > XATTR_SIZE_MAX)
+		return ERANGE;
 	if (fdp->fdr_listxattr == NULL)
 		return ENOSYS;
 	if (size != 0) {
@@ -1086,7 +1092,7 @@ fsdriver_removexattr(const struct fsdriver * __restrict fdp,
 	int e;
 
 	if (fdp->fdr_removexattr == NULL)
-		return ENOSYS;
+		return EOPNOTSUPP;
 	if ((e = fsdriver_xattr_name(m_in, name)) != OK)
 		return e;
 	return fdp->fdr_removexattr((ino_t)m_in->m9_ull1, name);
