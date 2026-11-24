@@ -690,6 +690,11 @@ mfs4_rw_inode(struct inode *rip, int rw_flag)
 			mfs4_tx_abort();
 		return r;
 	}
+	if (!own) {
+		/* Register the cache object before staging its encoded inode image. */
+		if ((r = mfs4_tx_note_inode(rip)) != OK)
+			return r;
+	}
 	mfs4_inode_encode(rip, image + slot * MFS4_INODE_SIZE);
 	if (own) {
 		if ((r = mfs4_tx_commit()) != OK)
@@ -697,8 +702,6 @@ mfs4_rw_inode(struct inode *rip, int rw_flag)
 		IN_MARKCLEAN(rip);
 	} else {
 		/* Keep the in-core object dirty until its enclosing VFS tx commits. */
-		if ((r = mfs4_tx_note_inode(rip)) != OK)
-			return r;
 	}
 	return OK;
 }
