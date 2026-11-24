@@ -680,8 +680,8 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 				/* Migration also saves any FPU state owned by the old CPU. */
 				smp_schedule_migrate_proc(p, cpu);
 				stopped_remote = 1;
-				/* Migration already stopped the remote CPU and saved its FPU state. */
-				migration_done = 1;
+				/* The migration helper already saved the remote FPU state. */
+				remote_fpu_saved = 1;
 			} else if (get_cpu_var(p->p_cpu, proc_ptr) == p) {
 				/*
 				 * The process is executing on another CPU, not waiting
@@ -711,7 +711,7 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 	 * On the local CPU no IPI is needed, but save_fpu() intentionally
 	 * retains the local owner pointer, so release it explicitly.
 	 */
-	if (cpu != -1 && cpu != p->p_cpu && !migration_done) {
+	if (cpu != -1 && cpu != p->p_cpu && !remote_fpu_saved) {
 		if (p->p_cpu == cpuid) {
 			save_fpu(p);
 			release_fpu(p);
