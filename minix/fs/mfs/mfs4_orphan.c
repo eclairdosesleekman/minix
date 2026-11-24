@@ -132,8 +132,6 @@ mfs4_orphan_process(int mount_recovery)
 		return EROFS;
 
 	for (;;) {
-		if (walked >= superblock.s_mfs4_total_inodes)
-			return ELOOP;
 		struct inode *rip;
 		uint16_t flags;
 		uint32_t next;
@@ -142,6 +140,8 @@ mfs4_orphan_process(int mount_recovery)
 			return r;
 		if (head == 0)
 			return OK;
+		if (walked >= superblock.s_mfs4_total_inodes)
+			return ELOOP;
 		if (head <= ROOT_INODE ||
 		    head > superblock.s_mfs4_total_inodes)
 			return EIO;
