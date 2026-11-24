@@ -65,9 +65,19 @@ mfs4_xattr_entry_next(const uint8_t *data, size_t length, size_t *offset,
 	if (encoded > length - start)
 		return EIO;
 
-	for (i = 0; i < name_len; i++)
-		if (data[start + MFS4_XATTR_TLV_HEADER_SIZE + i] == '\0')
+	{
+		char name[MFS4_XATTR_MAX_NAME + 1];
+
+		for (i = 0; i < name_len; i++) {
+			name[i] = (char)data[start +
+			    MFS4_XATTR_TLV_HEADER_SIZE + i];
+			if (name[i] == '\0')
+				return EIO;
+		}
+		name[name_len] = '\0';
+		if (mfs4_xattr_name_valid(name, 1) != 0)
 			return EIO;
+	}
 	for (i = MFS4_XATTR_TLV_HEADER_SIZE + payload; i < encoded; i++)
 		if (data[start + i] != 0)
 			return EIO;
