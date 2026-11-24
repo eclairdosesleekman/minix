@@ -363,8 +363,19 @@ mfs4_tx_commit(void)
 		return EINVAL;
 	r = mfs4_journal_tx_commit(&journal_tx);
 	if (r != OK) {
+		/*
+		 * The journal core sets s_rd_only through fail_closed only when the
+		 * commit point may have been reached. Before that point, home inode
+		 * blocks are still authoritative and the cache can be restored.
+		 */
+		if (!superblock.s_rd_only) {
+			if (mfs4_restore_inode_refs() != OK)
+				superblock.s_rd_only = 1;
+		} else {
+			journal_inode_count = 0;
+		}
 		journal_block_delta = 0;
-		journal_inode_count = 0;
+		/* A commit I/O error still fails the mounted volume closed. */
 		superblock.s_rd_only = 1;
 		return r;
 	}
