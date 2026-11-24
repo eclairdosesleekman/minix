@@ -210,6 +210,77 @@ mfs4_utime_request(ino_t ino_nr, struct timespec *atime,
 	return mfs4_mutation_end(fs_utime(ino_nr, atime, mtime));
 }
 
+
+static struct inode *
+mfs4_xattr_get_inode(ino_t ino_nr)
+{
+	if (superblock.s_version != V4) {
+		err_code = EOPNOTSUPP;
+		return NULL;
+	}
+	return get_inode(fs_dev, ino_nr);
+}
+
+static ssize_t
+mfs4_getxattr_request(ino_t ino_nr, const char *name,
+	struct fsdriver_data *data, size_t size)
+{
+	struct inode *rip;
+	ssize_t r;
+
+	if ((rip = mfs4_xattr_get_inode(ino_nr)) == NULL)
+		return -(err_code != OK ? err_code : EIO);
+	r = mfs4_getxattr(rip, name, data, size);
+	put_inode(rip);
+	return r;
+}
+
+static int
+mfs4_setxattr_request(ino_t ino_nr, const char *name,
+	struct fsdriver_data *data, size_t size, int flags)
+{
+	struct inode *rip;
+	int r;
+
+	if ((rip = mfs4_xattr_get_inode(ino_nr)) == NULL)
+		return err_code != OK ? err_code : EIO;
+	if (superblock.s_rd_only)
+		r = EROFS;
+	else
+		r = mfs4_setxattr(rip, name, data, size, flags);
+	put_inode(rip);
+	return r;
+}
+
+static ssize_t
+mfs4_listxattr_request(ino_t ino_nr, struct fsdriver_data *data, size_t size)
+{
+	struct inode *rip;
+	ssize_t r;
+
+	if ((rip = mfs4_xattr_get_inode(ino_nr)) == NULL)
+		return -(err_code != OK ? err_code : EIO);
+	r = mfs4_listxattr(rip, data, size);
+	put_inode(rip);
+	return r;
+}
+
+static int
+mfs4_removexattr_request(ino_t ino_nr, const char *name)
+{
+	struct inode *rip;
+	int r;
+
+	if ((rip = mfs4_xattr_get_inode(ino_nr)) == NULL)
+		return err_code != OK ? err_code : EIO;
+	if (superblock.s_rd_only)
+		r = EROFS;
+	else
+		r = mfs4_removexattr(rip, name);
+	put_inode(rip);
+	return r;
+}
+
 struct fsdriver mfs_table = {
 	.fdr_mount	= fs_mount,
 	.fdr_unmount_err = fs_unmount,
@@ -231,6 +302,10 @@ struct fsdriver mfs_table = {
 	.fdr_slink	= mfs4_slink_request,
 	.fdr_rdlink	= fs_rdlink,
 	.fdr_stat	= fs_stat,
+	.fdr_getxattr	= mfs4_getxattr_request,
+	.fdr_setxattr	= mfs4_setxattr_request,
+	.fdr_listxattr	= mfs4_listxattr_request,
+	.fdr_removexattr = mfs4_removexattr_request,
 	.fdr_chown	= mfs4_chown_request,
 	.fdr_chmod	= mfs4_chmod_request,
 	.fdr_utime	= mfs4_utime_request,
