@@ -46,6 +46,14 @@ int mfs4_orphan_add(struct inode *rip, int truncating);
 int mfs4_orphan_process(int mount_recovery);
 int mfs4_orphan_recover(void);
 int mfs4_orphan_check_empty(void);
+ssize_t mfs4_getxattr(struct inode *rip, const char *name,
+	struct fsdriver_data *data, size_t size);
+int mfs4_setxattr(struct inode *rip, const char *name,
+	struct fsdriver_data *data, size_t size, int flags);
+ssize_t mfs4_listxattr(struct inode *rip, struct fsdriver_data *data,
+	size_t size);
+int mfs4_removexattr(struct inode *rip, const char *name);
+int mfs4_xattr_free_chain(struct inode *rip);
 int mfs4_zero_eof_tail(struct inode *rip, u64_t old_eof, u64_t new_eof);
 int mfs4_journal_mount(struct super_block *sp, int readonly);
 int mfs4_journal_sync(void);

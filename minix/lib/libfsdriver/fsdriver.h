@@ -69,6 +69,14 @@ extern int fsdriver_getdents(const struct fsdriver * __restrict,
 	const message * __restrict, message * __restrict);
 extern int fsdriver_peek(const struct fsdriver * __restrict,
 	const message * __restrict, message * __restrict);
+extern int fsdriver_getxattr(const struct fsdriver * __restrict,
+	const message * __restrict, message * __restrict);
+extern int fsdriver_setxattr(const struct fsdriver * __restrict,
+	const message * __restrict, message * __restrict);
+extern int fsdriver_listxattr(const struct fsdriver * __restrict,
+	const message * __restrict, message * __restrict);
+extern int fsdriver_removexattr(const struct fsdriver * __restrict,
+	const message * __restrict, message * __restrict);
 extern int fsdriver_bpeek(const struct fsdriver * __restrict,
 	const message * __restrict, message * __restrict);
 

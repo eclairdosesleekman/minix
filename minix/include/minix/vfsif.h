@@ -71,8 +71,15 @@ typedef struct {
 #define REQ_GETDENTS	(FS_BASE + 31)
 #define REQ_PEEK	(FS_BASE + 32)
 #define REQ_BPEEK	(FS_BASE + 33)
+#define REQ_GETXATTR	(FS_BASE + 34)
+#define REQ_SETXATTR	(FS_BASE + 35)
+#define REQ_LISTXATTR	(FS_BASE + 36)
+#define REQ_REMOVEXATTR	(FS_BASE + 37)
 
-#define NREQS			    34
+#define NREQS			    38
+
+/* Internal VFS-only flag carried in the generic xattr request payload. */
+#define VFS_XATTR_NOFOLLOW	0x40000000
 
 #define IS_FS_RQ(type) (((type) & ~0xff) == FS_BASE)
 

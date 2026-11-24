@@ -14,6 +14,7 @@
 #include <sys/dirent.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/xattr.h>
 #include <assert.h>
 #include <stddef.h>
 #include <string.h>
@@ -1204,4 +1205,117 @@ int req_utime(endpoint_t fs_e, ino_t inode_nr, struct timespec * actimespec,
 
   /* Send/rec request */
   return fs_sendrec(fs_e, &m);
+}
+
+
+/*
+ * Xattr FS request payload uses the generic mess_9 layout:
+ * m9_ull1 inode, m9_l1 name grant, m9_l2 name length,
+ * m9_l3 value grant, m9_l4 value size, m9_l5 flags;
+ * replies return the byte count in m9_ull2.
+ */
+static int
+req_xattr_actual(endpoint_t fs_e, ino_t inode_nr, const char *name,
+    endpoint_t user_e, vir_bytes user_addr, size_t size, int operation,
+    int flags, int copyout, ssize_t *resultp, int cpflag)
+{
+	cp_grant_id_t name_grant = GRANT_INVALID;
+	cp_grant_id_t value_grant = GRANT_INVALID;
+	size_t name_len = 0;
+	message m;
+	int r;
+
+	if (name != NULL) {
+		name_len = strlen(name) + 1;
+		if (name_len > XATTR_NAME_MAX + 1)
+			return ERANGE;
+		name_grant = cpf_grant_direct(fs_e, (vir_bytes)name,
+		    name_len, CPF_READ);
+		if (name_grant == GRANT_INVALID)
+			return ENOMEM;
+	}
+	if (size != 0) {
+		value_grant = cpf_grant_magic(fs_e, user_e, user_addr, size,
+		    (copyout ? CPF_WRITE : CPF_READ) | cpflag);
+		if (value_grant == GRANT_INVALID) {
+			if (name_grant != GRANT_INVALID)
+				(void)cpf_revoke(name_grant);
+			return EFAULT;
+		}
+	}
+
+	memset(&m, 0, sizeof(m));
+	m.m_type = operation;
+	m.m9_ull1 = (uint64_t)inode_nr;
+	m.m9_l1 = name_grant;
+	m.m9_l2 = (long)name_len;
+	m.m9_l3 = value_grant;
+	m.m9_l4 = (long)size;
+	m.m9_l5 = flags;
+	r = fs_sendrec(fs_e, &m);
+
+	if (name_grant != GRANT_INVALID)
+		(void)cpf_revoke(name_grant);
+	if (value_grant != GRANT_INVALID &&
+	    cpf_revoke(value_grant) == GRANT_FAULTED)
+		return ERESTART;
+	if (r == OK && resultp != NULL)
+		*resultp = (ssize_t)m.m9_ull2;
+	return r;
+}
+
+static int
+req_xattr_retry(endpoint_t fs_e, ino_t inode_nr, const char *name,
+    endpoint_t user_e, vir_bytes user_addr, size_t size, int operation,
+    int flags, int copyout, ssize_t *resultp)
+{
+	int r;
+
+	r = req_xattr_actual(fs_e, inode_nr, name, user_e, user_addr, size,
+	    operation, flags, copyout, resultp, CPF_TRY);
+	if (r == ERESTART) {
+		if ((r = vm_vfs_procctl_handlemem(user_e, user_addr, size,
+		    copyout)) != OK)
+			return r;
+		r = req_xattr_actual(fs_e, inode_nr, name, user_e, user_addr,
+		    size, operation, flags, copyout, resultp, 0);
+	}
+	return r;
+}
+
+int
+req_getxattr(endpoint_t fs_e, ino_t inode_nr, const char *name,
+    endpoint_t user_e, vir_bytes buf, size_t size, ssize_t *resultp)
+{
+	if (size > XATTR_SIZE_MAX)
+		return ERANGE;
+	return req_xattr_retry(fs_e, inode_nr, name, user_e, buf, size,
+	    REQ_GETXATTR, 0, 1, resultp);
+}
+
+int
+req_setxattr(endpoint_t fs_e, ino_t inode_nr, const char *name,
+    endpoint_t user_e, vir_bytes value, size_t size, int flags)
+{
+	if (size > XATTR_SIZE_MAX)
+		return ERANGE;
+	return req_xattr_retry(fs_e, inode_nr, name, user_e, value, size,
+	    REQ_SETXATTR, flags, 0, NULL);
+}
+
+int
+req_listxattr(endpoint_t fs_e, ino_t inode_nr, endpoint_t user_e,
+    vir_bytes buf, size_t size, ssize_t *resultp)
+{
+	if (size > XATTR_SIZE_MAX)
+		return ERANGE;
+	return req_xattr_retry(fs_e, inode_nr, NULL, user_e, buf, size,
+	    REQ_LISTXATTR, 0, 1, resultp);
+}
+
+int
+req_removexattr(endpoint_t fs_e, ino_t inode_nr, const char *name)
+{
+	return req_xattr_actual(fs_e, inode_nr, name, SELF, 0, 0,
+	    REQ_REMOVEXATTR, 0, 0, NULL, 0);
 }

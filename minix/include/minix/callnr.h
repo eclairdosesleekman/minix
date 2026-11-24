@@ -133,7 +133,11 @@
 #define VFS_GETSOCKNAME		(VFS_BASE + 61)
 #define VFS_GETPEERNAME		(VFS_BASE + 62)
 #define VFS_SHUTDOWN		(VFS_BASE + 63)
+#define VFS_GETXATTR		(VFS_BASE + 64)
+#define VFS_SETXATTR		(VFS_BASE + 65)
+#define VFS_LISTXATTR		(VFS_BASE + 66)
+#define VFS_REMOVEXATTR	(VFS_BASE + 67)
 
-#define NR_VFS_CALLS		64	/* highest number from base plus one */
+#define NR_VFS_CALLS		68	/* highest number from base plus one */
 
 #endif /* !_MINIX_CALLNR_H */

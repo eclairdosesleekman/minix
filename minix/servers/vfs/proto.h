@@ -252,6 +252,13 @@ int req_rmdir(endpoint_t fs_e, ino_t inode_nr, char *lastc);
 int req_slink(endpoint_t fs_e, ino_t inode_nr, char *lastc, endpoint_t proc_e,
 	vir_bytes path_addr, size_t path_length, uid_t uid, gid_t gid);
 int req_stat(endpoint_t fs_e, ino_t inode_nr, endpoint_t proc_e, vir_bytes buf);
+int req_getxattr(endpoint_t fs_e, ino_t inode_nr, const char *name,
+	endpoint_t user_e, vir_bytes buf, size_t size, ssize_t *resultp);
+int req_setxattr(endpoint_t fs_e, ino_t inode_nr, const char *name,
+	endpoint_t user_e, vir_bytes value, size_t size, int flags);
+int req_listxattr(endpoint_t fs_e, ino_t inode_nr, endpoint_t user_e,
+	vir_bytes buf, size_t size, ssize_t *resultp);
+int req_removexattr(endpoint_t fs_e, ino_t inode_nr, const char *name);
 int req_sync(endpoint_t fs_e);
 int req_unlink(endpoint_t fs_e, ino_t inode_nr, char *lastc);
 int req_unmount(endpoint_t fs_e);
@@ -329,6 +336,7 @@ int do_statvfs(void);
 int do_fstatvfs(void);
 int do_getvfsstat(void);
 int do_rdlink(void);
+int do_xattr(void);
 int do_lstat(void);
 int update_statvfs(struct vmnt *vmp, struct statvfs *buf);
 

@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/mfs4-journal.yml"
       - "minix/fs/mfs/mfs4_journal.*"
+      - "minix/fs/mfs/mfs4_xattr_core.*"
       - "minix/include/minix/mfs4_disk.h"
       - "minix/tests/mfs4/**"
   push:
@@ -12,6 +13,7 @@ on:
       - master
     paths:
       - "minix/fs/mfs/mfs4_journal.*"
+      - "minix/fs/mfs/mfs4_xattr_core.*"
       - "minix/include/minix/mfs4_disk.h"
       - "minix/tests/mfs4/**"
 

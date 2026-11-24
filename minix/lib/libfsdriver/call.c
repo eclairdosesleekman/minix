@@ -1,5 +1,6 @@
 
 #include "fsdriver.h"
+#include <sys/xattr.h>
 #include <minix/ds.h>
 #include <sys/mman.h>
 
@@ -988,4 +989,114 @@ int fsdriver_flush(const struct fsdriver * __restrict fdp,
 		fdp->fdr_bflush(dev);
 
 	return OK;
+}
+
+/*
+ * MFS4 xattr calls share the generic mess_9 payload. The VFS->FS layout is:
+ *   m9_ull1 inode; m9_l1 name grant; m9_l2 name length;
+ *   m9_l3 value grant; m9_l4 value length; m9_l5 operation flags.
+ * The result byte count is returned in m9_ull2.
+ */
+static int
+fsdriver_xattr_name(const message *m_in, char name[XATTR_NAME_MAX + 1])
+{
+	if (m_in->m9_l2 < 2 ||
+	    m_in->m9_l2 > XATTR_NAME_MAX + 1)
+		return ERANGE;
+	return fsdriver_getname(m_in->m_source,
+	    (cp_grant_id_t)m_in->m9_l1, (size_t)m_in->m9_l2,
+	    name, XATTR_NAME_MAX + 1, TRUE);
+}
+
+int
+fsdriver_getxattr(const struct fsdriver * __restrict fdp,
+    const message * __restrict m_in, message * __restrict m_out)
+{
+	char name[XATTR_NAME_MAX + 1];
+	struct fsdriver_data data, *datap = NULL;
+	ssize_t r;
+	size_t size = (size_t)m_in->m9_l4;
+	int e;
+
+	if (m_in->m9_l4 < 0 || size > XATTR_SIZE_MAX)
+		return ERANGE;
+	if (fdp->fdr_getxattr == NULL)
+		return EOPNOTSUPP;
+	if ((e = fsdriver_xattr_name(m_in, name)) != OK)
+		return e;
+	if (size != 0) {
+		data.endpt = m_in->m_source;
+		data.grant = (cp_grant_id_t)m_in->m9_l3;
+		data.size = size;
+		datap = &data;
+	}
+	r = fdp->fdr_getxattr((ino_t)m_in->m9_ull1, name, datap, size);
+	if (r < 0)
+		return (int)-r;
+	m_out->m9_ull2 = (uint64_t)r;
+	return OK;
+}
+
+int
+fsdriver_setxattr(const struct fsdriver * __restrict fdp,
+    const message * __restrict m_in, message * __restrict __unused m_out)
+{
+	char name[XATTR_NAME_MAX + 1];
+	struct fsdriver_data data, *datap = NULL;
+	size_t size = (size_t)m_in->m9_l4;
+	int e;
+
+	if (m_in->m9_l4 < 0 || size > XATTR_SIZE_MAX)
+		return ERANGE;
+	if (fdp->fdr_setxattr == NULL)
+		return EOPNOTSUPP;
+	if ((e = fsdriver_xattr_name(m_in, name)) != OK)
+		return e;
+	if (size != 0) {
+		data.endpt = m_in->m_source;
+		data.grant = (cp_grant_id_t)m_in->m9_l3;
+		data.size = size;
+		datap = &data;
+	}
+	return fdp->fdr_setxattr((ino_t)m_in->m9_ull1, name, datap, size,
+	    (int)m_in->m9_l5);
+}
+
+int
+fsdriver_listxattr(const struct fsdriver * __restrict fdp,
+    const message * __restrict m_in, message * __restrict m_out)
+{
+	struct fsdriver_data data, *datap = NULL;
+	ssize_t r;
+	size_t size = (size_t)m_in->m9_l4;
+
+	if (m_in->m9_l4 < 0 || size > XATTR_SIZE_MAX)
+		return ERANGE;
+	if (fdp->fdr_listxattr == NULL)
+		return EOPNOTSUPP;
+	if (size != 0) {
+		data.endpt = m_in->m_source;
+		data.grant = (cp_grant_id_t)m_in->m9_l3;
+		data.size = size;
+		datap = &data;
+	}
+	r = fdp->fdr_listxattr((ino_t)m_in->m9_ull1, datap, size);
+	if (r < 0)
+		return (int)-r;
+	m_out->m9_ull2 = (uint64_t)r;
+	return OK;
+}
+
+int
+fsdriver_removexattr(const struct fsdriver * __restrict fdp,
+    const message * __restrict m_in, message * __restrict __unused m_out)
+{
+	char name[XATTR_NAME_MAX + 1];
+	int e;
+
+	if (fdp->fdr_removexattr == NULL)
+		return EOPNOTSUPP;
+	if ((e = fsdriver_xattr_name(m_in, name)) != OK)
+		return e;
+	return fdp->fdr_removexattr((ino_t)m_in->m9_ull1, name);
 }
