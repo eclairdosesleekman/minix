@@ -653,7 +653,7 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 {
 #ifdef CONFIG_SMP
 	int stopped_remote = 0;
-	int migration_done = 0;
+	int remote_fpu_saved = 0;
 #endif
 
 	/* Make sure the values given are within the allowed range.*/
@@ -680,7 +680,7 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 				/* Migration also saves any FPU state owned by the old CPU. */
 				smp_schedule_migrate_proc(p, cpu);
 				stopped_remote = 1;
-				/* The migration helper already saved the remote FPU state. */
+				/* Migration already stopped the remote CPU and saved its FPU state. */
 				migration_done = 1;
 			} else if (get_cpu_var(p->p_cpu, proc_ptr) == p) {
 				/*
