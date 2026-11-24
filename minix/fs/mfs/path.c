@@ -115,7 +115,7 @@ struct inode *advance(
   }
 
   /* The component has been found in the directory.  Get inode. */
-  if ( (rip = get_inode(dirp->i_dev, (int) numb)) == NULL)  {
+  if ( (rip = get_inode(dirp->i_dev, numb)) == NULL)  {
 	assert(err_code != OK);
 	return(NULL);
   }
