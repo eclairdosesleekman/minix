@@ -776,7 +776,28 @@ int lapic_enable(unsigned cpu)
 	(void) lapic_read (LAPIC_SIVR);
 	apic_eoi();
 
+#ifdef CONFIG_SMP
+	if (cpu_is_bsp(cpu)) {
+		/*
+		 * The calibration routine uses the shared PIT (IRQ 0) and global
+		 * sample counters. Run it only on the BSP: calibrating an AP after
+		 * the BSP has started would replace the live clock interrupt hook,
+		 * reprogram the system timer, and race with the BSP's clock handler.
+		 */
+		apic_calibrate_clocks(cpu);
+	} else {
+		/*
+		 * The local APIC timer and invariant TSC use system-wide clock
+		 * rates on an SMP machine. Reuse the BSP calibration for APs
+		 * instead of running the BSP-only PIT calibration concurrently.
+		 */
+		lapic_bus_freq[cpu] = lapic_bus_freq[bsp_cpu_id];
+		cpu_set_freq(cpu, cpu_get_freq(bsp_cpu_id));
+		cpu_info[cpu].freq = cpu_info[bsp_cpu_id].freq;
+	}
+#else
 	apic_calibrate_clocks(cpu);
+#endif
 	BOOT_VERBOSE(printf("APIC timer calibrated\n"));
 
 	return 1;
