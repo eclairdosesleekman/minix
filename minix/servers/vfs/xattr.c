@@ -83,7 +83,7 @@ do_xattr(void)
 			return ERANGE;
 		if (fetch_name(name_addr, name_len, name) != OK)
 			return err_code;
-		if (name[strlen(name)] != '\0')
+		if (strlen(name) + 1 != name_len)
 			return EINVAL;
 		if ((r = vfs_xattr_name_valid(name)) != OK)
 			return r;
@@ -105,6 +105,8 @@ do_xattr(void)
 			return EINVAL;
 		if (fetch_name(path_addr, path_len, fullpath) != OK)
 			return err_code;
+		if (strlen(fullpath) + 1 != path_len)
+			return EINVAL;
 		lookup_flags = nofollow ? PATH_RET_SYMLINK : PATH_NOFLAGS;
 		lookup_init(&resolve, fullpath, lookup_flags, &vmp, &vp);
 		resolve.l_vmnt_lock = VMNT_READ;
