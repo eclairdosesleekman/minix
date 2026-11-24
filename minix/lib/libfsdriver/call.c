@@ -1000,6 +1000,9 @@ int fsdriver_flush(const struct fsdriver * __restrict fdp,
 static int
 fsdriver_xattr_name(const message *m_in, char name[XATTR_NAME_MAX + 1])
 {
+	if (m_in->m9_l2 < 2 ||
+	    m_in->m9_l2 > XATTR_NAME_MAX + 1)
+		return ERANGE;
 	return fsdriver_getname(m_in->m_source,
 	    (cp_grant_id_t)m_in->m9_l1, (size_t)m_in->m9_l2,
 	    name, XATTR_NAME_MAX + 1, TRUE);
