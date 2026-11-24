@@ -240,10 +240,12 @@ mfs4_orphan_process(int mount_recovery)
 			continue;
 		}
 
-		/* MFS4 v1 does not yet define an xattr-chain codec. Never drop
-		 * an inode or its orphan marker while an xattr chain remains.
+		/* A linked inode keeps its xattr chain when truncate cleanup
+		 * completes. Only an unlinked inode needs the chain reclaimed.
+		 * MFS4 v1's xattr-chain codec is not implemented yet, so retain
+		 * an unlinked orphan rather than dropping unhandled xattrs.
 		 */
-		if (rip->i_xattr_head != 0) {
+		if (rip->i_nlinks == 0 && rip->i_xattr_head != 0) {
 			put_inode(rip);
 			return EOPNOTSUPP;
 		}
