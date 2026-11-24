@@ -38,6 +38,17 @@ test_name_policy(void)
 }
 
 static void
+test_remove_from_empty_stream(void)
+{
+	uint8_t data[32] = {0};
+	size_t length = 0;
+	uint32_t count = 0;
+
+	assert(mfs4_xattr_remove(data, &length, &count,
+	    "user.missing") == ENODATA);
+}
+
+static void
 test_tlv_roundtrip_and_remove(void)
 {
 	uint8_t bytes[256];
@@ -176,6 +187,7 @@ int
 main(void)
 {
 	test_name_policy();
+	test_remove_from_empty_stream();
 	test_tlv_roundtrip_and_remove();
 	test_block_validation();
 	test_malformed_tlvs();
