@@ -41,7 +41,7 @@ do_xattr(void)
 	vir_bytes path_addr, name_addr, value_addr;
 	size_t path_len, name_len, size;
 	ssize_t result_size = 0;
-	int fd, flags, nofollow, write_access, is_list;
+	int fd, flags, nofollow, write_access, is_list, from_fd;
 	int r, lookup_flags;
 
 	fd = (int)job_m_in.m9_l1;
@@ -90,7 +90,8 @@ do_xattr(void)
 	}
 
 	/* Resolve either an existing descriptor or the requested pathname. */
-	if (fd >= 0) {
+	from_fd = fd >= 0;
+	if (from_fd) {
 		if (path_addr != 0 || path_len != 0)
 			return EINVAL;
 		if ((flp = get_filp(fd, write_access ? VNODE_WRITE :
@@ -150,9 +151,13 @@ do_xattr(void)
 		}
 	}
 
-	unlock_vnode(vp);
-	if (vmp != NULL)
+	if (from_fd) {
+		/* As in fchmod/fchown, the descriptor owns the vnode lock. */
+		unlock_filp(flp);
+	} else {
+		unlock_vnode(vp);
 		unlock_vmnt(vmp);
+	}
 	put_vnode(vp);
 
 	if (r != OK)
