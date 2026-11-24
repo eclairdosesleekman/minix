@@ -4,6 +4,7 @@
 #include "buf.h"
 #include "inode.h"
 #include "super.h"
+#include <minix/mfs4_disk.h>
 
 static struct inode *new_node(struct inode *ldirp, char *string, mode_t
 	bits, uid_t uid, gid_t gid, u64_t rdev);
@@ -228,7 +229,8 @@ static struct inode *new_node(struct inode *ldirp,
   	return(NULL);
   }
 
-  if (S_ISDIR(bits) && (ldirp->i_nlinks >= LINK_MAX)) {
+  if (S_ISDIR(bits) && (ldirp->i_nlinks >= (ldirp->i_sp->s_version == V4 ?
+	    MFS4_MAX_NLINK : LINK_MAX))) {
         /* New entry is a directory, alas we can't give it a ".." */
         err_code = EMLINK;
         return(NULL);

@@ -7,6 +7,7 @@
 #include "super.h"
 #include <minix/vfsif.h>
 #include <sys/param.h>
+#include <minix/mfs4_disk.h>
 
 #define SAME 1000
 
@@ -43,7 +44,8 @@ int fs_link(ino_t dir_nr, char *name, ino_t ino_nr)
   
   /* Check to see if the file has maximum number of links already. */
   r = OK;
-  if(rip->i_nlinks >= LINK_MAX)
+  if(rip->i_nlinks >= (rip->i_sp->s_version == V4 ?
+	      MFS4_MAX_NLINK : LINK_MAX))
 	  r = EMLINK;
 
   /* Linking to directories is too dangerous to allow. */
@@ -356,7 +358,8 @@ int fs_rename(ino_t old_dir_nr, char *old_name, ino_t new_dir_nr,
 	  
 	/* Some tests apply only if the new path exists. */
 	if(new_ip == NULL) {
-		if (odir && new_dirp->i_nlinks >= LINK_MAX &&
+		if (odir && new_dirp->i_nlinks >= (new_dirp->i_sp->s_version == V4 ?
+		    MFS4_MAX_NLINK : LINK_MAX) &&
 		    !same_pdir && r == OK) { 
 			r = EMLINK;
 		}
