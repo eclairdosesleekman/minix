@@ -222,12 +222,22 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 	    &orphan_head)) != OK)
 		return r;
 
-	/* Orphan cleanup is a Phase 5 operation; never mount such a volume. */
-	if (orphan_head != 0)
-		return EOPNOTSUPP;
-	/* Unknown RO-compatible features may not be modified by this driver. */
+	/* Do not modify a volume with features this server does not know. */
 	if (sp->s_mfs4_volume_flags != 0)
 		return EOPNOTSUPP;
+
+	/* Recovery is idempotent: the orphan head remains published until each
+	 * inode's final cleanup transaction commits.
+	 */
+	if (orphan_head != 0) {
+		if ((r = mfs4_orphan_recover()) != OK)
+			return r;
+		if ((r = mfs4_journal_validate_state(sp, &state_flags,
+		    &orphan_head)) != OK)
+			return r;
+		if (orphan_head != 0)
+			return EIO;
+	}
 
 	/* A writable mount is not complete until CLEAN=0 is durable. */
 	return mfs4_journal_set_clean(0);
@@ -440,6 +450,8 @@ mfs4_journal_unmount(void)
 
 	if (superblock.s_version != V4 || superblock.s_rd_only)
 		return EINVAL;
+	if ((r = mfs4_orphan_check_empty()) != OK)
+		return r;
 	if ((r = mfs4_journal_sync()) != OK)
 		return r;
 	return mfs4_journal_set_clean(1);
