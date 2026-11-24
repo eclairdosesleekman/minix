@@ -47,7 +47,12 @@ userland ACL tools are Phase 7 work and are not claimed here.
 ## Tests and validation
 
 Added `mfs4_xattr_test` to `make -C minix/tests/mfs4 clean test` and the
-existing MFS4 host-test workflow. The host cases cover:
+existing MFS4 host-test workflow. On commit
+`675b4cc97dd6d338833d982c6da60f920c34134f`, both the `MFS4 redo journal`
+and `MFS4 orphan recovery` GitHub Actions workflows passed. Each workflow
+built and ran `mfs4_journal_test`, `mfs4_orphan_test`, and
+`mfs4_xattr_test`; all three reported `all tests passed`. The host cases
+cover:
 - user and reserved namespace acceptance/rejection;
 - TLV append/find/remove, duplicate prevention, and empty values;
 - the 255-byte maximum name and 3801-byte maximum value fitting exactly in a
