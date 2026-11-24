@@ -24,7 +24,20 @@ table.c, mfs4_journal.c, and mfs4_journal_core.c; those paths are
 covered separately by minix/tests/mfs4/mfs4_journal_test.c. That journal
 suite also does not replace VFS/QEMU/device crash testing.
 
-Orphan-list recovery and orphan-based large truncate/unlink cleanup are Phase
-5 work in the design. Until then, the MFS4 mount path refuses a volume with a
-non-empty orphan list. Large truncate operations are still constrained by the
-64-image transaction limit and need the planned orphan/chunk implementation.
+## Phase 5 orphan handling
+
+The MFS4 VFS path now uses `mfs4_orphan.c` for journaled orphan insertion,
+chunked data/indirect reclamation, last-close cleanup, writable-mount recovery,
+and unmount's empty-list check. `I4_ORPHAN` and `I4_TRUNCATING` are validated
+by the runtime inode codec. A cleanup chunk covers at most 32 logical blocks,
+leaving room under the journal's 64-unique-image ceiling for fragmented zmap
+images, indirect pointer blocks, and the inode image.
+
+The host orphan test exercises the portable state-block CRC/generation/head
+helpers and the open-reference reclaim policy. It does not instantiate the
+MFS inode cache, LMFS buffer cache, VFS callbacks, or device flush/recovery
+path. Those still require a MINIX runtime/QEMU test and crash injection.
+
+MFS4 v1 xattr-chain encoding/cleanup is not implemented yet. The orphan worker
+returns `EOPNOTSUPP` and preserves the orphan if `xattr_head` is nonzero;
+it does not discard an inode with an unhandled xattr chain.
