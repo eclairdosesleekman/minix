@@ -178,11 +178,12 @@ mfs4_journal_set_clean(int clean)
 }
 
 /*
- * MFS4 Phase 4 mount policy:
+ * MFS4 mount policy:
  * - RO mount is allowed only when state is clean, orphan list empty, and the
  *   journal has no committed transaction.
- * - RW mount first replays the journal, refuses orphaned inodes (Phase 5),
- *   then durably clears CLEAN before exposing the volume to VFS.
+ * - RW mount replays the journal, validates state, recovers orphans, initializes
+ *   block-usage accounting, and durably clears CLEAN before exposing the
+ *   volume to VFS.
  */
 int
 mfs4_journal_mount(struct super_block *sp, int readonly)
@@ -221,6 +222,14 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 	if ((r = mfs4_journal_validate_state(sp, &state_flags,
 	    &orphan_head)) != OK)
 		return r;
+
+	/*
+	 * Orphan recovery may free blocks before fs_mount() reaches its usual
+	 * accounting setup. Initialize the baseline after journal replay so
+	 * mfs4_tx_commit() can safely apply each chunk's block-count delta.
+	 */
+	used_zones = sp->s_zones - mfs4_count_free_bits(sp, ZMAP);
+	lmfs_set_blockusage(sp->s_zones, used_zones);
 
 	/* Do not modify a volume with features this server does not know. */
 	if (sp->s_mfs4_volume_flags != 0)
