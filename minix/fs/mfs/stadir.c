@@ -110,11 +110,12 @@ int fs_stat(ino_t ino_nr, struct stat *statbuf)
   statbuf->st_atime = rip->i_atime;
   statbuf->st_mtime = rip->i_mtime;
   statbuf->st_ctime = rip->i_ctime;
-#ifdef st_atimensec
+  /* Both supported struct stat layouts expose the nanosecond members:
+   * directly on the legacy layout and through aliases on the timespec layout.
+   */
   statbuf->st_atimensec = rip->i_atime_nsec;
   statbuf->st_mtimensec = rip->i_mtime_nsec;
   statbuf->st_ctimensec = rip->i_ctime_nsec;
-#endif
   statbuf->st_blksize = lmfs_fs_block_size();
   statbuf->st_blocks = estimate_blocks(rip);
 
