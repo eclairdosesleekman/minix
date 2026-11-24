@@ -79,4 +79,8 @@ int (* const call_vec[NR_VFS_CALLS])(void) = {
 	CALL(VFS_GETSOCKNAME)	= do_getsockname,	/* getsockname(2) */
 	CALL(VFS_GETPEERNAME)	= do_getpeername,	/* getpeername(2) */
 	CALL(VFS_SHUTDOWN)	= do_shutdown,		/* shutdown(2) */
+	CALL(VFS_GETXATTR)	= do_xattr,		/* getxattr(2) */
+	CALL(VFS_SETXATTR)	= do_xattr,		/* setxattr(2) */
+	CALL(VFS_LISTXATTR)	= do_xattr,		/* listxattr(2) */
+	CALL(VFS_REMOVEXATTR)	= do_xattr,	/* removexattr(2) */
 };
