@@ -122,7 +122,9 @@ mfs4_orphan_process(int mount_recovery)
 	uint8_t state[MFS4_BLOCK_SIZE];
 	uint8_t *state_image;
 	uint32_t head, current_head;
-	uint64_t first_block, last_block, start_block, end_block;
+	uint64_t first_block, last_block, start_block, end_block, search_end;
+	ino_t search_ino = NO_ENTRY;
+	uint32_t search_generation = 0;
 	unsigned int walked = 0;
 	int found, r;
 
@@ -177,8 +179,17 @@ mfs4_orphan_process(int mount_recovery)
 			return OK;
 		}
 
+		if (search_ino != rip->i_num ||
+		    search_generation != rip->i_generation) {
+			search_ino = rip->i_num;
+			search_generation = rip->i_generation;
+			search_end = rip->i_sp->s_mfs4_max_file_size /
+			    MFS4_BLOCK_SIZE;
+		}
+		if (search_end < first_block)
+			search_end = first_block;
 		if ((r = mfs4_find_last_allocated_block(rip, first_block,
-		    &found, &last_block)) != OK) {
+		    search_end, &found, &last_block)) != OK) {
 			put_inode(rip);
 			return r;
 		}
@@ -192,6 +203,8 @@ mfs4_orphan_process(int mount_recovery)
 			put_inode(rip);
 			if (r != OK)
 				return r;
+			/* Continue below the just-committed range. */
+			search_end = start_block;
 			continue;
 		}
 
@@ -220,6 +233,8 @@ mfs4_orphan_process(int mount_recovery)
 				return r;
 			}
 			put_inode(rip);
+			search_ino = NO_ENTRY;
+			search_end = 0;
 			if (still_open)
 				return OK;
 			continue;
@@ -297,6 +312,8 @@ mfs4_orphan_process(int mount_recovery)
 			return r;
 		}
 		put_inode(rip);
+		search_ino = NO_ENTRY;
+		search_end = 0;
 		walked++;
 	}
 
