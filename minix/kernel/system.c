@@ -694,6 +694,33 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 		RTS_SET(p, RTS_NO_QUANTUM);
 	}
 
+#ifdef CONFIG_SMP
+	/*
+	 * A process can retain lazy FPU ownership after it blocks. Save that
+	 * state and invalidate the old CPU's owner pointer before changing
+	 * p_cpu, regardless of whether the process is runnable.
+	 *
+	 * For a remote CPU, keep RTS_PROC_STOP set across the migration. The
+	 * IPI wait drops the BKL, during which an IPC completion could otherwise
+	 * make a blocked process runnable on its old CPU. Preserve a stop that
+	 * was already in effect before this scheduling request.
+	 *
+	 * On the local CPU no IPI is needed, but save_fpu() intentionally
+	 * retains the local owner pointer, so release it explicitly.
+	 */
+	if (cpu != -1 && cpu != p->p_cpu) {
+		if (p->p_cpu == cpuid) {
+			save_fpu(p);
+			release_fpu(p);
+		} else {
+			int was_stopped = RTS_ISSET(p, RTS_PROC_STOP);
+
+			smp_schedule_migrate_proc(p, cpu);
+			stopped_remote = !was_stopped;
+		}
+	}
+#endif
+
 	if (priority != -1)
 		p->p_priority = priority;
 	if (quantum != -1) {
