@@ -221,6 +221,7 @@ static struct inode *new_node(struct inode *ldirp,
  */
   register struct inode *rip;
   register int r;
+  u64_t encoded_rdev = 0;
 
   if (ldirp->i_nlinks == NO_LINK) {	/* Dir does not actually exist */
   	err_code = ENOENT;
@@ -230,6 +231,17 @@ static struct inode *new_node(struct inode *ldirp,
   if (S_ISDIR(bits) && (ldirp->i_nlinks >= LINK_MAX)) {
         /* New entry is a directory, alas we can't give it a ".." */
         err_code = EMLINK;
+        return(NULL);
+  }
+
+  /* Reject an unrepresentable native device number before allocating an
+   * inode or changing the directory. MFS4 stores major/minor separately.
+   */
+  if (ldirp->i_sp->s_version == V4 &&
+      ((bits & I_TYPE) == I_CHAR_SPECIAL ||
+      (bits & I_TYPE) == I_BLOCK_SPECIAL) &&
+      (r = mfs4_encode_rdev((dev_t)rdev, &encoded_rdev)) != OK) {
+        err_code = r;
         return(NULL);
   }
 
@@ -248,11 +260,12 @@ static struct inode *new_node(struct inode *ldirp,
 	 * no directory entry is much better than the opposite.
 	 */
 	rip->i_nlinks++;
-	if (rip->i_sp->s_version == V4 &&
-	    ((bits & I_TYPE) == I_CHAR_SPECIAL ||
-	    (bits & I_TYPE) == I_BLOCK_SPECIAL)) {
-		rip->i_rdev = rdev;
-		rip->i_zone[0] = 0;
+	if (rip->i_sp->s_version == V4) {
+		rip->i_rdev = encoded_rdev;
+		rip->i_zone[0] = (zone_t)rdev;
+		if ((bits & I_TYPE) == I_CHAR_SPECIAL ||
+		    (bits & I_TYPE) == I_BLOCK_SPECIAL)
+			rip->i_zone[0] = 0;
 	} else {
 		rip->i_zone[0] = (zone_t)rdev;
 	}
