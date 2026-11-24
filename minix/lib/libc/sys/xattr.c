@@ -5,6 +5,7 @@
 #include <sys/xattr.h>
 #include <minix/callnr.h>
 #include <minix/vfsif.h>
+#include <stdint.h>
 #include <string.h>
 
 static int
