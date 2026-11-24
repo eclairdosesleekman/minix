@@ -213,34 +213,39 @@ void put_inode(
   register struct inode *rip	/* pointer to inode to be released */
 )
 {
-/* The caller is no longer using this inode.  If no one else is using it either
- * write it back to the disk immediately.  If it has no links, truncate it and
- * return it to the pool of available inodes.
+/* The caller is no longer using the inode. MFS4 zero-link inodes remain
+ * cached while they are on the durable orphan list; the orphan worker is
+ * solely responsible for freeing their blocks and inode bitmap bit.
  */
 
-  if (rip == NULL) return;	/* checking here is easier than in caller */
+  if (rip == NULL) return;
 
   if (rip->i_count < 1)
 	panic("put_inode: i_count already below 1: %d", rip->i_count);
 
-  if (--rip->i_count == 0) {	/* i_count == 0 means no one is using it now */
-	if (rip->i_nlinks == NO_LINK) {
-		/* i_nlinks == NO_LINK means free the inode. */
-		/* return all the disk blocks */
-
-		/* Ignore errors by truncate_inode in case inode is a block
-		 * special or character special file.
-		 */
-		(void) truncate_inode(rip, (off_t) 0); 
-		rip->i_mode = I_NOT_ALLOC;     /* clear I_TYPE field */
+  if (--rip->i_count == 0) {
+	if (rip->i_nlinks == NO_LINK && rip->i_sp->s_version != V4) {
+		/* Preserve the original MFS3 close-time deletion path. */
+		(void) truncate_inode(rip, (off_t) 0);
+		rip->i_mode = I_NOT_ALLOC;
 		IN_MARKDIRTY(rip);
 		free_inode(rip->i_dev, rip->i_num);
-	} 
+	} else if (rip->i_nlinks == NO_LINK &&
+	    rip->i_sp->s_version == V4 &&
+	    rip->i_mode != I_NOT_ALLOC &&
+	    !(rip->i_flags & I4_ORPHAN)) {
+		/* A zero-link MFS4 inode must never be freed outside the
+		 * journaled orphan protocol.
+		 */
+		printf("MFS: zero-link MFS4 inode %llu is not orphaned\n",
+		    (unsigned long long)rip->i_num);
+		rip->i_sp->s_rd_only = 1;
+	}
 
-        rip->i_mountpoint = FALSE;
+	rip->i_mountpoint = FALSE;
 	if (IN_ISDIRTY(rip)) {
 		if (rip->i_sp->s_version == V4 && rip->i_sp->s_rd_only) {
-			/* An aborted shadow transaction is never written back. */
+			/* Never write a shadow image after an aborted transaction. */
 			rip->i_update = 0;
 			IN_MARKCLEAN(rip);
 		} else {
@@ -248,13 +253,14 @@ void put_inode(
 		}
 	}
 
-	if (rip->i_nlinks == NO_LINK) {
-		/* free, put at the front of the LRU list */
+	if (rip->i_nlinks == NO_LINK &&
+	    (rip->i_sp->s_version != V4 || rip->i_mode == I_NOT_ALLOC)) {
+		/* MFS3 deletion, or an MFS4 inode finalized by the orphan worker. */
 		unhash_inode(rip);
 		rip->i_num = NO_ENTRY;
 		TAILQ_INSERT_HEAD(&unused_inodes, rip, i_unused);
 	} else {
-		/* unused, put at the back of the LRU (cache it) */
+		/* Includes zero-link MFS4 inodes still linked from orphan_head. */
 		TAILQ_INSERT_TAIL(&unused_inodes, rip, i_unused);
 	}
   }
