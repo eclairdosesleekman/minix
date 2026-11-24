@@ -1070,7 +1070,7 @@ fsdriver_listxattr(const struct fsdriver * __restrict fdp,
 	if (m_in->m9_l4 < 0 || size > XATTR_SIZE_MAX)
 		return ERANGE;
 	if (fdp->fdr_listxattr == NULL)
-		return ENOSYS;
+		return EOPNOTSUPP;
 	if (size != 0) {
 		data.endpt = m_in->m_source;
 		data.grant = (cp_grant_id_t)m_in->m9_l3;
