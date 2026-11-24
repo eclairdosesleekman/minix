@@ -123,7 +123,7 @@ mfs4_orphan_process(int mount_recovery)
 	uint8_t *state_image;
 	uint32_t head, current_head;
 	uint64_t first_block, last_block, start_block, end_block;
-	unsigned int walked;
+	unsigned int walked = 0;
 	int found, r;
 
 	if (superblock.s_version != V4)
@@ -131,7 +131,9 @@ mfs4_orphan_process(int mount_recovery)
 	if (superblock.s_rd_only)
 		return EROFS;
 
-	for (walked = 0; walked < superblock.s_mfs4_total_inodes; walked++) {
+	for (;;) {
+		if (walked >= superblock.s_mfs4_total_inodes)
+			return ELOOP;
 		struct inode *rip;
 		uint16_t flags;
 		uint32_t next;
@@ -295,10 +297,9 @@ mfs4_orphan_process(int mount_recovery)
 			return r;
 		}
 		put_inode(rip);
+		walked++;
 	}
 
-	/* A bounded walk prevents a corrupt cycle from hanging mount forever. */
-	return ELOOP;
 }
 
 int
