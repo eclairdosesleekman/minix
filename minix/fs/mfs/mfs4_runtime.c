@@ -573,6 +573,13 @@ mfs4_inode_fields_valid(struct inode *rip)
 	    ((rip->i_flags & I4_ORPHAN) == 0 &&
 	    rip->i_orphan_next != 0))
 		return EINVAL;
+	if ((rip->i_nlinks == 0 && rip->i_mode != I_NOT_ALLOC &&
+	    (rip->i_flags & I4_ORPHAN) == 0) ||
+	    (rip->i_mode == I_NOT_ALLOC &&
+	    (rip->i_flags != 0 || rip->i_orphan_next != 0)) ||
+	    (rip->i_nlinks != 0 && (rip->i_flags & I4_ORPHAN) != 0 &&
+	    (rip->i_flags & I4_TRUNCATING) == 0))
+		return EIO;
 	if (rip->i_orphan_next > superblock.s_mfs4_total_inodes ||
 	    rip->i_orphan_next == 1)
 		return EIO;
