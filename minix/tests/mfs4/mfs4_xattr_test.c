@@ -90,10 +90,15 @@ test_block_validation(void)
 	assert(mfs4_xattr_append(entries, sizeof(entries), &length, &count,
 	    "user.key", "value", 5) == 0);
 	finish_block(block, 12, 99, entries, (uint16_t)length,
-	    (uint16_t)count, 0);
+	    (uint16_t)count, 73);
 	assert(mfs4_xattr_validate_block(block, 12, 99, &next, &used,
 	    &entries_count) == 0);
-	assert(next == 0 && used == length && entries_count == 1);
+	assert(next == 73 && used == length && entries_count == 1);
+
+	finish_block(block, 12, 99, entries, (uint16_t)length,
+	    (uint16_t)count, 0);
+	assert(mfs4_xattr_validate_block(block, 12, 99, &next, &used,
+	    &entries_count) == 0 && next == 0);
 
 	block[100] ^= 1;
 	assert(mfs4_xattr_validate_block(block, 12, 99, &next, &used,
@@ -183,6 +188,45 @@ test_empty_value_and_invalid_capacity(void)
 	    "user.more", "v", 1) == ENOSPC);
 }
 
+
+static void
+test_duplicate_entries_rejected_on_disk(void)
+{
+	uint8_t data[128];
+	size_t length = 0;
+	uint32_t count = 0;
+	struct mfs4_xattr_entry entry;
+	size_t first_len;
+
+	memset(data, 0, sizeof(data));
+	assert(mfs4_xattr_append(data, sizeof(data), &length, &count,
+	    "user.dup", "x", 1) == 0);
+	first_len = length;
+	assert(mfs4_xattr_entry_next(data, length, &(size_t){0},
+	    &entry) == 0);
+	memcpy(data + length, data, first_len);
+	length += first_len;
+	count++;
+	assert(mfs4_xattr_validate_entries(data, length, count, 1) == EIO);
+}
+
+static void
+test_nonzero_tlv_padding_rejected(void)
+{
+	uint8_t data[64];
+	size_t length = 0;
+	uint32_t count = 0;
+	size_t pad;
+
+	memset(data, 0, sizeof(data));
+	assert(mfs4_xattr_append(data, sizeof(data), &length, &count,
+	    "user.pad", "v", 1) == 0);
+	pad = MFS4_XATTR_TLV_HEADER_SIZE + strlen("user.pad") + 1;
+	assert(pad < length);
+	data[pad] = 0x7f;
+	assert(mfs4_xattr_validate_entries(data, length, count, 1) == EIO);
+}
+
 int
 main(void)
 {
@@ -193,6 +237,8 @@ main(void)
 	test_malformed_tlvs();
 	test_maximum_name_and_value_fit_one_block();
 	test_empty_value_and_invalid_capacity();
+	test_duplicate_entries_rejected_on_disk();
+	test_nonzero_tlv_padding_rejected();
 	puts("mfs4_xattr_test: all tests passed");
 	return 0;
 }
