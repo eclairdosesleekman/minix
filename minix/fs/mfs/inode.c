@@ -234,7 +234,7 @@ void put_inode(
 	} else if (rip->i_nlinks == NO_LINK &&
 	    rip->i_sp->s_version == V4 &&
 	    rip->i_mode != I_NOT_ALLOC &&
-	    !(rip->i_flags & I4_ORPHAN)) {
+	    !(rip->i_flags & I4_ORPHAN) && !mfs4_tx_is_active()) {
 		/* A zero-link MFS4 inode must never be freed outside the
 		 * journaled orphan protocol.
 		 */
