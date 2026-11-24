@@ -30,6 +30,15 @@ int fs_utime(ino_t ino_nr, struct timespec *atime, struct timespec *mtime)
       return(EOVERFLOW);
   }
 
+  if (rip->i_sp->s_version == V4 &&
+      ((atime->tv_nsec != UTIME_NOW && atime->tv_nsec != UTIME_OMIT &&
+        (atime->tv_nsec < 0 || atime->tv_nsec >= 1000000000L)) ||
+       (mtime->tv_nsec != UTIME_NOW && mtime->tv_nsec != UTIME_OMIT &&
+        (mtime->tv_nsec < 0 || mtime->tv_nsec >= 1000000000L)))) {
+      put_inode(rip);
+      return(EINVAL);
+  }
+
   rip->i_update = CTIME; /* discard any stale ATIME and MTIME flags */
 
   switch (atime->tv_nsec) {
@@ -39,8 +48,10 @@ int fs_utime(ino_t ino_nr, struct timespec *atime, struct timespec *mtime)
   case UTIME_OMIT: /* do not touch */
 	break;
   default:
-	/* MFS does not support subsecond resolution, so we round down. */
+	/* MFS3 stores seconds only; MFS4 preserves the explicit fraction. */
 	rip->i_atime = atime->tv_sec;
+	if (rip->i_sp->s_version == V4)
+		rip->i_atime_nsec = (u32_t)atime->tv_nsec;
 	break;
   }
 
@@ -51,8 +62,10 @@ int fs_utime(ino_t ino_nr, struct timespec *atime, struct timespec *mtime)
   case UTIME_OMIT: /* do not touch */
 	break;
   default:
-	/* MFS does not support subsecond resolution, so we round down. */
+	/* MFS3 stores seconds only; MFS4 preserves the explicit fraction. */
 	rip->i_mtime = mtime->tv_sec;
+	if (rip->i_sp->s_version == V4)
+		rip->i_mtime_nsec = (u32_t)mtime->tv_nsec;
 	break;
   }
 

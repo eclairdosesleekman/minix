@@ -238,7 +238,7 @@ static int unlink_file(
   if (rip == NULL) {
   	/* Search for file in directory and try to get its inode. */
 	err_code = search_dir(dirp, file_name, &numb, LOOK_UP);
-	if (err_code == OK) rip = get_inode(dirp->i_dev, (int) numb);
+	if (err_code == OK) rip = get_inode(dirp->i_dev, numb);
 	if (err_code != OK || rip == NULL) return(err_code);
   } else {
 	dup_inode(rip);		/* inode will be returned with put_inode */

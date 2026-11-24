@@ -405,9 +405,21 @@ void update_times(
   if (sp->s_rd_only) return;	/* no updates for read-only file systems */
 
   cur_time = clock_time(NULL);
-  if (rip->i_update & ATIME) rip->i_atime = cur_time;
-  if (rip->i_update & CTIME) rip->i_ctime = cur_time;
-  if (rip->i_update & MTIME) rip->i_mtime = cur_time;
+  if (rip->i_update & ATIME) {
+      rip->i_atime = cur_time;
+      if (sp->s_version == V4)
+          rip->i_atime_nsec = 0;
+  }
+  if (rip->i_update & CTIME) {
+      rip->i_ctime = cur_time;
+      if (sp->s_version == V4)
+          rip->i_ctime_nsec = 0;
+  }
+  if (rip->i_update & MTIME) {
+      rip->i_mtime = cur_time;
+      if (sp->s_version == V4)
+          rip->i_mtime_nsec = 0;
+  }
   rip->i_update = 0;		/* they are all up-to-date now */
 }
 

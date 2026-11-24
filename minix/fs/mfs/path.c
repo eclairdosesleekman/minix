@@ -40,6 +40,8 @@ int fs_lookup(ino_t dir_nr, char *name, struct fsdriver_node *node,
 	int *is_mountpt)
 {
   struct inode *dirp, *rip;
+  dev_t rdev;
+  int r;
 
   /* Find the starting inode. */
   if ((dirp = find_inode(fs_dev, dir_nr)) == NULL)
@@ -57,7 +59,20 @@ int fs_lookup(ino_t dir_nr, char *name, struct fsdriver_node *node,
   node->fn_gid = rip->i_gid;
   /* This is only valid for block and character specials. But it doesn't
    * cause any harm to always set the device field. */
-  node->fn_dev = (dev_t) rip->i_zone[0];
+  if (rip->i_sp->s_version == V4) {
+	  if ((rip->i_mode & I_TYPE) == I_CHAR_SPECIAL ||
+	      (rip->i_mode & I_TYPE) == I_BLOCK_SPECIAL) {
+		  if ((r = mfs4_decode_rdev(rip->i_rdev, &rdev)) != OK) {
+			  put_inode(rip);
+			  return r;
+		  }
+		  node->fn_dev = rdev;
+	  } else {
+		  node->fn_dev = NO_DEV;
+	  }
+  } else {
+	  node->fn_dev = (dev_t)rip->i_zone[0];
+  }
 
   *is_mountpt = rip->i_mountpoint;
 
@@ -100,7 +115,7 @@ struct inode *advance(
   }
 
   /* The component has been found in the directory.  Get inode. */
-  if ( (rip = get_inode(dirp->i_dev, (int) numb)) == NULL)  {
+  if ( (rip = get_inode(dirp->i_dev, numb)) == NULL)  {
 	assert(err_code != OK);
 	return(NULL);
   }

@@ -313,6 +313,47 @@ mfs4_tx_find_meta(uint64_t home_block, const uint8_t **image_out)
 	return mfs4_journal_tx_find_meta(&journal_tx, home_block, image_out);
 }
 
+/*
+ * Explicit transaction aborts have not written shadow metadata to home
+ * blocks. Reload every inode touched by the transaction from its home inode
+ * table slot so a failed callback cannot leave uncommitted fields visible in
+ * the inode cache. A freshly allocated inode may decode as the all-zero free
+ * inode (mode/generation both zero); that is the expected pre-transaction
+ * state, not a disk error.
+ */
+static int
+mfs4_restore_inode_refs(void)
+{
+	unsigned int i;
+	int r, result = OK;
+
+	for (i = 0; i < journal_inode_count; i++) {
+		struct mfs4_journal_inode_ref *ref = &journal_inode_refs[i];
+		struct inode *rip = ref->inode;
+
+		if (rip == NULL || rip->i_dev != ref->dev ||
+		    rip->i_num != ref->number ||
+		    rip->i_generation != ref->generation)
+			continue;
+
+		r = mfs4_rw_inode(rip, READING);
+		if (r != OK &&
+		    !(r == EINVAL && rip->i_mode == I_NOT_ALLOC &&
+		    rip->i_generation == 0)) {
+			if (result == OK)
+				result = r;
+			continue;
+		}
+
+		/* i_update is in-core-only; pending atime may be lost on abort. */
+		rip->i_update = 0;
+		rip->i_zsearch = NO_ZONE;
+		IN_MARKCLEAN(rip);
+	}
+	journal_inode_count = 0;
+	return result;
+}
+
 int
 mfs4_tx_commit(void)
 {
@@ -322,8 +363,19 @@ mfs4_tx_commit(void)
 		return EINVAL;
 	r = mfs4_journal_tx_commit(&journal_tx);
 	if (r != OK) {
+		/*
+		 * The journal core sets s_rd_only through fail_closed only when the
+		 * commit point may have been reached. Before that point, home inode
+		 * blocks are still authoritative and the cache can be restored.
+		 */
+		if (!superblock.s_rd_only) {
+			if (mfs4_restore_inode_refs() != OK)
+				superblock.s_rd_only = 1;
+		} else {
+			journal_inode_count = 0;
+		}
 		journal_block_delta = 0;
-		journal_inode_count = 0;
+		/* A commit I/O error still fails the mounted volume closed. */
 		superblock.s_rd_only = 1;
 		return r;
 	}
@@ -359,12 +411,12 @@ mfs4_tx_commit(void)
 void
 mfs4_tx_abort(void)
 {
-	int had_images = journal_tx.active && journal_tx.count != 0;
+	int r;
 
 	mfs4_journal_tx_abort(&journal_tx);
 	journal_block_delta = 0;
-	/* Do not let partially mutated in-memory metadata reach the device. */
-	if (had_images)
+	r = mfs4_restore_inode_refs();
+	if (r != OK)
 		superblock.s_rd_only = 1;
 }
 
