@@ -154,8 +154,9 @@ mfs4_xattr_user_name(const char *name)
 	r = mfs4_xattr_name_valid(name, 1);
 	if (r != OK)
 		return r;
-	if (strncmp(name, "user.", 5) != 0)
-		return EOPNOTSUPP;
+	/* The public VFS API filters to user.*. The MFS codec also accepts
+	 * the two ACL system names for use by the Phase 7 ACL layer.
+	 */
 	return OK;
 }
 
