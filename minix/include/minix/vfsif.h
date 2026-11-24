@@ -78,6 +78,9 @@ typedef struct {
 
 #define NREQS			    38
 
+/* Internal VFS-only flag carried in the generic xattr request payload. */
+#define VFS_XATTR_NOFOLLOW	0x40000000
+
 #define IS_FS_RQ(type) (((type) & ~0xff) == FS_BASE)
 
 #define TRNS_GET_ID(t)		((t) & 0xFFFF)
