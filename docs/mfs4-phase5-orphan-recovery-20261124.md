@@ -16,7 +16,10 @@ Design basis: `MFS4_detailed_design_ja_v1.0.md`, sections 12.1, 12.3,
   flags, and the inode-number range. Head updates leave volume generation
   unchanged and recalculate CRC32C.
 - MFS4 truncate shrink commits the new size plus orphan flags first. It then
-  reclaims only mappings at/after `ceil(new_size / 4096)`.
+  reclaims only mappings at/after `ceil(new_size / 4096)`. All MFS4 shrink
+  operations currently take this orphan path, including small truncates, to
+  avoid trying to predict the exact number of journal images in advance.
+  Linked inodes keep their xattr chain and have only the truncate flags cleared.
 - MFS4 unlink/rmdir/rename-overwrite enqueue the inode in the same transaction
   that deletes the directory entry and decrements nlink to zero.
 - The orphan worker searches the mapping tree from high logical blocks to low
@@ -51,10 +54,12 @@ were not executed in this environment.
 
 ## Remaining limits
 
-- MFS4 v1 xattr-chain encoding/cleanup is not yet implemented. If an orphan
-  has a nonzero `xattr_head`, the worker returns `EOPNOTSUPP` and preserves
-  the inode/orphan record rather than freeing an inode with unhandled xattrs.
-  This needs the xattr phase's chain format and validation.
+- MFS4 v1 xattr-chain encoding/cleanup is not yet implemented. If a zero-link
+  orphan has a nonzero `xattr_head`, the worker returns `EOPNOTSUPP` and
+  preserves the inode/orphan record rather than freeing an inode with
+  unhandled xattrs. Linked-inode truncate does not discard or rewrite the
+  xattr chain. Completing zero-link cleanup requires the xattr phase's chain
+  format and validation.
 - Runtime VFS/LMFS tests and crash injection at every Phase 4 journal barrier
   remain necessary before claiming Phase 5 acceptance.
 - The orphan host tests validate the portable state helpers and reclaim policy;
