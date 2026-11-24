@@ -261,6 +261,7 @@ mfs4_xattr_commit_stream(struct inode *rip, const uint8_t *data,
 
 	/* Switch the owner only after every new image exists in the shadow set. */
 	rip->i_xattr_head = new_head;
+	rip->i_update |= CTIME;
 	IN_MARKDIRTY(rip);
 	if ((r = rw_inode(rip, WRITING)) != OK)
 		goto alloc_fail;
