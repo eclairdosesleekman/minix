@@ -261,8 +261,10 @@ mfs4_xattr_remove(uint8_t *data, size_t *length, uint32_t *count,
 	struct mfs4_xattr_entry current;
 	int r;
 
-	if (data == NULL || length == NULL || count == NULL || *count == 0)
+	if (data == NULL || length == NULL || count == NULL)
 		return EINVAL;
+	if (*count == 0)
+		return ENODATA;
 	if ((r = mfs4_xattr_name_valid(name, 1)) != 0)
 		return r;
 	name_len = strlen(name);
