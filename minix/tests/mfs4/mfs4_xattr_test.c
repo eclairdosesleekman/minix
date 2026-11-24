@@ -123,6 +123,55 @@ test_malformed_tlvs(void)
 	    &(struct mfs4_xattr_entry){0}) == EIO);
 }
 
+
+static void
+test_maximum_name_and_value_fit_one_block(void)
+{
+	uint8_t name[MFS4_XATTR_MAX_NAME + 1];
+	uint8_t value[MFS4_XATTR_MAX_VALUE];
+	uint8_t entries[MFS4_XATTR_DATA_SIZE];
+	struct mfs4_xattr_entry entry;
+	size_t length = 0;
+	uint32_t count = 0;
+	size_t i;
+
+	memcpy(name, "user.", 5);
+	for (i = 5; i < MFS4_XATTR_MAX_NAME; i++)
+		name[i] = 'n';
+	name[MFS4_XATTR_MAX_NAME] = '\\0';
+	memset(value, 0x5a, sizeof(value));
+	memset(entries, 0, sizeof(entries));
+
+	assert(mfs4_xattr_append(entries, sizeof(entries), &length, &count,
+	    (const char *)name, value, sizeof(value)) == 0);
+	assert(length == MFS4_XATTR_DATA_SIZE);
+	assert(count == 1);
+	assert(mfs4_xattr_validate_entries(entries, length, count, 1) == 0);
+	assert(mfs4_xattr_find(entries, length, (const char *)name,
+	    NULL, &entry) == 0);
+	assert(entry.name_len == MFS4_XATTR_MAX_NAME);
+	assert(entry.value_len == MFS4_XATTR_MAX_VALUE);
+	assert(memcmp(entry.value, value, sizeof(value)) == 0);
+}
+
+static void
+test_empty_value_and_invalid_capacity(void)
+{
+	uint8_t entries[32];
+	size_t length = 0;
+	uint32_t count = 0;
+
+	memset(entries, 0, sizeof(entries));
+	assert(mfs4_xattr_append(entries, sizeof(entries), &length, &count,
+	    "user.empty", NULL, 0) == 0);
+	assert(length == 24);
+	assert(count == 1);
+	assert(mfs4_xattr_validate_entries(entries, length, count, 1) == 0);
+	length = sizeof(entries) + 1;
+	assert(mfs4_xattr_append(entries, sizeof(entries), &length, &count,
+	    "user.more", "v", 1) == ENOSPC);
+}
+
 int
 main(void)
 {
@@ -130,6 +179,8 @@ main(void)
 	test_tlv_roundtrip_and_remove();
 	test_block_validation();
 	test_malformed_tlvs();
+	test_maximum_name_and_value_fit_one_block();
+	test_empty_value_and_invalid_capacity();
 	puts("mfs4_xattr_test: all tests passed");
 	return 0;
 }
