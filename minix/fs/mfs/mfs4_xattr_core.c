@@ -20,7 +20,9 @@ mfs4_xattr_name_valid(const char *name, int allow_acl)
 	if (name == NULL)
 		return EINVAL;
 	len = strlen(name);
-	if (len == 0 || len > MFS4_XATTR_MAX_NAME)
+	if (len == 0)
+		return EINVAL;
+	if (len > MFS4_XATTR_MAX_NAME)
 		return ERANGE;
 	if (strncmp(name, "user.", 5) == 0 && len > 5)
 		return 0;
@@ -215,8 +217,13 @@ mfs4_xattr_append(uint8_t *data, size_t capacity, size_t *length,
 	encoded = mfs4_xattr_align8(MFS4_XATTR_TLV_HEADER_SIZE + payload);
 	if (*length > capacity || encoded > capacity - *length)
 		return ENOSPC;
-	if (mfs4_xattr_find(data, *length, name, NULL, &found) == 0)
+	r = mfs4_xattr_find(data, *length, name, NULL, &found);
+	if (r == 0)
 		return EEXIST;
+	if (r != ENODATA)
+		return r;
+	if (*count == UINT32_MAX)
+		return E2BIG;
 
 	offset = *length;
 	memset(data + offset, 0, encoded);
