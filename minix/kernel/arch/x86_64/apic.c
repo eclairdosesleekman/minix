@@ -787,10 +787,13 @@ int lapic_enable(unsigned cpu)
 		apic_calibrate_clocks(cpu);
 	} else {
 		/*
-		 * The local APIC timer and invariant TSC use system-wide clock
-		 * rates on an SMP machine. Reuse the BSP calibration for APs
-		 * instead of running the BSP-only PIT calibration concurrently.
+		 * The local APIC timer uses the shared platform clock, and MINIX's
+		 * SMP time accounting assumes a common TSC rate across CPUs. Reuse
+		 * the BSP calibration instead of running the BSP-only PIT
+		 * calibration concurrently.
 		 */
+		assert(lapic_bus_freq[bsp_cpu_id] != 0);
+		assert(cpu_get_freq(bsp_cpu_id) != 0);
 		lapic_bus_freq[cpu] = lapic_bus_freq[bsp_cpu_id];
 		cpu_set_freq(cpu, cpu_get_freq(bsp_cpu_id));
 		cpu_info[cpu].freq = cpu_info[bsp_cpu_id].freq;
