@@ -38,7 +38,20 @@ mfs4_mutation_end(int result)
 		return result;
 	}
 	r = mfs4_tx_commit();
-	return r == OK ? result : r;
+	if (r != OK)
+		return r;
+
+	/* A successful close/unlink/truncate may make the list head reclaimable.
+	 * Reclaim only after the triggering namespace/inode transaction commits.
+	 */
+	r = mfs4_orphan_process(0);
+	if (r != OK) {
+		superblock.s_rd_only = 1;
+		printf("MFS: MFS4 orphan cleanup failed (%d); forcing read-only\n",
+		    r);
+		return r;
+	}
+	return result;
 }
 
 /*
