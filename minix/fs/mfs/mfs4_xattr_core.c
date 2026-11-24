@@ -213,7 +213,7 @@ mfs4_xattr_append(uint8_t *data, size_t capacity, size_t *length,
 		return ERANGE;
 	payload = name_len + value_len;
 	encoded = mfs4_xattr_align8(MFS4_XATTR_TLV_HEADER_SIZE + payload);
-	if (encoded > capacity - *length)
+	if (*length > capacity || encoded > capacity - *length)
 		return ENOSPC;
 	if (mfs4_xattr_find(data, *length, name, NULL, &found) == 0)
 		return EEXIST;
