@@ -246,16 +246,29 @@ static int unlink_file(
 	dup_inode(rip);		/* inode will be returned with put_inode */
   }
 
+  /* A zero link count before deleting this entry is corruption; do
+   * not mutate the directory and then wrap the unsigned counter.
+   */
+  if (rip->i_sp->s_version == V4 && rip->i_nlinks == NO_LINK) {
+	put_inode(rip);
+	return EIO;
+  }
+
   r = search_dir(dirp, file_name, NULL, DELETE);
 
   if (r == OK) {
 	rip->i_nlinks--;	/* entry deleted from parent's dir */
 	rip->i_update |= CTIME;
 	IN_MARKDIRTY(rip);
-	if (rip->i_sp->s_version == V4 &&
-	    (r = rw_inode(rip, WRITING)) != OK) {
-		put_inode(rip);
-		return r;
+	if (rip->i_sp->s_version == V4) {
+		if (rip->i_nlinks == NO_LINK)
+			r = mfs4_orphan_add(rip, 0);
+		else
+			r = rw_inode(rip, WRITING);
+		if (r != OK) {
+			put_inode(rip);
+			return r;
+		}
 	}
   }
 
@@ -494,10 +507,18 @@ int truncate_inode(
   } else if (newsize > rip->i_sp->s_max_size)
 	return EFBIG;
 
-  /* Free the actual space if truncating. */
+  /* MFS4 publishes the shorter size and orphan marker first. The
+   * worker then frees post-EOF blocks in bounded redo transactions.
+   */
   if (newsize < rip->i_size) {
-  	if ((r = freesp_inode(rip, newsize, rip->i_size)) != OK)
-  		return(r);
+	if (rip->i_sp->s_version == V4) {
+		rip->i_size = (u64_t)newsize;
+		rip->i_update |= CTIME | MTIME;
+		IN_MARKDIRTY(rip);
+		return mfs4_orphan_add(rip, 1);
+	}
+	if ((r = freesp_inode(rip, newsize, rip->i_size)) != OK)
+		return r;
   }
 
   /* Zero the old EOF block tail before a sparse extension. */

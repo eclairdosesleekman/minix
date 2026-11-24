@@ -50,6 +50,9 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	printf("MFS: WARNING: FS 0x%llx unclean, mounting readonly\n", (unsigned long long)fs_dev);
   }
 
+  /* Phase 5 recovery may write journaled metadata during RW mount. */
+  superblock.s_rd_only = readonly;
+
   if ((r = lmfs_set_blocksize_err(superblock.s_block_size)) != OK) {
 	superblock.s_dev = NO_DEV;
 	(void)bdev_close(fs_dev);
@@ -167,6 +170,13 @@ int fs_unmount(void)
  */
   int count, r, close_error, restore_error;
   struct inode *rip, *root_ip;
+
+  if (superblock.s_version == V4 && !superblock.s_rd_only) {
+	if ((r = mfs4_orphan_process(0)) != OK)
+		return r;
+	if ((r = mfs4_orphan_check_empty()) != OK)
+		return r;
+  }
 
   count = 0;
   for (rip = &inode[0]; rip < &inode[NR_INODES]; rip++)

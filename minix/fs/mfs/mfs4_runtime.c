@@ -567,6 +567,22 @@ mfs4_inode_fields_valid(struct inode *rip)
 	    rip->i_ctime_nsec >= 1000000000U ||
 	    rip->i_generation == 0)
 		return EINVAL;
+	if ((rip->i_flags & ~(I4_ORPHAN | I4_TRUNCATING)) != 0 ||
+	    ((rip->i_flags & I4_TRUNCATING) != 0 &&
+	    (rip->i_flags & I4_ORPHAN) == 0) ||
+	    ((rip->i_flags & I4_ORPHAN) == 0 &&
+	    rip->i_orphan_next != 0))
+		return EINVAL;
+	if ((rip->i_nlinks == 0 && rip->i_mode != I_NOT_ALLOC &&
+	    (rip->i_flags & I4_ORPHAN) == 0) ||
+	    (rip->i_mode == I_NOT_ALLOC &&
+	    (rip->i_flags != 0 || rip->i_orphan_next != 0)) ||
+	    (rip->i_nlinks != 0 && (rip->i_flags & I4_ORPHAN) != 0 &&
+	    (rip->i_flags & I4_TRUNCATING) == 0))
+		return EIO;
+	if (rip->i_orphan_next > superblock.s_mfs4_total_inodes ||
+	    rip->i_orphan_next == 1)
+		return EIO;
 	for (i = 0; i < V2_NR_TZONES; i++) {
 		ptr = rip->i_zone[i];
 		if (ptr != 0 && (ptr < superblock.s_mfs4_data_start ||

@@ -40,6 +40,12 @@ int mfs4_read_map_checked(struct inode *rip, off_t position,
 block_t mfs4_read_map(struct inode *rip, off_t position);
 int mfs4_write_map(struct inode *rip, off_t position, zone_t new_block, int op);
 int mfs4_free_map_range(struct inode *rip, u64_t first_block, u64_t end_block);
+int mfs4_find_last_allocated_block(struct inode *rip, u64_t first_block,
+	u64_t end_block, int *found_out, u64_t *last_block_out);
+int mfs4_orphan_add(struct inode *rip, int truncating);
+int mfs4_orphan_process(int mount_recovery);
+int mfs4_orphan_recover(void);
+int mfs4_orphan_check_empty(void);
 int mfs4_zero_eof_tail(struct inode *rip, u64_t old_eof, u64_t new_eof);
 int mfs4_journal_mount(struct super_block *sp, int readonly);
 int mfs4_journal_sync(void);

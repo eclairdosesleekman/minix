@@ -29,6 +29,10 @@
 #define MFS4_MAX_INODES			UINT32_MAX
 #define MFS4_MAX_NLINK			UINT32_MAX
 
+/* MFS4 on-disk inode flags (field MFS4_I_FLAGS). */
+#define I4_ORPHAN			(1U << 0)
+#define I4_TRUNCATING			(1U << 1)
+
 #define MFS4_JOURNAL_START		2U
 #define MFS4_JOURNAL_BLOCKS		66U
 #define MFS4_JOURNAL_HEADER_BLOCK	2U
