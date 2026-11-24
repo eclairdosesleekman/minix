@@ -43,3 +43,36 @@ truncate preserves its xattr chain and clears the truncate orphan state.
 For a zero-link orphan with nonzero `xattr_head`, the worker returns
 `EOPNOTSUPP` and preserves the inode/orphan record rather than freeing an
 inode with unhandled xattrs.
+
+
+## Phase 6 xattr format and API
+
+MFS4 XAT4 xattr blocks are stored in the regular data area, allocated through
+zmap, and written only through redo-journal shadow images. The 32-byte XAT4
+header and 8-byte aligned TLV stream are defined in
+`minix/include/minix/mfs4_disk.h`. The portable parser validates block CRC,
+owner inode and generation, flags/reserved fields, TLV boundaries, namespace
+names, duplicate names, and the 16-block chain limit.
+
+MFS4 get/set/list/remove callbacks are connected through the FS request
+numbers and `struct fsdriver` callbacks to VFS. The libc layer implements the
+path, no-follow path, and descriptor variants declared by `<sys/xattr.h>`.
+The public API in this phase exposes only `user.*`; the two
+`system.posix_acl_*` names are accepted by the MFS storage codec for the
+Phase 7 ACL layer but are not exposed by the public Phase 6 VFS API.
+`trusted.*` and `security.*` remain unsupported.
+
+A metadata update creates the replacement XAT4 chain in shadow images, switches
+the inode `xattr_head`, and frees the previous chain in one transaction.
+With at most 16 chain blocks, at most 16 new and 16 old zmap images, plus the
+inode image, the operation is bounded at 49 unique images (below the journal's
+64-image limit). Final orphan reclamation also frees a zero-link inode's
+validated xattr chain inside the final orphan transaction.
+
+The `mfs4_xattr_test` host suite covers TLV append/find/remove, empty values,
+the maximum name/value that exactly fills a block, namespace restrictions,
+duplicate rejection, malformed TLVs, CRC corruption, and owner/generation
+mismatch. It tests the portable codec only. It does not exercise the VFS
+syscalls, grant-based FS protocol, LMFS, MFS inode cache, journaled block
+allocation on a mounted volume, or power-loss recovery. These require the
+MFS server build and end-to-end/QEMU testing before Phase 6 acceptance.
