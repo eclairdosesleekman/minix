@@ -102,7 +102,9 @@ do_xattr(void)
 		dup_vnode(vp);
 		unlock_filp(flp);
 	} else {
-		if (fd != -1 || path_len == 0 || path_len > sizeof(fullpath))
+		if (fd != -1)
+			return EBADF;
+		if (path_len == 0 || path_len > sizeof(fullpath))
 			return EINVAL;
 		if (fetch_name(path_addr, path_len, fullpath) != OK)
 			return err_code;
@@ -120,7 +122,9 @@ do_xattr(void)
 	 * permission and ownership (or superuser credentials).
 	 */
 	if (write_access) {
-		r = forbidden(fp, vp, W_BIT);
+		r = read_only(vp);
+		if (r == OK)
+			r = forbidden(fp, vp, W_BIT);
 		if (r == OK && fp->fp_effuid != SU_UID &&
 		    fp->fp_effuid != vp->v_uid)
 			r = EPERM;
