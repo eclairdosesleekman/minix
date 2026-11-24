@@ -18,6 +18,7 @@
 #include "super.h"
 #include "mfs4_journal.h"
 #include "mfs4_orphan_core.h"
+#include "mfs4_xattr.h"
 
 #define MFS4_ORPHAN_CHUNK_BLOCKS 32U
 
@@ -240,15 +241,6 @@ mfs4_orphan_process(int mount_recovery)
 			continue;
 		}
 
-		/* A linked inode keeps its xattr chain when truncate cleanup
-		 * completes. Only an unlinked inode needs the chain reclaimed.
-		 * MFS4 v1's xattr-chain codec is not implemented yet, so retain
-		 * an unlinked orphan rather than dropping unhandled xattrs.
-		 */
-		if (rip->i_nlinks == 0 && rip->i_xattr_head != 0) {
-			put_inode(rip);
-			return EOPNOTSUPP;
-		}
 
 		if ((r = mfs4_tx_begin()) != OK) {
 			put_inode(rip);
@@ -271,6 +263,14 @@ mfs4_orphan_process(int mount_recovery)
 		rip->i_flags &= (uint16_t)~(I4_ORPHAN | I4_TRUNCATING);
 		rip->i_orphan_next = 0;
 		if (rip->i_nlinks == 0) {
+			/* Release the validated xattr chain within the final orphan
+			 * transaction, before clearing and freeing the inode.
+			 */
+			if ((r = mfs4_xattr_free_chain(rip)) != OK) {
+				mfs4_tx_abort();
+				put_inode(rip);
+				return r;
+			}
 			uint32_t generation = rip->i_generation;
 			unsigned int i;
 
