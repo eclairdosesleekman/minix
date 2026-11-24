@@ -155,12 +155,12 @@ mfs4_orphan_process(int mount_recovery)
 			put_inode(rip);
 			return EIO;
 		}
-		if (rip->i_nlinks == 0) {
-			first_block = 0;
-		} else if (flags & I4_TRUNCATING) {
+		if (flags & I4_TRUNCATING) {
 			first_block = rip->i_size / MFS4_BLOCK_SIZE;
 			if (rip->i_size % MFS4_BLOCK_SIZE != 0)
 				first_block++;
+		} else if (rip->i_nlinks == 0) {
+			first_block = 0;
 		} else {
 			put_inode(rip);
 			return EIO;
@@ -190,6 +190,36 @@ mfs4_orphan_process(int mount_recovery)
 			put_inode(rip);
 			if (r != OK)
 				return r;
+			continue;
+		}
+
+		/* An unlinked-but-open file may be truncated while its fd is
+		 * still live. First finish the post-EOF cleanup, then clear only
+		 * TRUNCATING and keep the zero-link inode on the orphan list until
+		 * its final close. On recovery or after the last close, continue
+		 * with whole-inode reclamation from block zero.
+		 */
+		if (rip->i_nlinks == 0 && (flags & I4_TRUNCATING)) {
+			int still_open = !mount_recovery && rip->i_count > 1;
+
+			if ((r = mfs4_tx_begin()) != OK) {
+				put_inode(rip);
+				return r;
+			}
+			rip->i_flags &= (uint16_t)~I4_TRUNCATING;
+			IN_MARKDIRTY(rip);
+			if ((r = rw_inode(rip, WRITING)) != OK) {
+				mfs4_tx_abort();
+				put_inode(rip);
+				return r;
+			}
+			if ((r = mfs4_tx_commit()) != OK) {
+				put_inode(rip);
+				return r;
+			}
+			put_inode(rip);
+			if (still_open)
+				return OK;
 			continue;
 		}
 
