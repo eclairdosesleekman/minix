@@ -56,6 +56,8 @@ do_xattr(void)
 	size = (size_t)job_m_in.m9_l4;
 	if (size > XATTR_SIZE_MAX)
 		return ERANGE;
+	if (size != 0 && value_addr == 0)
+		return EFAULT;
 
 	write_access = (job_call_nr == VFS_SETXATTR ||
 	    job_call_nr == VFS_REMOVEXATTR);
