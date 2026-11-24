@@ -151,7 +151,7 @@ mfs4_xattr_user_name(const char *name)
 {
 	int r;
 
-	r = mfs4_xattr_name_valid(name, 0);
+	r = mfs4_xattr_name_valid(name, 1);
 	if (r != OK)
 		return r;
 	if (strncmp(name, "user.", 5) != 0)
@@ -277,7 +277,6 @@ mfs4_xattr_commit_stream(struct inode *rip, const uint8_t *data,
 alloc_fail:
 	rip->i_xattr_head = old_chain->block_count != 0 ?
 	    (uint32_t)old_chain->blocks[0] : 0;
-	mfs4_tx_abort();
 	return r;
 }
 
@@ -381,10 +380,13 @@ mfs4_setxattr(struct inode *rip, const char *name,
 	own = 1;
 	r = mfs4_xattr_commit_stream(rip, new_data, new_len, new_count,
 	    &old_chain);
-	/* mfs4_xattr_commit_stream aborts on an error after tx has begun. */
-	own = 0;
-	if (r == OK)
+	if (r == OK) {
+		own = 0;
 		r = mfs4_tx_commit();
+	} else {
+		mfs4_tx_abort();
+		own = 0;
+	}
 	goto chain_out;
 
 chain_out:
@@ -488,6 +490,8 @@ mfs4_removexattr(struct inode *rip, const char *name)
 	    &old_chain);
 	if (r == OK)
 		r = mfs4_tx_commit();
+	else
+		mfs4_tx_abort();
 
 out:
 	free(new_data);
