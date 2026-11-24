@@ -301,6 +301,8 @@ mfs4_orphan_process(int mount_recovery)
 		}
 		if (rip->i_nlinks == 0) {
 			mfs4_free_bit(&superblock, IMAP, (bit_t)rip->i_num);
+			if ((bit_t)rip->i_num < superblock.s_isearch)
+				superblock.s_isearch = (bit_t)rip->i_num;
 			if (superblock.s_rd_only) {
 				mfs4_tx_abort();
 				put_inode(rip);
