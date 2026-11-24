@@ -78,7 +78,8 @@ int fs_stat(ino_t ino_nr, struct stat *statbuf)
 {
   struct inode *rip;
   mode_t mo;
-  int s;
+  dev_t rdev;
+  int s, r;
 
   if ((rip = get_inode(fs_dev, ino_nr)) == NULL)
 	return(EINVAL);
@@ -96,13 +97,24 @@ int fs_stat(ino_t ino_nr, struct stat *statbuf)
   statbuf->st_nlink = (nlink_t) rip->i_nlinks;
   statbuf->st_uid = rip->i_uid;
   statbuf->st_gid = rip->i_gid;
-  statbuf->st_rdev = s ?
-      (rip->i_sp->s_version == V4 ? (dev_t)rip->i_rdev :
-      (dev_t)rip->i_zone[0]) : NO_DEV;
+  if (s && rip->i_sp->s_version == V4) {
+      if ((r = mfs4_decode_rdev(rip->i_rdev, &rdev)) != OK) {
+          put_inode(rip);
+          return r;
+      }
+      statbuf->st_rdev = rdev;
+  } else {
+      statbuf->st_rdev = s ? (dev_t)rip->i_zone[0] : NO_DEV;
+  }
   statbuf->st_size = rip->i_size;
   statbuf->st_atime = rip->i_atime;
   statbuf->st_mtime = rip->i_mtime;
   statbuf->st_ctime = rip->i_ctime;
+#ifdef st_atimensec
+  statbuf->st_atimensec = rip->i_atime_nsec;
+  statbuf->st_mtimensec = rip->i_mtime_nsec;
+  statbuf->st_ctimensec = rip->i_ctime_nsec;
+#endif
   statbuf->st_blksize = lmfs_fs_block_size();
   statbuf->st_blocks = estimate_blocks(rip);
 
