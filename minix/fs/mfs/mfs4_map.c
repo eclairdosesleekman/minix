@@ -393,34 +393,42 @@ mfs4_read_pointer_image(uint32_t block, uint8_t image[MFS4_BLOCK_SIZE])
  */
 static int
 mfs4_find_last_tree(uint32_t root, unsigned int depth, uint64_t logical_base,
-    uint64_t first_block, uint64_t max_blocks, int *found_out,
+    uint64_t first_block, uint64_t end_block, int *found_out,
     uint64_t *last_out)
 {
 	uint8_t image[MFS4_BLOCK_SIZE];
-	uint64_t child_span, child_base;
-	uint32_t index, pointer;
+	uint64_t child_span, subtree_end, child_base;
+	uint32_t first_slot, last_slot, index, pointer;
 	int r;
 
 	if (depth == 0 || depth > 3 || found_out == NULL || last_out == NULL)
 		return EINVAL;
-	if (root == 0)
+	if (root == 0 || first_block >= end_block)
 		return OK;
 	if (!mfs4_pointer_valid(&superblock, root))
 		return EIO;
-	if ((r = mfs4_read_pointer_image(root, image)) != OK)
-		return r;
 
 	child_span = 1;
 	for (index = 1; index < depth; index++)
 		child_span *= MFS4_MAP_POINTERS;
+	subtree_end = logical_base +
+	    child_span * MFS4_MAP_POINTERS;
+	if (end_block <= logical_base || first_block >= subtree_end)
+		return OK;
+	if ((r = mfs4_read_pointer_image(root, image)) != OK)
+		return r;
 
-	for (index = MFS4_MAP_POINTERS; index > 0; index--) {
+	first_slot = first_block > logical_base ?
+	    (uint32_t)((first_block - logical_base) / child_span) : 0;
+	last_slot = (uint32_t)((end_block - 1 - logical_base) /
+	    child_span);
+	if (last_slot >= MFS4_MAP_POINTERS)
+		last_slot = MFS4_MAP_POINTERS - 1;
+
+	for (index = last_slot + 1; index > first_slot; index--) {
 		uint32_t slot = index - 1;
 
 		child_base = logical_base + (uint64_t)slot * child_span;
-		if (child_base >= max_blocks ||
-		    child_base + child_span <= first_block)
-			continue;
 		pointer = mfs4_get_le32(image + slot * sizeof(uint32_t));
 		if (pointer == 0)
 			continue;
@@ -432,7 +440,7 @@ mfs4_find_last_tree(uint32_t root, unsigned int depth, uint64_t logical_base,
 			return OK;
 		}
 		r = mfs4_find_last_tree(pointer, depth - 1, child_base,
-		    first_block, max_blocks, found_out, last_out);
+		    first_block, end_block, found_out, last_out);
 		if (r != OK || *found_out)
 			return r;
 	}
@@ -441,7 +449,7 @@ mfs4_find_last_tree(uint32_t root, unsigned int depth, uint64_t logical_base,
 
 int
 mfs4_find_last_allocated_block(struct inode *rip, u64_t first_block,
-    int *found_out, u64_t *last_block_out)
+    u64_t end_block, int *found_out, u64_t *last_block_out)
 {
 	static const uint64_t single_base = MFS4_MAP_DIRECT_COUNT;
 	static const uint64_t double_base = MFS4_MAP_DIRECT_COUNT +
@@ -454,35 +462,37 @@ mfs4_find_last_allocated_block(struct inode *rip, u64_t first_block,
 	int i;
 
 	if (rip == NULL || rip->i_sp == NULL || found_out == NULL ||
-	    last_block_out == NULL)
+	    last_block_out == NULL || end_block < first_block)
 		return EINVAL;
 	max_blocks = rip->i_sp->s_mfs4_max_file_size / MFS4_BLOCK_SIZE;
-	if (first_block > max_blocks)
+	if (end_block > max_blocks)
 		return EFBIG;
 	*found_out = 0;
 	*last_block_out = 0;
+	if (first_block == end_block)
+		return OK;
 
 	/* Search larger logical ranges before the direct roots. */
-	if (first_block < max_blocks && rip->i_zone[9] != 0) {
+	if (rip->i_zone[9] != 0) {
 		r = mfs4_find_last_tree(rip->i_zone[9], 3, triple_base,
-		    first_block, max_blocks, found_out, last_block_out);
+		    first_block, end_block, found_out, last_block_out);
 		if (r != OK || *found_out)
 			return r;
 	}
-	if (first_block < max_blocks && rip->i_zone[8] != 0) {
+	if (rip->i_zone[8] != 0) {
 		r = mfs4_find_last_tree(rip->i_zone[8], 2, double_base,
-		    first_block, max_blocks, found_out, last_block_out);
+		    first_block, end_block, found_out, last_block_out);
 		if (r != OK || *found_out)
 			return r;
 	}
-	if (first_block < max_blocks && rip->i_zone[7] != 0) {
+	if (rip->i_zone[7] != 0) {
 		r = mfs4_find_last_tree(rip->i_zone[7], 1, single_base,
-		    first_block, max_blocks, found_out, last_block_out);
+		    first_block, end_block, found_out, last_block_out);
 		if (r != OK || *found_out)
 			return r;
 	}
 	for (i = MFS4_MAP_DIRECT_COUNT - 1; i >= 0; i--) {
-		if ((uint64_t)i < first_block || (uint64_t)i >= max_blocks ||
+		if ((uint64_t)i < first_block || (uint64_t)i >= end_block ||
 		    rip->i_zone[i] == 0)
 			continue;
 		if (!mfs4_pointer_valid(rip->i_sp, rip->i_zone[i]))
