@@ -43,6 +43,43 @@ mfs4_div_round_up(uint64_t n, uint64_t d)
 	return n / d + ((n % d) != 0);
 }
 
+/*
+ * MFS4 stores rdev as explicit 32-bit major/minor values. MINIX dev_t uses a
+ * platform-specific bit layout, so disk values must be translated explicitly.
+ */
+int
+mfs4_encode_rdev(dev_t native_dev, u64_t *disk_rdev)
+{
+	uint32_t dev_major, dev_minor;
+
+	if (disk_rdev == NULL || (uint64_t)native_dev > UINT32_MAX)
+		return EOVERFLOW;
+	dev_major = (uint32_t)major(native_dev);
+	dev_minor = (uint32_t)minor(native_dev);
+	if (makedev(dev_major, dev_minor) != native_dev)
+		return EOVERFLOW;
+	*disk_rdev = ((uint64_t)dev_major << 32) | dev_minor;
+	return OK;
+}
+
+int
+mfs4_decode_rdev(u64_t disk_rdev, dev_t *native_dev)
+{
+	uint32_t dev_major, dev_minor;
+	dev_t decoded;
+
+	if (native_dev == NULL)
+		return EINVAL;
+	dev_major = (uint32_t)(disk_rdev >> 32);
+	dev_minor = (uint32_t)disk_rdev;
+	decoded = makedev(dev_major, dev_minor);
+	if ((uint32_t)major(decoded) != dev_major ||
+	    (uint32_t)minor(decoded) != dev_minor)
+		return EIO;
+	*native_dev = decoded;
+	return OK;
+}
+
 static int
 mfs4_decode_super(const uint8_t raw[MFS4_SUPER_SIZE],
     uint64_t partition_blocks, struct mfs4_geometry *g)
@@ -522,6 +559,7 @@ mfs4_inode_fields_valid(struct inode *rip)
 {
 	unsigned int i;
 	uint64_t ptr;
+	dev_t decoded_rdev;
 
 	if (rip->i_size > superblock.s_mfs4_max_file_size ||
 	    rip->i_atime_nsec >= 1000000000U ||
@@ -539,6 +577,11 @@ mfs4_inode_fields_valid(struct inode *rip)
 	    (rip->i_xattr_head < superblock.s_mfs4_data_start ||
 	    rip->i_xattr_head >= superblock.s_mfs4_backup_block))
 		return EIO;
+	if ((rip->i_mode & I_TYPE) == I_CHAR_SPECIAL ||
+	    (rip->i_mode & I_TYPE) == I_BLOCK_SPECIAL) {
+		if (mfs4_decode_rdev(rip->i_rdev, &decoded_rdev) != OK)
+			return EIO;
+	}
 	return OK;
 }
 
