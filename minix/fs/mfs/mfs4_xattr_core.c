@@ -175,6 +175,8 @@ mfs4_xattr_find(const uint8_t *data, size_t length, const char *name,
 	size_t name_len;
 	int r;
 
+	if ((length != 0 && data == NULL) || name == NULL)
+		return EINVAL;
 	if ((r = mfs4_xattr_name_valid(name, 1)) != 0)
 		return r;
 	name_len = strlen(name);
