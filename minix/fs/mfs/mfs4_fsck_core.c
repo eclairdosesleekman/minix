@@ -696,7 +696,7 @@ mfs4_fsck_directories(struct mfs4_fsck_ctx *ctx)
 	uint8_t *entry;
 	size_t name_len;
 	unsigned int dot, dotdot, i;
-	int r;
+	int detached, r;
 
 	for (ino = 1; ino <= ctx->sb.total_inodes; ino++) {
 		if (!mfs4_fsck_bit(ctx->imap, ino))
@@ -708,6 +708,12 @@ mfs4_fsck_directories(struct mfs4_fsck_ctx *ctx)
 		if (ip.size == 0 || ip.size % MFS4_DIRENT_SIZE != 0)
 			return EIO;
 		blocks = (ip.size + MFS4_BLOCK_SIZE - 1) / MFS4_BLOCK_SIZE;
+		/*
+		 * rmdir may leave an open, zero-link directory on the orphan list
+		 * until its final reference is dropped. Its "." and ".." entries
+		 * remain for validation, but no longer contribute to link counts.
+		 */
+		detached = (ip.flags & I4_ORPHAN) != 0 && ip.nlink == 0;
 		dot = dotdot = 0;
 		for (logical = 0; logical < blocks; logical++) {
 			if ((r = mfs4_fsck_map_block(ctx, &ip, logical,
@@ -751,10 +757,16 @@ mfs4_fsck_directories(struct mfs4_fsck_ctx *ctx)
 						return EIO;
 					if (ino == 1 && target != 1)
 						return EIO;
+				} else if (detached) {
+					/* rmdir cannot leave children in a detached directory. */
+					return EIO;
 				}
-				if (ctx->link_refs[target] == UINT32_MAX)
-					return EOVERFLOW;
-				ctx->link_refs[target]++;
+				/* Detached orphan directories are no longer namespace links. */
+				if (!detached) {
+					if (ctx->link_refs[target] == UINT32_MAX)
+						return EOVERFLOW;
+					ctx->link_refs[target]++;
+				}
 			}
 		}
 		if (dot != 1 || dotdot != 1)
