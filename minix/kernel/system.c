@@ -654,6 +654,7 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 #ifdef CONFIG_SMP
 	int stopped_remote = 0;
 	int remote_fpu_saved = 0;
+	int r;
 #endif
 
 	/* Make sure the values given are within the allowed range.*/
@@ -678,7 +679,9 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 		if (p->p_cpu != cpuid) {
 			if (cpu != -1 && cpu != p->p_cpu) {
 				/* Migration also saves any FPU state owned by the old CPU. */
-				smp_schedule_migrate_proc(p, cpu);
+				r = smp_schedule_migrate_proc(p, cpu);
+				if (r != OK)
+					return r;
 				stopped_remote = 1;
 				/* The migration helper already saved the remote FPU state. */
 				remote_fpu_saved = 1;
@@ -689,7 +692,9 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 				 * flags; otherwise it can continue running while this
 				 * CPU removes and re-enqueues it.
 				 */
-				smp_schedule_stop_proc(p);
+				r = smp_schedule_stop_proc(p);
+				if (r != OK)
+					return r;
 				stopped_remote = 1;
 			}
 		}
@@ -718,7 +723,9 @@ int sched_proc(struct proc *p, int priority, int quantum, int cpu, int niced)
 		} else {
 			int was_stopped = RTS_ISSET(p, RTS_PROC_STOP);
 
-			smp_schedule_migrate_proc(p, cpu);
+			r = smp_schedule_migrate_proc(p, cpu);
+			if (r != OK)
+				return r;
 			stopped_remote = !was_stopped;
 		}
 	}

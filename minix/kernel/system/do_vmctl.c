@@ -17,6 +17,9 @@
 int do_vmctl(struct proc * caller, message * m_ptr)
 {
   int proc_nr;
+#ifdef CONFIG_SMP
+  int r;
+#endif
   endpoint_t ep = m_ptr->SVMCTL_WHO;
   struct proc *p, *rp, **rpp, *target;
 
@@ -125,11 +128,12 @@ int do_vmctl(struct proc * caller, message * m_ptr)
 	case VMCTL_VMINHIBIT_SET:
 		/* check if we must stop a process on a different CPU */
 #ifdef CONFIG_SMP
-		if (p->p_cpu != cpuid) {
-			smp_schedule_vminhibit(p);
-		} else
+		r = smp_schedule_vminhibit(p);
+		if (r != OK)
+			return r;
+#else
+		RTS_SET(p, RTS_VMINHIBIT);
 #endif
-			RTS_SET(p, RTS_VMINHIBIT);
 #ifdef CONFIG_SMP
 		p->p_misc_flags |= MF_FLUSH_TLB;
 #endif
