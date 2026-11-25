@@ -8,7 +8,6 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -752,16 +751,10 @@ mfs4_fsck_directories(struct mfs4_fsck_ctx *ctx)
 						return EIO;
 					if (ino == 1 && target != 1)
 						return EIO;
-					if (ino == 1)
-						ctx->link_refs[1]++;
 				}
-				if (!(name_len == 2 &&
-				    entry[MFS4_DIRENT_NAME] == '.' &&
-				    entry[MFS4_DIRENT_NAME + 1] == '.')) {
-					if (ctx->link_refs[target] == UINT32_MAX)
-						return EOVERFLOW;
-					ctx->link_refs[target]++;
-				}
+				if (ctx->link_refs[target] == UINT32_MAX)
+					return EOVERFLOW;
+				ctx->link_refs[target]++;
 			}
 		}
 		if (dot != 1 || dotdot != 1)
@@ -941,10 +934,8 @@ mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
 	ctx.io = io;
 	ctx.report = report;
 
-	if ((r = mfs4_fsck_load_super(&ctx, device_blocks)) != 0) {
-		fprintf(stderr, "fsck stage super: %d\\n", r);
+	if ((r = mfs4_fsck_load_super(&ctx, device_blocks)) != 0)
 		goto out;
-	}
 	report->total_blocks = ctx.sb.total_blocks;
 	report->total_inodes = ctx.sb.total_inodes;
 	report->data_blocks = ctx.sb.backup_block - ctx.sb.data_start;
@@ -975,7 +966,6 @@ mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
 	pending = mfs4_journal_validate(&ctx.journal_io);
 	if (pending < 0) {
 		r = -pending;
-		fprintf(stderr, "fsck stage journal: %d\\n", r);
 		goto out;
 	}
 	report->journal_pending = pending;
@@ -991,13 +981,20 @@ mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
 		report->journal_pending = 0;
 	}
 
-	if ((r = mfs4_fsck_alloc_maps(&ctx)) != 0) { fprintf(stderr, "fsck stage maps: %d\\n", r); goto out; }
-	if ((r = mfs4_fsck_check_bitmap_tails(&ctx)) != 0) { fprintf(stderr, "fsck stage bitmap: %d\\n", r); goto out; }
-	if ((r = mfs4_fsck_scan_inodes(&ctx)) != 0) { fprintf(stderr, "fsck stage inodes: %d\\n", r); goto out; }
-	if ((r = mfs4_fsck_orphans(&ctx)) != 0) { fprintf(stderr, "fsck stage orphans: %d\\n", r); goto out; }
-	if ((r = mfs4_fsck_directories(&ctx)) != 0) { fprintf(stderr, "fsck stage directories: %d\\n", r); goto out; }
-	if ((r = mfs4_fsck_check_link_counts(&ctx)) != 0) { fprintf(stderr, "fsck stage links: %d\\n", r); goto out; }
-	if ((r = mfs4_fsck_check_zmap(&ctx)) != 0) { fprintf(stderr, "fsck stage zmap: %d\\n", r); goto out; }
+	if ((r = mfs4_fsck_alloc_maps(&ctx)) != 0)
+		goto out;
+	if ((r = mfs4_fsck_check_bitmap_tails(&ctx)) != 0)
+		goto out;
+	if ((r = mfs4_fsck_scan_inodes(&ctx)) != 0)
+		goto out;
+	if ((r = mfs4_fsck_orphans(&ctx)) != 0)
+		goto out;
+	if ((r = mfs4_fsck_directories(&ctx)) != 0)
+		goto out;
+	if ((r = mfs4_fsck_check_link_counts(&ctx)) != 0)
+		goto out;
+	if ((r = mfs4_fsck_check_zmap(&ctx)) != 0)
+		goto out;
 
 	/* A single valid superblock copy is sufficient; never rewrite its peer. */
 	r = 0;

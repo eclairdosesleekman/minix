@@ -165,9 +165,6 @@ test_clean_volume_is_read_only_verified(void)
 	io.flush = test_flush;
 
 	r = mfs4_fsck_run(&io, TEST_BLOCKS, 0, &report);
-	if (r != 0)
-		fprintf(stderr, "clean volume fsck returned %d (%s)\n",
-		    r, strerror(r));
 	assert(r == 0);
 	assert(report.total_blocks == TEST_BLOCKS);
 	assert(report.total_inodes == TEST_INODES);
@@ -178,6 +175,57 @@ test_clean_volume_is_read_only_verified(void)
 	assert(report.journal_replayed == 0);
 	assert(report.clean == 1);
 	assert(report.superblock_degraded == 0);
+	assert(device.writes == 0);
+}
+
+static void
+test_nested_directory_link_counts(void)
+{
+	struct test_device device;
+	struct mfs4_fsck_io io;
+	struct mfs4_fsck_report report;
+	uint8_t child_inode[MFS4_INODE_SIZE];
+	uint8_t *root, *child;
+	int r;
+
+	make_volume(&device);
+	root = device.blocks[73];
+	child = device.blocks[74];
+
+	/* Root nlink is 2 + one child directory. */
+	mfs4_put_le32(device.blocks[70] + MFS4_INODE_SIZE + MFS4_I_NLINK, 3);
+	mfs4_put_le64(device.blocks[70] + MFS4_INODE_SIZE + MFS4_I_SIZE,
+	    3 * MFS4_DIRENT_SIZE);
+	mfs4_put_le32(root + 2 * MFS4_DIRENT_SIZE + MFS4_DIRENT_INODE, 2);
+	memcpy(root + 2 * MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME, "child", 5);
+
+	memset(child_inode, 0, sizeof(child_inode));
+	mfs4_put_le16(child_inode + MFS4_I_MODE, 0040755);
+	mfs4_put_le32(child_inode + MFS4_I_NLINK, 2);
+	mfs4_put_le64(child_inode + MFS4_I_SIZE, 2 * MFS4_DIRENT_SIZE);
+	mfs4_put_le32(child_inode + MFS4_I_GENERATION, 1);
+	mfs4_put_le32(child_inode + MFS4_I_DIRECT, 74);
+	memcpy(device.blocks[70] + 2 * MFS4_INODE_SIZE,
+	    child_inode, sizeof(child_inode));
+	set_bit(device.blocks[68], 2);
+	set_bit(device.blocks[69], 1);
+
+	memset(child, 0, MFS4_BLOCK_SIZE);
+	mfs4_put_le32(child + MFS4_DIRENT_INODE, 2);
+	memcpy(child + MFS4_DIRENT_NAME, ".", 1);
+	mfs4_put_le32(child + MFS4_DIRENT_SIZE + MFS4_DIRENT_INODE, 1);
+	memcpy(child + MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME, "..", 2);
+
+	memset(&io, 0, sizeof(io));
+	io.cookie = &device;
+	io.read_block = test_read;
+	io.write_block = test_write;
+	io.flush = test_flush;
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, 0, &report);
+	assert(r == 0);
+	assert(report.used_inodes == 2);
+	assert(report.used_data_blocks == 2);
 	assert(device.writes == 0);
 }
 
@@ -229,6 +277,7 @@ int
 main(void)
 {
 	test_clean_volume_is_read_only_verified();
+	test_nested_directory_link_counts();
 	test_directory_corruption_is_not_repaired();
 	test_bad_state_crc_is_rejected_without_writes();
 	puts("mfs4_fsck_test: all tests passed");
