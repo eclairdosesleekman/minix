@@ -49,6 +49,31 @@ int smp_sched_ipi_pending(void)
 #define SCHED_IPI_VM_INHIBIT	2
 #define SCHED_IPI_SAVE_CTX	4
 
+/*
+ * Apply a scheduling request on the CPU that currently owns the process.
+ * The caller must hold the BKL.  Keeping this operation in one helper makes
+ * the local fallback used by smp_schedule_sync() identical to IPI handling.
+ */
+static void smp_schedule_apply(struct proc *p, unsigned flags)
+{
+	if (flags & SCHED_IPI_STOP_PROC)
+		RTS_SET(p, RTS_PROC_STOP);
+
+	if (flags & SCHED_IPI_SAVE_CTX) {
+		/* all context has been saved already, FPU remains */
+		if (proc_used_fpu(p) &&
+		    get_cpulocal_var(fpu_owner) == p) {
+			disable_fpu_exception();
+			save_local_fpu(p, FALSE /*retain*/);
+			/* we're preparing to migrate somewhere else */
+			release_fpu(p);
+		}
+	}
+
+	if (flags & SCHED_IPI_VM_INHIBIT)
+		RTS_SET(p, RTS_VMINHIBIT);
+}
+
 SPINLOCK_DEFINE(big_kernel_lock)
 SPINLOCK_DEFINE(boot_lock)
 
@@ -207,17 +232,54 @@ void smp_sched_handler(void);
  */
 static void smp_schedule_sync(struct proc * p, unsigned task)
 {
-	unsigned cpu = p->p_cpu;
 	unsigned mycpu = cpuid;
 
-	assert(cpu != mycpu);
 	/*
-	 * Several CPUs may wait for the same target while the BKL is dropped.
-	 * Recheck the slot after reacquiring the BKL: another waiter may have
-	 * reserved it and sent a new request in the meantime.  A single if here
-	 * lets a later waiter overwrite that request's process pointer.
+	 * A scheduling request is directed at the CPU currently owning p.
+	 * Waiting for a busy per-CPU IPI slot drops the BKL, however, and another
+	 * CPU may migrate p during that wait.  Re-read p_cpu after every BKL
+	 * reacquisition; never send a stale request to the former owner.
 	 */
-	while (sched_ipi_data[cpu].flags != 0) {
+	for (;;) {
+		unsigned cpu = p->p_cpu;
+
+		/* The process may have migrated onto our CPU while we waited. */
+		if (cpu == mycpu) {
+			smp_schedule_apply(p, task);
+			return;
+		}
+
+		assert(cpu < ncpus);
+
+		/*
+		 * Several CPUs may wait for the same target while the BKL is
+		 * dropped.  Recheck the slot after reacquiring the BKL: another
+		 * waiter may have reserved it and sent a new request in the
+		 * meantime.  Also restart the outer loop if p moved while we
+		 * waited, since its new CPU has a different IPI slot.
+		 */
+		while (sched_ipi_data[cpu].flags != 0) {
+			BKL_UNLOCK();
+			while (sched_ipi_data[cpu].flags != 0) {
+				if (sched_ipi_data[mycpu].flags) {
+					BKL_LOCK();
+					smp_sched_handler();
+					BKL_UNLOCK();
+				}
+			}
+			BKL_LOCK();
+		}
+
+		/* p_cpu is stable while we hold the BKL. */
+		if (p->p_cpu != cpu)
+			continue;
+
+		sched_ipi_data[cpu].data = (vir_bytes) p;
+		sched_ipi_data[cpu].flags = task;
+		__insn_barrier();
+		arch_send_smp_schedule_ipi(cpu);
+
+		/* wait until the destination cpu finishes its job */
 		BKL_UNLOCK();
 		while (sched_ipi_data[cpu].flags != 0) {
 			if (sched_ipi_data[mycpu].flags) {
@@ -227,23 +289,8 @@ static void smp_schedule_sync(struct proc * p, unsigned task)
 			}
 		}
 		BKL_LOCK();
+		return;
 	}
-
-	sched_ipi_data[cpu].data = (vir_bytes) p;
-	sched_ipi_data[cpu].flags = task;
-	__insn_barrier();
-	arch_send_smp_schedule_ipi(cpu);
-
-	/* wait until the destination cpu finishes its job */
-	BKL_UNLOCK();
-	while (sched_ipi_data[cpu].flags != 0) {
-		if (sched_ipi_data[mycpu].flags) {
-			BKL_LOCK();
-			smp_sched_handler();
-			BKL_UNLOCK();
-		}
-	}
-	BKL_LOCK();
 }
 
 void smp_schedule_stop_proc(struct proc * p)
@@ -298,27 +345,8 @@ void smp_sched_handler(void)
 
 	flgs = sched_ipi_data[cpu].flags;
 
-	if (flgs) {
-		struct proc * p;
-		p = (struct proc *)sched_ipi_data[cpu].data;
-
-		if (flgs & SCHED_IPI_STOP_PROC) {
-			RTS_SET(p, RTS_PROC_STOP);
-		}
-		if (flgs & SCHED_IPI_SAVE_CTX) {
-			/* all context has been saved already, FPU remains */
-			if (proc_used_fpu(p) &&
-					get_cpulocal_var(fpu_owner) == p) {
-				disable_fpu_exception();
-				save_local_fpu(p, FALSE /*retain*/);
-				/* we're preparing to migrate somewhere else */
-				release_fpu(p);
-			}
-		}
-		if (flgs & SCHED_IPI_VM_INHIBIT) {
-			RTS_SET(p, RTS_VMINHIBIT);
-		}
-	}
+	if (flgs)
+		smp_schedule_apply((struct proc *)sched_ipi_data[cpu].data, flgs);
 
 	__insn_barrier();
 	sched_ipi_data[cpu].flags = 0;
