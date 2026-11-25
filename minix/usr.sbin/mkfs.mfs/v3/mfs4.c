@@ -388,7 +388,7 @@ mfs4_make_state(uint8_t block[MFS4_BLOCK_SIZE])
 	mfs4_put_le32(block + MFS4_STATE_FLAGS, MFS4_STATE_CLEAN);
 	mfs4_put_le64(block + MFS4_STATE_GENERATION, 1);
 	mfs4_put_le32(block + MFS4_STATE_CRC32C,
-	    mfs4_crc32c(block, MFS4_BLOCK_SIZE));
+	    mfs4_crc32c(block, MFS4_STATE_CRC32C));
 }
 
 static void

@@ -2,7 +2,7 @@ CC?=cc
 CFLAGS?=-O2
 CFLAGS+=-std=c99 -Wall -Wextra -Werror -I../../include -I../../fs/mfs
 
-TESTS=mfs4_journal_test mfs4_orphan_test mfs4_xattr_test mfs4_acl_test
+TESTS=mfs4_journal_test mfs4_orphan_test mfs4_xattr_test mfs4_acl_test mfs4_fsck_test
 JOURNAL_CORE=../../fs/mfs/mfs4_journal_core.c
 ORPHAN_CORE=../../fs/mfs/mfs4_orphan_core.c
 XATTR_CORE=../../fs/mfs/mfs4_xattr_core.c
@@ -21,13 +21,20 @@ mfs4_xattr_test: mfs4_xattr_test.c ${XATTR_CORE} ../../fs/mfs/mfs4_xattr_core.h 
 mfs4_acl_test: mfs4_acl_test.c ../../include/minix/posix_acl.h
 	${CC} ${CFLAGS} -o $@ mfs4_acl_test.c
 
-test: ${TESTS}
+mfs4_fsck_test: mfs4_fsck_test.c ../../fs/mfs/mfs4_fsck_core.c ../../fs/mfs/mfs4_journal_core.c ../../fs/mfs/mfs4_orphan_core.c ../../fs/mfs/mfs4_xattr_core.c
+	${CC} ${CFLAGS} -o $@ mfs4_fsck_test.c ../../fs/mfs/mfs4_fsck_core.c ../../fs/mfs/mfs4_journal_core.c ../../fs/mfs/mfs4_orphan_core.c ../../fs/mfs/mfs4_xattr_core.c
+
+mfs4_fs_bench: mfs4_fs_bench.c
+	${CC} ${CFLAGS} -o $@ mfs4_fs_bench.c
+
+test: ${TESTS} mfs4_fs_bench
 	./mfs4_journal_test
 	./mfs4_orphan_test
 	./mfs4_xattr_test
 	./mfs4_acl_test
+	./mfs4_fsck_test
 
 clean:
-	rm -f ${TESTS}
+	rm -f ${TESTS} mfs4_fs_bench
 
 .PHONY: all test clean

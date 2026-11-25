@@ -57,6 +57,7 @@
 #include <dirent.h>
 
 #include "exitvalues.h"
+#include "fsck_mfs4.h"
 
 #undef N_DATA
 
@@ -1555,7 +1556,8 @@ void chkdev(char *f, char **clist, char **ilist, char **zlist)
 int main(int argc, char **argv)
 {
   register char **clist = 0, **ilist = 0, **zlist = 0;
-  int badflag = 0;
+  char **original_argv = argv;
+  int badflag = 0, mfs4_status, legacy_sync_done = 0;
 
   register int devgiven = 0;
   register char *arg;
@@ -1565,11 +1567,11 @@ int main(int argc, char **argv)
 	exit(FSCK_EXIT_CHECK_FAILED);
   }
 
-  sync();
   prog = *argv++;
   while ((arg = *argv++) != 0)
 	if (arg[0] == '-' && arg[1] != 0 && arg[2] == 0) switch (arg[1]) {
 		    case 'd':	markdirty = 1;	break;
+		    case 'n':	break;
 		    case 'p':	preen = repair = automatic = 1; break;
 	            case 'y':
 		    case 'a':	automatic ^= 1;	break;
@@ -1591,14 +1593,23 @@ int main(int argc, char **argv)
 			badflag = 1;
 		}
 	else {
-		chkdev(arg, clist, ilist, zlist);
+		mfs4_status = fsck_mfs4_dispatch(argc, original_argv, arg);
+		if (mfs4_status == FSCK_MFS4_NOT_MFS4) {
+			if (!legacy_sync_done) {
+				sync();
+				legacy_sync_done = 1;
+			}
+			chkdev(arg, clist, ilist, zlist);
+		} else if (mfs4_status != 0) {
+			exit(FSCK_EXIT_CHECK_FAILED);
+		}
 		clist = 0;
 		ilist = 0;
 		zlist = 0;
 		devgiven = 1;
 	}
   if (!devgiven || badflag) {
-	printf("Usage: fsck [-dyfpacilrsz] file\n");
+	printf("Usage: fsck [-dnyfpacilrsz] file\n");
 	exit(FSCK_EXIT_USAGE);
   }
   return(0);
