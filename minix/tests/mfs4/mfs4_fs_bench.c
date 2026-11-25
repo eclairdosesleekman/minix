@@ -73,10 +73,11 @@ report_result(const char *label, const char *workload, uint64_t operations,
 	double ops_per_sec = seconds > 0.0 ? (double)operations / seconds : 0.0;
 	double mib_per_sec = seconds > 0.0 ?
 	    ((double)bytes / (1024.0 * 1024.0)) / seconds : 0.0;
+	uint64_t elapsed_us = elapsed_ns / 1000U;
 
 	printf("%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64
 	    ",%.2f,%.2f\n", label, workload, operations, bytes,
-	    elapsed_ns / 1000ULL, ops_per_sec, mib_per_sec);
+	    elapsed_us, ops_per_sec, mib_per_sec);
 }
 
 static int
