@@ -519,26 +519,31 @@ static void clear_ipc(
   if (RTS_ISSET(rc, RTS_SENDING)) {
       int target_proc;
 
-      okendpt(rc->p_sendto_e, &target_proc);
-      xpp = &proc_addr(target_proc)->p_caller_q; /* destination's queue */
-      while (*xpp) {		/* check entire queue */
-          if (*xpp == rc) {			/* process is on the queue */
-              *xpp = rc->p_q_link;		/* replace by next process */
-              /*
-               * p_q_link is an intrusive queue link.  Once removed, it
-               * must not retain the old successor: clear_ipc_refs() may
-               * unblock this process, and its next mini_send() requires
-               * p_q_link to be NULL before it joins another queue.
-               */
-              rc->p_q_link = NULL;
+      /*
+       * The destination may already have been removed and its slot reused.
+       * Never use target_proc unless the generation-aware lookup succeeds.
+       * A stale queue node is discarded by the receiver's queue-rebuild path.
+       */
+      if (isokendpt(rc->p_sendto_e, &target_proc)) {
+          xpp = &proc_addr(target_proc)->p_caller_q; /* destination's queue */
+          while (*xpp) {		/* check entire queue */
+              if (*xpp == rc) {			/* process is on the queue */
+                  *xpp = rc->p_q_link;		/* replace by next process */
 #if DEBUG_ENABLE_IPC_WARNINGS
-	      printf("endpoint %d / %s removed from queue at %d\n",
-	          rc->p_endpoint, rc->p_name, rc->p_sendto_e);
+	          printf("endpoint %d / %s removed from queue at %d\n",
+	              rc->p_endpoint, rc->p_name, rc->p_sendto_e);
 #endif
-              break;				/* can only be queued once */
+                  break;				/* can only be queued once */
+              }
+              xpp = &(*xpp)->p_q_link;		/* proceed to next queued */
           }
-          xpp = &(*xpp)->p_q_link;		/* proceed to next queued */
       }
+      /*
+       * p_q_link is an intrusive queue link. Do not retain an old successor
+       * when this slot is released, even if the destination endpoint was
+       * already stale or the node was not found.
+       */
+      rc->p_q_link = NULL;
       RTS_UNSET(rc, RTS_SENDING);
   }
   RTS_UNSET(rc, RTS_RECEIVING);
