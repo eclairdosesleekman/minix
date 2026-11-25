@@ -524,7 +524,7 @@ static void clear_ipc(
        * Never use target_proc unless the generation-aware lookup succeeds.
        * A stale queue node is discarded by the receiver's queue-rebuild path.
        */
-      if (okendpt(rc->p_sendto_e, &target_proc)) {
+      if (isokendpt(rc->p_sendto_e, &target_proc)) {
           xpp = &proc_addr(target_proc)->p_caller_q; /* destination's queue */
           while (*xpp) {		/* check entire queue */
               if (*xpp == rc) {			/* process is on the queue */
