@@ -42,14 +42,20 @@ crc32c_block_with_zeroed_field(const uint8_t block[MFS4_BLOCK_SIZE],
 }
 
 static int
-io_valid(const struct mfs4_journal_io *io)
+io_read_valid(const struct mfs4_journal_io *io)
 {
 	return io != NULL && io->read_block != NULL &&
-	    io->write_block != NULL && io->flush != NULL &&
 	    io->geometry.total_blocks > MFS4_JOURNAL_COMMIT_BLOCK &&
 	    io->geometry.total_blocks <= MFS4_MAX_BLOCKS &&
 	    io->geometry.backup_block == io->geometry.total_blocks - 1 &&
 	    io->geometry.data_start < io->geometry.backup_block;
+}
+
+static int
+io_valid(const struct mfs4_journal_io *io)
+{
+	return io_read_valid(io) && io->write_block != NULL &&
+	    io->flush != NULL;
 }
 
 static int
@@ -181,6 +187,44 @@ mfs4_journal_pending(const struct mfs4_journal_io *io)
 	if (r != 0)
 		return -r;
 	return valid;
+}
+
+int
+mfs4_journal_validate(const struct mfs4_journal_io *io)
+{
+	uint8_t header[MFS4_BLOCK_SIZE], commit[MFS4_BLOCK_SIZE];
+	uint8_t image[MFS4_BLOCK_SIZE];
+	uint32_t count, i, crc_state, expected_crc;
+	int valid, r;
+
+	if (!io_read_valid(io))
+		return -EINVAL;
+	if ((r = read_commit(io, commit, &valid)) != 0)
+		return -r;
+	if (!valid)
+		return 0;
+	if ((r = io->read_block(io->cookie, MFS4_JOURNAL_HEADER_BLOCK,
+	    header)) != 0)
+		return -(r < 0 ? -r : EIO);
+	if ((r = validate_header(io, header, commit, &count)) != 0)
+		return -r;
+
+	crc_state = 0xffffffffU;
+	for (i = 0; i < count; i++) {
+		const uint8_t *desc = header + MFS4_JH_DESCRIPTORS +
+		    i * MFS4_JDESC_SIZE;
+		if ((r = io->read_block(io->cookie,
+		    MFS4_JOURNAL_IMAGES_START + i, image)) != 0)
+			return -(r < 0 ? -r : EIO);
+		expected_crc = mfs4_get_le32(desc + 8);
+		if (crc32c_bytes(image, sizeof(image)) != expected_crc)
+			return -EIO;
+		crc_state = crc32c_update(crc_state, image, sizeof(image));
+	}
+	crc_state ^= 0xffffffffU;
+	if (crc_state != mfs4_get_le32(commit + MFS4_JC_IMAGES_CRC))
+		return -EIO;
+	return 1;
 }
 
 int
@@ -394,7 +438,7 @@ mfs4_journal_replay(const struct mfs4_journal_io *io)
 	uint8_t header[MFS4_BLOCK_SIZE], commit[MFS4_BLOCK_SIZE];
 	uint8_t image[MFS4_BLOCK_SIZE], zero[MFS4_BLOCK_SIZE];
 	uint32_t count, i, crc_state, expected_crc, desc_crc;
-	int valid, err, r;
+	int valid, r;
 
 	if (!io_valid(io))
 		return EINVAL;
@@ -451,6 +495,5 @@ mfs4_journal_replay(const struct mfs4_journal_io *io)
 replay_fail:
 	if (io->fail_closed != NULL)
 		io->fail_closed(io->cookie);
-	err = r < 0 ? -r : EIO;
-	return err;
+	return r < 0 ? -r : EIO;
 }

@@ -93,5 +93,7 @@ void mfs4_journal_tx_abort(struct mfs4_journal_tx *tx);
 int mfs4_journal_replay(const struct mfs4_journal_io *io);
 /* Return 1 for a valid committed transaction, 0 for no valid commit, <0 error. */
 int mfs4_journal_pending(const struct mfs4_journal_io *io);
+/* Like pending(), but validates the header and every image without writing. */
+int mfs4_journal_validate(const struct mfs4_journal_io *io);
 
 #endif /* _MFS4_JOURNAL_H */

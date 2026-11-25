@@ -1,20 +1,30 @@
-name: MFS4 redo journal
+name: MFS4 redo journal and filesystem checks
 
 on:
   pull_request:
     paths:
       - ".github/workflows/mfs4-journal.yml"
       - "minix/fs/mfs/mfs4_journal.*"
+      - "minix/fs/mfs/mfs4_fsck_core.*"
+      - "minix/fs/mfs/mfs4_orphan_core.*"
       - "minix/fs/mfs/mfs4_xattr_core.*"
+      - "minix/commands/fsck.mfs/**"
+      - "minix/usr.sbin/mkfs.mfs/v3/mfs4.c"
       - "minix/include/minix/mfs4_disk.h"
+      - "minix/include/minix/posix_acl.h"
       - "minix/tests/mfs4/**"
   push:
     branches:
       - master
     paths:
       - "minix/fs/mfs/mfs4_journal.*"
+      - "minix/fs/mfs/mfs4_fsck_core.*"
+      - "minix/fs/mfs/mfs4_orphan_core.*"
       - "minix/fs/mfs/mfs4_xattr_core.*"
+      - "minix/commands/fsck.mfs/**"
+      - "minix/usr.sbin/mkfs.mfs/v3/mfs4.c"
       - "minix/include/minix/mfs4_disk.h"
+      - "minix/include/minix/posix_acl.h"
       - "minix/tests/mfs4/**"
 
 jobs:
@@ -22,5 +32,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build and run MFS4 journal tests
+      - name: Build and run MFS4 journal and fsck tests
         run: make -C minix/tests/mfs4 clean test
