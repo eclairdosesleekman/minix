@@ -118,7 +118,8 @@ void save_fpu(struct proc *pr)
 		stopped = RTS_ISSET(pr, RTS_PROC_STOP);
 
 		/* stop the remote process and force its context to be saved */
-		smp_schedule_stop_proc_save_ctx(pr);
+		if (smp_schedule_stop_proc_save_ctx(pr) != OK)
+			return;
 
 		/*
 		 * If the process wasn't stopped let the process run again. The
