@@ -7,6 +7,7 @@
 #include <minix/mfs4_disk.h>
 
 #include "mfs4_fsck_core.h"
+#include "mfs4_orphan_core.h"
 
 #define TEST_BLOCKS 100U
 #define TEST_INODES 32U
@@ -230,6 +231,56 @@ test_nested_directory_link_counts(void)
 }
 
 static void
+test_detached_orphan_directory_link_counts(void)
+{
+	struct test_device device;
+	struct mfs4_fsck_io io;
+	struct mfs4_fsck_report report;
+	uint8_t *inode, *child;
+	int r;
+
+	make_volume(&device);
+
+	/*
+	 * Model rmdir of an open child directory. The parent no longer has a
+	 * name for it and its link count has reached zero, but its on-disk "."
+	 * and ".." entries remain until orphan cleanup can reclaim the inode.
+	 */
+	inode = device.blocks[70] + 2 * MFS4_INODE_SIZE;
+	mfs4_put_le16(inode + MFS4_I_MODE, 0040755);
+	mfs4_put_le16(inode + MFS4_I_FLAGS, I4_ORPHAN);
+	mfs4_put_le32(inode + MFS4_I_NLINK, 0);
+	mfs4_put_le64(inode + MFS4_I_SIZE, 2 * MFS4_DIRENT_SIZE);
+	mfs4_put_le32(inode + MFS4_I_GENERATION, 1);
+	mfs4_put_le32(inode + MFS4_I_DIRECT, 74);
+	set_bit(device.blocks[68], 2);
+	set_bit(device.blocks[69], 1);
+
+	child = device.blocks[74];
+	memset(child, 0, MFS4_BLOCK_SIZE);
+	mfs4_put_le32(child + MFS4_DIRENT_INODE, 2);
+	memcpy(child + MFS4_DIRENT_NAME, ".", 1);
+	mfs4_put_le32(child + MFS4_DIRENT_SIZE +
+	    MFS4_DIRENT_INODE, 1);
+	memcpy(child + MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME, "..", 2);
+	assert(mfs4_orphan_state_set_head(device.blocks[72], 1,
+	    TEST_INODES, 2) == 0);
+
+	memset(&io, 0, sizeof(io));
+	io.cookie = &device;
+	io.read_block = test_read;
+	io.write_block = test_write;
+	io.flush = test_flush;
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, 0, &report);
+	assert(r == 0);
+	assert(report.used_inodes == 2);
+	assert(report.orphan_inodes == 1);
+	assert(report.used_data_blocks == 2);
+	assert(device.writes == 0);
+}
+
+static void
 test_directory_corruption_is_not_repaired(void)
 {
 	struct test_device device;
@@ -278,6 +329,7 @@ main(void)
 {
 	test_clean_volume_is_read_only_verified();
 	test_nested_directory_link_counts();
+	test_detached_orphan_directory_link_counts();
 	test_directory_corruption_is_not_repaired();
 	test_bad_state_crc_is_rejected_without_writes();
 	puts("mfs4_fsck_test: all tests passed");
