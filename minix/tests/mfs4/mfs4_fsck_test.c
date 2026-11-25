@@ -165,6 +165,9 @@ test_clean_volume_is_read_only_verified(void)
 	io.flush = test_flush;
 
 	r = mfs4_fsck_run(&io, TEST_BLOCKS, 0, &report);
+	if (r != 0)
+		fprintf(stderr, "clean volume fsck returned %d (%s)\n",
+		    r, strerror(r));
 	assert(r == 0);
 	assert(report.total_blocks == TEST_BLOCKS);
 	assert(report.total_inodes == TEST_INODES);
