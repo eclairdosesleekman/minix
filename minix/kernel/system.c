@@ -530,7 +530,7 @@ static void clear_ipc(
               if (*xpp == rc) {			/* process is on the queue */
                   *xpp = rc->p_q_link;		/* replace by next process */
 #if DEBUG_ENABLE_IPC_WARNINGS
-	          printf("endpoint %d / %s removed from queue at %d\\n",
+	          printf("endpoint %d / %s removed from queue at %d\n",
 	              rc->p_endpoint, rc->p_name, rc->p_sendto_e);
 #endif
                   break;				/* can only be queued once */
