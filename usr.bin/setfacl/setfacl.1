@@ -1,0 +1,35 @@
+.Dd November 25, 2026
+.Dt SETFACL 1
+.Os
+.Sh NAME
+.Nm setfacl
+.Nd set or remove a POSIX access control list
+.Sh SYNOPSIS
+.Nm
+.Op Fl d
+.Fl s Ar acl_text
+.Ar file ...
+.Nm
+.Op Fl d
+.Fl b
+.Ar file ...
+.Sh DESCRIPTION
+.Nm
+replaces the selected ACL on each
+.Ar file .
+By default the access ACL is selected.
+.Fl d
+selects the directory default ACL.
+.Fl s
+takes a complete ACL in the text syntax printed by
+.Xr getfacl 1 ,
+for example
+.Dq user::rwx\ngroup::r-x\nother::--- .
+.Fl b
+removes the selected ACL; when no access ACL is stored, file mode bits
+continue to provide the access permissions.
+.Pp
+Default ACLs can only be installed on directories.
+.Sh SEE ALSO
+.Xr getfacl 1 ,
+.Xr chmod 1

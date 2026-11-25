@@ -1,6 +1,7 @@
 #include "fs.h"
 #include "inode.h"
 #include "super.h"
+#include "mfs4_acl.h"
 
 
 /*===========================================================================*
@@ -20,13 +21,22 @@ int fs_chmod(ino_t ino_nr, mode_t *mode)
 	return EROFS;
   }
 
-  /* Now make the change. Clear setgid bit if file is not in caller's grp */
-  rip->i_mode = (rip->i_mode & ~ALL_MODES) | (*mode & ALL_MODES);
-  rip->i_update |= CTIME;
-  IN_MARKDIRTY(rip);
-  if (rip->i_sp->s_version == V4) {
-	  int r = rw_inode(rip, WRITING);
-	  if (r != OK) { put_inode(rip); return r; }
+  /* Update the access ACL in the same transaction as mode bits. */
+  {
+	  mode_t old_mode = rip->i_mode;
+	  rip->i_mode = (rip->i_mode & ~ALL_MODES) | (*mode & ALL_MODES);
+	  rip->i_update |= CTIME;
+	  IN_MARKDIRTY(rip);
+	  if (rip->i_sp->s_version == V4) {
+		  int r = mfs4_acl_chmod(rip, *mode);
+		  if (r == OK)
+			  r = rw_inode(rip, WRITING);
+		  if (r != OK) {
+			  rip->i_mode = old_mode;
+			  put_inode(rip);
+			  return r;
+		  }
+	  }
   }
 
   /* Return full new mode to caller. */

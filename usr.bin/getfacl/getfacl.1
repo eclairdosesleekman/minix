@@ -1,0 +1,30 @@
+.Dd November 25, 2026
+.Dt GETFACL 1
+.Os
+.Sh NAME
+.Nm getfacl
+.Nd display POSIX access and default ACLs
+.Sh SYNOPSIS
+.Nm
+.Op Fl d
+.Ar file ...
+.Sh DESCRIPTION
+.Nm
+prints the access ACL for each
+.Ar file
+and, unless
+.Fl d
+is specified, its default ACL when one is present.
+The displayed entries use the POSIX
+.Dq user ,
+.Dq group ,
+.Dq mask
+and
+.Dq other
+text form accepted by
+.Xr setfacl 1 .
+If an access ACL is not stored, the mode bits are displayed as the
+equivalent three-entry ACL.
+.Sh SEE ALSO
+.Xr setfacl 1 ,
+.Xr chmod 1
