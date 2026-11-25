@@ -187,6 +187,7 @@ fsck_mfs4_wants_replay(int argc, char **argv, int *no_write)
 		case 'c':
 		case 'i':
 		case 'z':
+		case 's':
 			return -1;
 		default:
 			break;

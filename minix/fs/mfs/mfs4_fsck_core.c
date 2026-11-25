@@ -286,12 +286,6 @@ mfs4_fsck_alloc_maps(struct mfs4_fsck_ctx *ctx)
 	data_blocks = ctx->sb.backup_block - ctx->sb.data_start;
 	ctx->imap_bytes = (size_t)ctx->sb.imap_blocks * MFS4_BLOCK_SIZE;
 	ctx->zmap_bytes = (size_t)ctx->sb.zmap_blocks * MFS4_BLOCK_SIZE;
-	if (ctx->sb.imap_blocks > SIZE_MAX / MFS4_BLOCK_SIZE ||
-	    ctx->sb.zmap_blocks > SIZE_MAX / MFS4_BLOCK_SIZE ||
-	    data_blocks > (uint64_t)SIZE_MAX * 8U ||
-	    ctx->imap_bytes / MFS4_BLOCK_SIZE != ctx->sb.imap_blocks ||
-	    ctx->zmap_bytes / MFS4_BLOCK_SIZE != ctx->sb.zmap_blocks)
-		return EOVERFLOW;
 	ctx->data_map_bytes = (size_t)((data_blocks + 7) / 8);
 	ctx->inode_map_bytes = (size_t)(((uint64_t)ctx->sb.total_inodes + 8) / 8);
 	ctx->imap = malloc(ctx->imap_bytes);
