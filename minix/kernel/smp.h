@@ -84,13 +84,13 @@ void smp_ipi_sched_handler(void);
 
 void smp_schedule(unsigned cpu);
 /* stop a processes on a different cpu */
-void smp_schedule_stop_proc(struct proc * p);
+int smp_schedule_stop_proc(struct proc * p);
 /* stop a process on a different cpu because its address space is being changed */
-void smp_schedule_vminhibit(struct proc * p);
+int smp_schedule_vminhibit(struct proc * p);
 /* stop the process and for saving its full context */
-void smp_schedule_stop_proc_save_ctx(struct proc * p);
+int smp_schedule_stop_proc_save_ctx(struct proc * p);
 /* migrate a stopped process; caller releases RTS_PROC_STOP after updates */
-void smp_schedule_migrate_proc(struct proc * p, unsigned dest_cpu);
+int smp_schedule_migrate_proc(struct proc * p, unsigned dest_cpu);
 /* true while a cross-CPU scheduling request is in flight (run queues in flux) */
 int smp_sched_ipi_pending(void);
 
