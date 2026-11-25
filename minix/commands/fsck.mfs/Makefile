@@ -1,6 +1,5 @@
 FSCK=   ${NETBSDSRCDIR}/sbin/fsck
 PROG=	fsck_mfs
-.PATH:	${NETBSDSRCDIR}/minix/fs/mfs
 SRCS=	fsck.c fsck_mfs4.c \
 	mfs4_fsck_core.c \
 	mfs4_journal_core.c \
