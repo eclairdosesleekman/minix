@@ -49,6 +49,52 @@ Run:
 The GitHub Actions host-test workflow now runs when the MFS4 checker, codec,
 or mkfs implementation changes.
 
+## Boot-path integration decision
+
+The x86 boot code was checked rather than assuming that MFS server support
+also provides bootloader support:
+
+- `sys/arch/amd64/stand/Makefile` builds the UEFI x64 loader from
+  `sys/stand/efiboot/bootx64`.
+- `sys/stand/efiboot/Makefile.efiboot` defines
+  `SUPPORT_MINIXFS3`, and `sys/stand/efiboot/conf.c` registers
+  `minixfs3`; there is no MFS4 standalone reader.
+- The legacy i386 BIOS standalone loader also defines
+  `SUPPORT_MINIXFS3` in `sys/arch/i386/stand/boot/Makefile.boot`.
+
+Therefore this change deliberately does not advertise an MFS4 volume as a
+bootloader-readable filesystem. The supported Phase 8 deployment profile is
+to keep the kernel, boot configuration, and any boot-time modules on an
+MFS3-readable boot partition or on a UEFI FAT/ESP path supported by the EFI
+loader, while mounting MFS4 as the system root only after the kernel and MFS
+server have started. This follows the safe migration option in design §26.5.
+No bootloader source change is made without a separate reader implementation
+and QEMU validation.
+
+## Performance measurement harness
+
+`minix/tests/mfs4/mfs4_fs_bench.c` provides a repeatable target-side workload
+for comparing an MFS3 mount and an MFS4 mount. Build it on the target with:
+
+    make -C minix/tests/mfs4 mfs4_fs_bench
+
+Run the same binary against disposable test mountpoints, on the same storage
+and with the same cache/VM settings:
+
+    ./minix/tests/mfs4/mfs4_fs_bench /mnt/mfs3 MFS3 > mfs3.csv
+    ./minix/tests/mfs4/mfs4_fs_bench /mnt/mfs4 MFS4 > mfs4.csv
+
+Optional arguments select the iteration count and sequential-write size in
+MiB. The CSV reports create/unlink, rename, 4 KiB writes, 1 MiB sequential
+writes (including final fsync), and 4 KiB write+fsync latency. It creates and
+removes a private per-process directory below the supplied mountpoint; use
+disposable benchmark filesystems, not production data.
+
+The harness does not simulate a power cut and does not report recovery time.
+That metric must be measured by the QEMU crash-injection runner, from VM restart
+until the filesystem becomes available, for each journal crash point. No
+performance numbers are claimed by this source-only change.
+
 ## Release gate still required
 
 This source change does not claim Phase 8's full release acceptance. The
