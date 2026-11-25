@@ -403,13 +403,30 @@ int smp_schedule_migrate_proc(struct proc * p, unsigned dest_cpu)
 
 void smp_sched_handler(void)
 {
+	struct sched_ipi_request *request;
+	struct proc *p;
 	unsigned flgs;
 	unsigned cpu = cpuid;
 
 	flgs = sched_ipi_data[cpu].flags;
 
-	if (flgs)
-		smp_schedule_apply((struct proc *)sched_ipi_data[cpu].data, flgs);
+	if (flgs) {
+		request = (struct sched_ipi_request *)sched_ipi_data[cpu].data;
+		p = request->proc;
+
+		/*
+		 * The process-table slot may have been freed and reused before
+		 * this IPI was handled. Never apply an old request to a new
+		 * endpoint occupying the same slot.
+		 */
+		if (!RTS_ISSET(p, RTS_SLOT_FREE) &&
+		    p->p_endpoint == request->endpoint) {
+			smp_schedule_apply(p, flgs);
+			request->result = OK;
+		} else {
+			request->result = ESRCH;
+		}
+	}
 
 	__insn_barrier();
 	sched_ipi_data[cpu].flags = 0;
