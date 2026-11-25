@@ -1034,6 +1034,35 @@ int mini_send(
   return(OK);
 }
 
+/*
+ * Rebuild a receiver's synchronous IPC queue from the authoritative process
+ * state. p_q_link is intrusive, so following it after a sender slot has been
+ * reused may walk into a different receiver's queue. This recovery path is
+ * used only after detecting a stale queue entry.
+ */
+static void rebuild_caller_queue(struct proc *caller_ptr)
+{
+	struct proc *rp;
+	struct proc **xpp;
+
+	caller_ptr->p_caller_q = NULL;
+	xpp = &caller_ptr->p_caller_q;
+
+	for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++) {
+		if (rp == caller_ptr || isemptyp(rp) ||
+		    RTS_ISSET(rp, RTS_NO_ENDPOINT) ||
+		    !RTS_ISSET(rp, RTS_SENDING) ||
+		    rp->p_sendto_e != caller_ptr->p_endpoint)
+			continue;
+
+		/* Ignore any link left over from the previous queue. */
+		rp->p_q_link = NULL;
+		*xpp = rp;
+		xpp = &rp->p_q_link;
+	}
+	*xpp = NULL;
+}
+
 /*===========================================================================*
  *				mini_receive				     * 
  *===========================================================================*/
@@ -1138,16 +1167,25 @@ static int mini_receive(struct proc * caller_ptr,
 	 * that no dead process is ever queued to send).
 	 */
 	if (RTS_ISSET(sender, RTS_SLOT_FREE) ||
-	    RTS_ISSET(sender, RTS_NO_ENDPOINT)) {
+	    RTS_ISSET(sender, RTS_NO_ENDPOINT) ||
+	    !RTS_ISSET(sender, RTS_SENDING) ||
+	    sender->p_sendto_e != caller_ptr->p_endpoint) {
 		static unsigned long c;
 		if ((c++ & 0x3ff) == 0)
-			printf("mini_receive: %s/%d dropped stale sender "
-			    "ep=%d rts=%x sendto=%d (n=%lu)\n",
+			printf("mini_receive: %s/%d rebuilding stale caller queue "
+			    "at sender ep=%d rts=%x sendto=%d (n=%lu)\\n",
 			    caller_ptr->p_name, caller_ptr->p_endpoint,
 			    sender->p_endpoint, sender->p_rts_flags,
 			    sender->p_sendto_e, c);
-		*xpp = sender->p_q_link;	/* unlink stale entry */
-		sender->p_q_link = NULL;
+
+		/*
+		 * Do not unlink through sender->p_q_link: after slot reuse that
+		 * link may belong to a different receiver's live queue. Rebuild
+		 * this queue using only senders whose current state names us as
+		 * their destination, then restart the scan from its new head.
+		 */
+		rebuild_caller_queue(caller_ptr);
+		xpp = &caller_ptr->p_caller_q;
 		continue;
 	}
 
