@@ -11,6 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/xattr.h>
+#include <sys/stat.h>
+
+#include <minix/posix_acl.h>
 
 #include <minix/libminixfs.h>
 #include <minix/mfs4_disk.h>
@@ -282,6 +285,138 @@ alloc_fail:
 	return r;
 }
 
+/*
+ * Internal inode-value accessors are used by default-ACL inheritance and
+ * chmod. The caller owns the active MFS4 transaction for setvalue_tx().
+ */
+int
+mfs4_xattr_getvalue(struct inode *rip, const char *name, uint8_t **value,
+    size_t *value_len)
+{
+	struct mfs4_xattr_chain chain;
+	struct mfs4_xattr_entry entry;
+	uint8_t *copy = NULL;
+	int r;
+
+	if (value == NULL || value_len == NULL)
+		return EINVAL;
+	*value = NULL;
+	*value_len = 0;
+	if ((r = mfs4_xattr_collect(rip, &chain)) != OK)
+		return r;
+	r = mfs4_xattr_find(chain.data, chain.data_len, name, NULL, &entry);
+	if (r == OK) {
+		if (entry.value_len != 0) {
+			copy = malloc(entry.value_len);
+			if (copy == NULL)
+				r = ENOMEM;
+			else
+				memcpy(copy, entry.value, entry.value_len);
+		}
+		if (r == OK) {
+			*value = copy;
+			*value_len = entry.value_len;
+		}
+	}
+	mfs4_xattr_chain_clear(&chain);
+	return r;
+}
+
+int
+mfs4_xattr_setvalue_tx(struct inode *rip, const char *name,
+    const void *value, size_t value_len, int flags)
+{
+	struct mfs4_xattr_chain old_chain;
+	uint8_t *new_data;
+	size_t new_len;
+	uint32_t new_count;
+	uint16_t acl_mode = 0, old_mode;
+	uint32_t old_head;
+	int is_access, is_default, exists, r;
+
+	if (rip == NULL || !mfs4_tx_is_active())
+		return EINVAL;
+	if ((r = mfs4_xattr_user_name(name)) != OK)
+		return r;
+	if ((flags & ~(XATTR_CREATE | XATTR_REPLACE)) != 0 ||
+	    (flags & XATTR_CREATE && flags & XATTR_REPLACE))
+		return EINVAL;
+	if (value_len > MFS4_XATTR_MAX_VALUE ||
+	    (value_len != 0 && value == NULL))
+		return ERANGE;
+
+	is_access = strcmp(name, "system.posix_acl_access") == 0;
+	is_default = strcmp(name, "system.posix_acl_default") == 0;
+	if (is_default && !S_ISDIR(rip->i_mode))
+		return EACCES;
+	if (is_access || is_default) {
+		if (minix_acl_validate(value, value_len) != 0)
+			return EINVAL;
+		if (is_access &&
+		    minix_acl_mode(value, value_len, &acl_mode) != 0)
+			return EINVAL;
+	}
+
+	if ((r = mfs4_xattr_collect(rip, &old_chain)) != OK)
+		return r;
+	old_head = rip->i_xattr_head;
+	r = mfs4_xattr_find(old_chain.data, old_chain.data_len,
+	    name, NULL, NULL);
+	if (r == OK)
+		exists = 1;
+	else if (r == ENODATA)
+		exists = 0;
+	else
+		goto out;
+	if ((flags & XATTR_CREATE) && exists) {
+		r = EEXIST;
+		goto out;
+	}
+	if ((flags & XATTR_REPLACE) && !exists) {
+		r = ENODATA;
+		goto out;
+	}
+	new_data = malloc(MFS4_XATTR_MAX_BYTES);
+	if (new_data == NULL) {
+		r = ENOMEM;
+		goto out;
+	}
+	if (old_chain.data_len != 0)
+		memcpy(new_data, old_chain.data, old_chain.data_len);
+	new_len = old_chain.data_len;
+	new_count = old_chain.entry_count;
+	if (exists) {
+		r = mfs4_xattr_remove(new_data, &new_len, &new_count, name);
+		if (r != OK) {
+			free(new_data);
+			goto out;
+		}
+	}
+	r = mfs4_xattr_append(new_data, MFS4_XATTR_MAX_BYTES, &new_len,
+	    &new_count, name, value, value_len);
+	if (r == OK)
+		r = mfs4_xattr_commit_stream(rip, new_data, new_len,
+		    new_count, &old_chain);
+	free(new_data);
+	if (r != OK)
+		goto out;
+
+	if (is_access) {
+		old_mode = rip->i_mode;
+		rip->i_mode = (rip->i_mode & ~RWX_MODES) |
+		    (acl_mode & RWX_MODES);
+		IN_MARKDIRTY(rip);
+		r = rw_inode(rip, WRITING);
+		if (r != OK) {
+			rip->i_mode = old_mode;
+			rip->i_xattr_head = old_head;
+		}
+	}
+out:
+	mfs4_xattr_chain_clear(&old_chain);
+	return r;
+}
+
 ssize_t
 mfs4_getxattr(struct inode *rip, const char *name,
     struct fsdriver_data *data, size_t size)
@@ -323,11 +458,8 @@ int
 mfs4_setxattr(struct inode *rip, const char *name,
     struct fsdriver_data *data, size_t size, int flags)
 {
-	struct mfs4_xattr_chain old_chain;
-	uint8_t *value = NULL, *new_data = NULL;
-	size_t new_len;
-	uint32_t new_count;
-	int r, own = 0, exists;
+	uint8_t *value = NULL;
+	int r;
 
 	if ((r = mfs4_xattr_user_name(name)) != OK)
 		return r;
@@ -342,62 +474,18 @@ mfs4_setxattr(struct inode *rip, const char *name,
 		value = malloc(size);
 		if (value == NULL)
 			return ENOMEM;
-		if ((r = fsdriver_copyin(data, 0, value, size)) != OK)
-			goto out;
+		if ((r = fsdriver_copyin(data, 0, value, size)) != OK) {
+			free(value);
+			return r;
+		}
 	}
-
-	if ((r = mfs4_xattr_collect(rip, &old_chain)) != OK)
-		goto out;
-	exists = mfs4_xattr_find(old_chain.data, old_chain.data_len,
-	    name, NULL, NULL) == OK;
-	if ((flags & XATTR_CREATE) && exists) {
-		r = EEXIST;
-		goto chain_out;
+	if ((r = mfs4_tx_begin()) == OK) {
+		r = mfs4_xattr_setvalue_tx(rip, name, value, size, flags);
+		if (r == OK)
+			r = mfs4_tx_commit();
+		else
+			mfs4_tx_abort();
 	}
-	if ((flags & XATTR_REPLACE) && !exists) {
-		r = ENODATA;
-		goto chain_out;
-	}
-
-	new_data = malloc(MFS4_XATTR_MAX_BYTES);
-	if (new_data == NULL) {
-		r = ENOMEM;
-		goto chain_out;
-	}
-	if (old_chain.data_len != 0)
-		memcpy(new_data, old_chain.data, old_chain.data_len);
-	new_len = old_chain.data_len;
-	new_count = old_chain.entry_count;
-	if (exists) {
-		r = mfs4_xattr_remove(new_data, &new_len, &new_count, name);
-		if (r != OK)
-			goto chain_out;
-	}
-	r = mfs4_xattr_append(new_data, MFS4_XATTR_MAX_BYTES, &new_len,
-	    &new_count, name, value, size);
-	if (r != OK)
-		goto chain_out;
-	if ((r = mfs4_tx_begin()) != OK)
-		goto chain_out;
-	own = 1;
-	r = mfs4_xattr_commit_stream(rip, new_data, new_len, new_count,
-	    &old_chain);
-	if (r == OK) {
-		own = 0;
-		r = mfs4_tx_commit();
-	} else {
-		mfs4_tx_abort();
-		own = 0;
-	}
-	goto chain_out;
-
-chain_out:
-	if (own)
-		mfs4_tx_abort();
-	mfs4_xattr_chain_clear(&old_chain);
-out:
-	if (new_data != NULL)
-		free(new_data);
 	if (value != NULL)
 		free(value);
 	return r;

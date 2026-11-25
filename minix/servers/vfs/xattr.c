@@ -1,8 +1,8 @@
 /*
  * VFS extended-attribute system calls.
  *
- * Public user APIs in this phase expose the user.* namespace. The
- * system.posix_acl_* namespace is reserved for the Phase 7 ACL implementation.
+ * Public callers may access user.* attributes and the two POSIX ACL system
+ * attributes. ACL writes are restricted to the inode owner or super-user.
  */
 #include "fs.h"
 #include <sys/xattr.h>
@@ -24,9 +24,12 @@ vfs_xattr_name_valid(const char *name)
 	len = strlen(name);
 	if (len < 6 || len > XATTR_NAME_MAX)
 		return ERANGE;
-	if (strncmp(name, "user.", 5) != 0)
-		return EOPNOTSUPP;
-	return OK;
+	if (strncmp(name, "user.", 5) == 0)
+		return OK;
+	if (strcmp(name, "system.posix_acl_access") == 0 ||
+	    strcmp(name, "system.posix_acl_default") == 0)
+		return OK;
+	return EOPNOTSUPP;
 }
 
 int
@@ -42,7 +45,7 @@ do_xattr(void)
 	size_t path_len, name_len, size;
 	ssize_t result_size = 0;
 	int fd, flags, nofollow, write_access, is_list, from_fd;
-	int r, lookup_flags;
+	int r, lookup_flags, is_acl;
 
 	fd = (int)job_m_in.m9_l1;
 	flags = (int)job_m_in.m9_l2;
@@ -91,6 +94,10 @@ do_xattr(void)
 			return r;
 	}
 
+	is_acl = !is_list &&
+	    (strcmp(name, "system.posix_acl_access") == 0 ||
+	    strcmp(name, "system.posix_acl_default") == 0);
+
 	/* Resolve either an existing descriptor or the requested pathname. */
 	from_fd = fd >= 0;
 	if (from_fd) {
@@ -125,12 +132,19 @@ do_xattr(void)
 	 */
 	if (write_access) {
 		r = read_only(vp);
-		if (r == OK)
+		if (r == OK && is_acl) {
+			/* ACL system attributes are owner/super-user controlled. */
+			if (fp->fp_effuid != SU_UID &&
+			    fp->fp_effuid != vp->v_uid)
+				r = EPERM;
+		} else if (r == OK) {
 			r = forbidden(fp, vp, W_BIT);
-		if (r == OK && fp->fp_effuid != SU_UID &&
-		    fp->fp_effuid != vp->v_uid)
-			r = EPERM;
+			if (r == OK && fp->fp_effuid != SU_UID &&
+			    fp->fp_effuid != vp->v_uid)
+				r = EPERM;
+		}
 	} else {
+		/* Access ACLs are read under the ACL-controlled read permission. */
 		r = forbidden(fp, vp, R_BIT);
 	}
 

@@ -5,6 +5,7 @@
 #include "inode.h"
 #include "super.h"
 #include <minix/mfs4_disk.h>
+#include "mfs4_acl.h"
 
 static struct inode *new_node(struct inode *ldirp, char *string, mode_t
 	bits, uid_t uid, gid_t gid, u64_t rdev);
@@ -280,6 +281,16 @@ static struct inode *new_node(struct inode *ldirp,
 		}
 	} else {
 		(void)rw_inode(rip, WRITING);
+	}
+
+	/* Apply the parent's default ACL before the inode is made visible. */
+	if (rip->i_sp->s_version == V4 && !S_ISLNK(bits)) {
+		if ((r = mfs4_acl_inherit(ldirp, rip, S_ISDIR(bits))) != OK) {
+			err_code = r;
+			rip->i_nlinks = NO_LINK;
+			put_inode(rip);
+			return NULL;
+		}
 	}
 
 	/* New inode acquired.  Try to make directory entry. */

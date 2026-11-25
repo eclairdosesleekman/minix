@@ -11,6 +11,9 @@
 #include "fs.h"
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <sys/xattr.h>
+#include <minix/posix_acl.h>
 #include <assert.h>
 #include <minix/callnr.h>
 #include "file.h"
@@ -232,6 +235,69 @@ int do_access(void)
 }
 
 
+/*
+ * ACL access checks run in VFS so credentials and supplementary groups are
+ * evaluated once for every filesystem. MFS only stores/validates the value.
+ */
+struct vfs_acl_group_context {
+	struct fproc *rfp;
+	gid_t primary_group;
+};
+
+static int
+vfs_acl_group_match(void *context, uint32_t group)
+{
+	struct vfs_acl_group_context *ctx = context;
+
+	return (gid_t)group == ctx->primary_group ||
+	    in_group(ctx->rfp, (gid_t)group) == OK;
+}
+
+static int
+vfs_acl_permissions(struct fproc *rfp, struct vnode *vp, uid_t uid,
+    gid_t gid, uint16_t *permissions, int *found)
+{
+	static const char acl_name[] = "system.posix_acl_access";
+	struct vfs_acl_group_context context;
+	uint8_t *value;
+	ssize_t length, actual;
+	int r;
+
+	*found = 0;
+	length = 0;
+	r = req_getxattr(vp->v_fs_e, vp->v_inode_nr, acl_name, SELF, 0, 0,
+	    &length);
+	if (r == ENODATA || r == EOPNOTSUPP || r == ENOSYS)
+		return OK;
+	if (r != OK)
+		return r;
+	if (length < (ssize_t)MINIX_ACL_HEADER_SIZE ||
+	    (size_t)length > XATTR_SIZE_MAX)
+		return EIO;
+
+	value = malloc((size_t)length);
+	if (value == NULL)
+		return ENOMEM;
+	actual = 0;
+	r = req_getxattr(vp->v_fs_e, vp->v_inode_nr, acl_name, SELF,
+	    (vir_bytes)value, (size_t)length, &actual);
+	if (r == OK && actual != length)
+		r = EIO;
+	if (r == OK) {
+		context.rfp = rfp;
+		context.primary_group = gid;
+		r = minix_acl_access(value, (size_t)length, (uint32_t)uid,
+		    (uint32_t)vp->v_uid, (uint32_t)vp->v_gid,
+		    vfs_acl_group_match, &context, permissions);
+		if (r != OK)
+			r = EIO; /* malformed persisted ACLs fail closed */
+		else
+			*found = 1;
+	}
+	free(value);
+	return r;
+}
+
 /*===========================================================================*
  *				forbidden				     *
  *===========================================================================*/
@@ -246,7 +312,9 @@ int forbidden(struct fproc *rfp, struct vnode *vp, mode_t access_desired)
   register mode_t bits, perm_bits;
   uid_t uid;
   gid_t gid;
-  int r, shift;
+  uint16_t acl_perm = 0;
+  int r, shift, has_acl;
+
 
   if (vp->v_uid == (uid_t) -1 || vp->v_gid == (gid_t) -1) return(EACCES);
 
@@ -256,20 +324,25 @@ int forbidden(struct fproc *rfp, struct vnode *vp, mode_t access_desired)
   gid = (job_call_nr == VFS_ACCESS ? rfp->fp_realgid : rfp->fp_effgid);
 
   if (uid == SU_UID) {
-	/* Grant read and write permission.  Grant search permission for
-	 * directories.  Grant execute permission (for non-directories) if
-	 * and only if one of the 'X' bits is set.
-	 */
-	if ( S_ISDIR(bits) || bits & ((X_BIT << 6) | (X_BIT << 3) | X_BIT))
+	/* Preserve the traditional super-user execute rule. */
+	if (S_ISDIR(bits) ||
+	    bits & ((X_BIT << 6) | (X_BIT << 3) | X_BIT))
 		perm_bits = R_BIT | W_BIT | X_BIT;
 	else
 		perm_bits = R_BIT | W_BIT;
   } else {
-	if (uid == vp->v_uid) shift = 6;		/* owner */
-	else if (gid == vp->v_gid) shift = 3;		/* group */
-	else if (in_group(fp, vp->v_gid) == OK) shift = 3; /* suppl. groups */
-	else shift = 0;					/* other */
-	perm_bits = (bits >> shift) & (R_BIT | W_BIT | X_BIT);
+	r = vfs_acl_permissions(rfp, vp, uid, gid, &acl_perm, &has_acl);
+	if (r != OK)
+		return r;
+	if (has_acl) {
+		perm_bits = acl_perm & (R_BIT | W_BIT | X_BIT);
+	} else {
+		if (uid == vp->v_uid) shift = 6;		/* owner */
+		else if (gid == vp->v_gid) shift = 3;	/* primary group */
+		else if (in_group(rfp, vp->v_gid) == OK) shift = 3;
+		else shift = 0;					/* other */
+		perm_bits = (bits >> shift) & (R_BIT | W_BIT | X_BIT);
+	}
   }
 
   /* If access desired is not a subset of what is allowed, it is refused. */

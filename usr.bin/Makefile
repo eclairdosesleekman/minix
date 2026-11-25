@@ -10,7 +10,7 @@ SUBDIR= asa \
 	column comm csplit ctags cut \
 	deroff dirname du \
 	env expand \
-	false find finger flock fold fmt fpr from \
+	false find finger flock fold fmt fpr from getfacl \
 	fsplit ftp genassym gencat getent \
 	getopt \
 	head hexdump id indent infocmp ipcrm ipcs join jot \
@@ -22,7 +22,7 @@ SUBDIR= asa \
 	nbperf newgrp nice nl nohup \
 	pagesize passwd paste patch pathchk pr \
 	printenv printf pwhash \
-	renice rev rsh \
+	renice rev rsh setfacl \
 	\
 	sdiff sed seq shar shlock \
 	shuffle  sort split stat su \

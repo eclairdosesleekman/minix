@@ -2,6 +2,7 @@
 #define _MFS4_XATTR_H
 
 #include <sys/types.h>
+#include <stdint.h>
 #include <minix/fsdriver.h>
 
 struct inode;
@@ -16,5 +17,9 @@ int mfs4_removexattr(struct inode *rip, const char *name);
 
 /* Called from the orphan finalization transaction; must not start a tx. */
 int mfs4_xattr_free_chain(struct inode *rip);
+int mfs4_xattr_getvalue(struct inode *rip, const char *name,
+    uint8_t **value, size_t *value_len);
+int mfs4_xattr_setvalue_tx(struct inode *rip, const char *name,
+    const void *value, size_t value_len, int flags);
 
 #endif /* _MFS4_XATTR_H */

@@ -5,7 +5,7 @@ SRCS=	cache.c link.c \
 	stadir.c stats.c table.c time.c utility.c \
 	write.c mfs4_blockmap.c inode.c inode_v3.c mfs4_runtime.c mfs4_map.c \
 	mfs4_journal.c mfs4_journal_core.c mfs4_orphan.c \
-	mfs4_orphan_core.c mfs4_xattr.c mfs4_xattr_core.c \
+	mfs4_orphan_core.c mfs4_xattr.c mfs4_xattr_core.c mfs4_acl.c \
 	main.c path.c super.c
 
 DPADD+=	${LIBMINIXFS} ${LIBFSDRIVER} ${LIBBDEV} ${LIBSYS}
