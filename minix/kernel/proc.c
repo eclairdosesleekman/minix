@@ -1173,7 +1173,7 @@ static int mini_receive(struct proc * caller_ptr,
 		static unsigned long c;
 		if ((c++ & 0x3ff) == 0)
 			printf("mini_receive: %s/%d rebuilding stale caller queue "
-			    "at sender ep=%d rts=%x sendto=%d (n=%lu)\\n",
+			    "at sender ep=%d rts=%x sendto=%d (n=%lu)\n",
 			    caller_ptr->p_name, caller_ptr->p_endpoint,
 			    sender->p_endpoint, sender->p_rts_flags,
 			    sender->p_sendto_e, c);
