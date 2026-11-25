@@ -136,7 +136,7 @@ mfs4_fsck_geometry(struct mfs4_fsck_super *s)
 	uint64_t bits;
 	unsigned int pass;
 
-	if (s->total_blocks <= MFS4_IMAP_START + MFS4_JOURNAL_BLOCKS ||
+	if (s->total_blocks <= MFS4_IMAP_START ||
 	    s->total_blocks > MFS4_MAX_BLOCKS ||
 	    s->total_inodes == 0 ||
 	    s->backup_block != s->total_blocks - 1 ||
