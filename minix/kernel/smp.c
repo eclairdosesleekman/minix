@@ -18,11 +18,22 @@ struct cpu cpus[CONFIG_MAX_CPUS];
 static clock_t ap_lock_wait_started[CONFIG_MAX_CPUS];
 static clock_t ap_init_started[CONFIG_MAX_CPUS];
 
+/*
+ * Per-request data lives on the sending CPU's kernel stack until the target
+ * CPU acknowledges the IPI.  Keeping the expected endpoint here prevents a
+ * delayed IPI from being applied to a different process that reused the same
+ * process-table slot while the sender had dropped the BKL.
+ */
+struct sched_ipi_request {
+	struct proc		*proc;
+	endpoint_t		endpoint;
+	volatile int		result;
+};
+
 /* info passed to another cpu along with a sched ipi */
 struct sched_ipi_data {
 	volatile u32_t		flags;
-	volatile vir_bytes	data;	/* holds a struct proc *; must be
-					 * pointer-wide (64-bit on x86_64) */
+	volatile vir_bytes	data;	/* pointer to sched_ipi_request */
 };
 
 static struct sched_ipi_data  sched_ipi_data[CONFIG_MAX_CPUS];
@@ -230,23 +241,33 @@ void smp_sched_handler(void);
  * the task is finished. Also wait before it finishes task sent by another cpu
  * to the same one.
  */
-static void smp_schedule_sync(struct proc * p, unsigned task)
+static int smp_schedule_sync(struct proc * p, unsigned task)
 {
+	struct sched_ipi_request request;
 	unsigned mycpu = cpuid;
 
+	request.proc = p;
+	request.endpoint = p->p_endpoint;
+	request.result = ESRCH;
+
 	/*
-	 * A scheduling request is directed at the CPU currently owning p.
-	 * Waiting for a busy per-CPU IPI slot drops the BKL, however, and another
-	 * CPU may migrate p during that wait.  Re-read p_cpu after every BKL
-	 * reacquisition; never send a stale request to the former owner.
+	 * The process table slot may be freed and reused while we wait for a
+	 * busy per-CPU IPI slot.  Keep the endpoint generation with the request
+	 * and revalidate it after every BKL reacquisition before touching p.
 	 */
 	for (;;) {
-		unsigned cpu = p->p_cpu;
+		unsigned cpu;
+
+		if (RTS_ISSET(p, RTS_SLOT_FREE) ||
+		    p->p_endpoint != request.endpoint)
+			return ESRCH;
+
+		cpu = p->p_cpu;
 
 		/* The process may have migrated onto our CPU while we waited. */
 		if (cpu == mycpu) {
 			smp_schedule_apply(p, task);
-			return;
+			return OK;
 		}
 
 		assert(cpu < ncpus);
@@ -270,11 +291,22 @@ static void smp_schedule_sync(struct proc * p, unsigned task)
 			BKL_LOCK();
 		}
 
+		/* The BKL is held again; the slot may have been reused. */
+		if (RTS_ISSET(p, RTS_SLOT_FREE) ||
+		    p->p_endpoint != request.endpoint)
+			return ESRCH;
+
 		/* p_cpu is stable while we hold the BKL. */
 		if (p->p_cpu != cpu)
 			continue;
 
-		sched_ipi_data[cpu].data = (vir_bytes) p;
+		/*
+		 * Pass a stack-resident request descriptor, not just the proc
+		 * pointer.  It remains alive until this CPU observes the ack.
+		 */
+		request.result = ESRCH;
+		sched_ipi_data[cpu].data = (vir_bytes) &request;
+		__insn_barrier();
 		sched_ipi_data[cpu].flags = task;
 		__insn_barrier();
 		arch_send_smp_schedule_ipi(cpu);
@@ -289,53 +321,84 @@ static void smp_schedule_sync(struct proc * p, unsigned task)
 			}
 		}
 		BKL_LOCK();
-		return;
+
+		/*
+		 * Do not let the caller continue operating on a replacement
+		 * process if the original endpoint disappeared while the IPI
+		 * was in flight.
+		 */
+		if (RTS_ISSET(p, RTS_SLOT_FREE) ||
+		    p->p_endpoint != request.endpoint)
+			return ESRCH;
+		return request.result;
 	}
 }
 
-void smp_schedule_stop_proc(struct proc * p)
+int smp_schedule_stop_proc(struct proc * p)
 {
-	if (proc_is_runnable(p))
-		smp_schedule_sync(p, SCHED_IPI_STOP_PROC);
-	else
+	int r;
+
+	if (proc_is_runnable(p)) {
+		r = smp_schedule_sync(p, SCHED_IPI_STOP_PROC);
+		if (r != OK)
+			return r;
+	} else {
 		RTS_SET(p, RTS_PROC_STOP);
+	}
 	assert(RTS_ISSET(p, RTS_PROC_STOP));
+	return OK;
 }
 
-void smp_schedule_vminhibit(struct proc * p)
+int smp_schedule_vminhibit(struct proc * p)
 {
-	if (proc_is_runnable(p))
-		smp_schedule_sync(p, SCHED_IPI_VM_INHIBIT);
-	else
+	int r;
+
+	if (proc_is_runnable(p)) {
+		r = smp_schedule_sync(p, SCHED_IPI_VM_INHIBIT);
+		if (r != OK)
+			return r;
+	} else {
 		RTS_SET(p, RTS_VMINHIBIT);
+	}
 	assert(RTS_ISSET(p, RTS_VMINHIBIT));
+	return OK;
 }
 
-void smp_schedule_stop_proc_save_ctx(struct proc * p)
+int smp_schedule_stop_proc_save_ctx(struct proc * p)
 {
+	int r;
+
 	/*
 	 * stop the processes and force the complete context of the process to
 	 * be saved (i.e. including FPU state and such)
 	 */
-	smp_schedule_sync(p, SCHED_IPI_STOP_PROC | SCHED_IPI_SAVE_CTX);
+	r = smp_schedule_sync(p, SCHED_IPI_STOP_PROC | SCHED_IPI_SAVE_CTX);
+	if (r != OK)
+		return r;
 	assert(RTS_ISSET(p, RTS_PROC_STOP));
+	return OK;
 }
 
-void smp_schedule_migrate_proc(struct proc * p, unsigned dest_cpu)
+int smp_schedule_migrate_proc(struct proc * p, unsigned dest_cpu)
 {
+	int r;
+
 	/*
 	 * stop the processes and force the complete context of the process to
 	 * be saved (i.e. including FPU state and such)
 	 */
-	smp_schedule_sync(p, SCHED_IPI_STOP_PROC | SCHED_IPI_SAVE_CTX);
+	r = smp_schedule_sync(p, SCHED_IPI_STOP_PROC | SCHED_IPI_SAVE_CTX);
+	if (r != OK)
+		return r;
 	assert(RTS_ISSET(p, RTS_PROC_STOP));
-	
+
 	/*
 	 * Keep the process stopped after changing its CPU.  The caller must
 	 * finish updating its scheduling parameters before making it runnable;
 	 * releasing it here can wake the destination CPU too early.
 	 */
 	p->p_cpu = dest_cpu;
+	return OK;
 }
 
 void smp_sched_handler(void)
