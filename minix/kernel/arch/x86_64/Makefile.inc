@@ -4,11 +4,6 @@
 # x86_64 kernel must use kernel code model and no red zone
 CFLAGS += -mcmodel=kernel -mno-red-zone
 
-.ifdef CONFIG_SMP
-# Keep %r15 out of compiler-generated code; the kernel caches the logical CPU
-# number there between entry stubs.
-CFLAGS += -ffixed-r15
-.endif
 
 # The kernel must NOT use MMX/SSE/x87: it doesn't save or restore the FPU/vector
 # register state for its own execution, and SSE is the x86_64 codegen default
