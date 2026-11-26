@@ -41,7 +41,27 @@ void panic(const char *fmt, ...)
 	printf("\n");
   }
 
+#ifdef __x86_64__
+  /*
+   * utility.c is also linked as unpaged_utility.o.  Calls from that copy
+   * are renamed to the __k_unpaged_ namespace, but
+   * x86_current_cpu_id() lives in the paged arch_smp.o.  Read the hardware
+   * Local APIC ID directly here instead: panic diagnostics do not need the
+   * logical CPU index, and this also works before the MADT map is ready.
+   */
+  {
+    u32_t eax = 1, ebx, ecx, edx;
+
+    __asm__ volatile("cpuid"
+        : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+    (void)ecx;
+    (void)edx;
+    printf("kernel on APIC ID %u: ",
+        (unsigned int)((ebx >> 24) & 0xff));
+  }
+#else
   printf("kernel on CPU %d: ", (int)cpuid);
+#endif
   util_stacktrace();
 
 #if 0
