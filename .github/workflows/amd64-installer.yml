@@ -1,0 +1,32 @@
+name: amd64 installer shell checks
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/amd64-installer.yml"
+      - "distrib/amd64/installer/install.sh"
+      - "distrib/amd64/installimage/setup-amd64.sh"
+  push:
+    branches:
+      - master
+    paths:
+      - "distrib/amd64/installer/install.sh"
+      - "distrib/amd64/installimage/setup-amd64.sh"
+
+jobs:
+  installer-shell-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check POSIX shell syntax
+        run: |
+          sh -n distrib/amd64/installer/install.sh
+          sh -n distrib/amd64/installimage/setup-amd64.sh
+      - name: Check MFS3 and default MFS4 paths
+        run: |
+          grep -Fq 'Filesystem format: (4) MFS4 or (3) MFS3 [4]' distrib/amd64/installer/install.sh
+          grep -Fq 'Filesystem format: (4) MFS4 or (3) MFS3 [4]' distrib/amd64/installimage/setup-amd64.sh
+          grep -Fq 'mkfs.mfs -V 4 -f' distrib/amd64/installer/install.sh
+          grep -Fq 'mkfs.mfs -V 3' distrib/amd64/installer/install.sh
+          grep -Fq 'mkfs.mfs -V 4 -f' distrib/amd64/installimage/setup-amd64.sh
+          grep -Fq 'mkfs.mfs -V 3' distrib/amd64/installimage/setup-amd64.sh
