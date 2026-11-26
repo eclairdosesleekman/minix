@@ -521,6 +521,22 @@ mfs4_count_free_bits(struct super_block *sp, int map)
 	return (bit_t)free_bits;
 }
 
+static void
+mfs4_inode_location(const struct super_block *sp, ino_t inum,
+    uint64_t *block, uint32_t *slot)
+{
+	uint64_t index = (uint64_t)inum;
+
+	/*
+	 * Inode numbers are also their on-disk slot numbers. Slot zero is
+	 * reserved, so inode 1 (the root inode) starts at offset one inode.
+	 * Keep this mapping consistent with mkfs and fsck.
+	 */
+	*block = sp->s_mfs4_inode_table_start +
+	    index / MFS4_INODES_PER_BLOCK;
+	*slot = (uint32_t)(index % MFS4_INODES_PER_BLOCK);
+}
+
 int
 mfs4_next_generation(ino_t inum, uint32_t *generation)
 {
@@ -534,9 +550,7 @@ mfs4_next_generation(ino_t inum, uint32_t *generation)
 	if (generation == NULL || inum == 0 ||
 	    inum > sp->s_mfs4_total_inodes)
 		return EINVAL;
-	block = sp->s_mfs4_inode_table_start +
-	    ((uint64_t)inum - 1) / MFS4_INODES_PER_BLOCK;
-	slot = (uint32_t)(((uint64_t)inum - 1) % MFS4_INODES_PER_BLOCK);
+	mfs4_inode_location(sp, inum, &block, &slot);
 	if (mfs4_tx_is_active() &&
 	    mfs4_tx_find_meta(block, &shadow) == 0) {
 		old = mfs4_get_le32(shadow + slot * MFS4_INODE_SIZE +
@@ -670,10 +684,7 @@ mfs4_rw_inode(struct inode *rip, int rw_flag)
 	if (rip == NULL || rip->i_num == 0 ||
 	    rip->i_num > sp->s_mfs4_total_inodes)
 		return EINVAL;
-	block = sp->s_mfs4_inode_table_start +
-	    ((uint64_t)rip->i_num - 1) / MFS4_INODES_PER_BLOCK;
-	slot = (uint32_t)(((uint64_t)rip->i_num - 1) %
-	    MFS4_INODES_PER_BLOCK);
+	mfs4_inode_location(sp, rip->i_num, &block, &slot);
 
 	if (rw_flag == READING) {
 		if (mfs4_tx_is_active() &&
