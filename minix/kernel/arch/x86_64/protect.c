@@ -203,9 +203,14 @@ void setup_sysenter_syscall(void)
 		msr_lo |= AMD_EFER_SCE;
 		ia32_msr_write(AMD_MSR_EFER, msr_hi, msr_lo);
 
-		/* STAR[63:32]: kernel/user CS selectors; low 32 bits unused */
+		/*
+		 * In 64-bit mode SYSRET derives the user selectors from STAR[63:48]:
+		 * CS = STAR[63:48] + 16 and SS = STAR[63:48] + 8.  Use the
+		 * reserved index-3 selector as the base so SYSRET loads USER_CS
+		 * at index 5 and USER_DS at index 4, respectively.
+		 */
 		ia32_msr_write(AMD_MSR_STAR,
-			((u32_t)USER_CS_SELECTOR << 16) | (u32_t)KERN_CS_SELECTOR,
+			((u32_t)USER_CS32_SELECTOR << 16) | (u32_t)KERN_CS_SELECTOR,
 			0);
 
 		/* FMASK: RFLAGS bits cleared on SYSCALL entry. IF (0x200) is
