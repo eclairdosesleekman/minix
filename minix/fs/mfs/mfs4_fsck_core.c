@@ -1253,18 +1253,22 @@ mfs4_fsck_cleanup(struct mfs4_fsck_ctx *ctx)
 
 int
 mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
-    int replay_journal, struct mfs4_fsck_report *report)
+    int repair_mode, struct mfs4_fsck_report *report)
 {
 	struct mfs4_fsck_ctx ctx;
 	int pending, r;
 
 	if (io == NULL || io->read_block == NULL || report == NULL ||
-	    (replay_journal && (io->write_block == NULL || io->flush == NULL)))
+	    repair_mode < MFS4_FSCK_CHECK_ONLY ||
+	    repair_mode > MFS4_FSCK_REPAIR_ALL ||
+	    (repair_mode != MFS4_FSCK_CHECK_ONLY &&
+	    (io->write_block == NULL || io->flush == NULL)))
 		return EINVAL;
 	memset(&ctx, 0, sizeof(ctx));
 	memset(report, 0, sizeof(*report));
 	ctx.io = io;
 	ctx.report = report;
+	ctx.repair_mode = repair_mode;
 
 	if ((r = mfs4_fsck_load_super(&ctx, device_blocks)) != 0)
 		goto out;
@@ -1272,7 +1276,7 @@ mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
 	report->total_inodes = ctx.sb.total_inodes;
 	report->data_blocks = ctx.sb.backup_block - ctx.sb.data_start;
 
-	/* Unknown read-only-compatible features must never be replayed by fsck. */
+	/* Unknown read-only-compatible features must never be written or replayed. */
 	if (ctx.sb.ro_compat_features != 0) {
 		r = EOPNOTSUPP;
 		goto out;
@@ -1302,10 +1306,11 @@ mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
 	}
 	report->journal_pending = pending;
 	if (pending) {
-		if (!replay_journal) {
+		if (repair_mode == MFS4_FSCK_CHECK_ONLY) {
 			r = EBUSY;
 			goto out;
 		}
+		/* Replay only a fully validated committed record. */
 		r = mfs4_journal_replay(&ctx.journal_io);
 		if (r != 0)
 			goto out;
@@ -1315,21 +1320,12 @@ mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
 
 	if ((r = mfs4_fsck_alloc_maps(&ctx)) != 0)
 		goto out;
-	if ((r = mfs4_fsck_check_bitmap_tails(&ctx)) != 0)
+	if ((r = mfs4_fsck_scan(&ctx)) != 0)
 		goto out;
-	if ((r = mfs4_fsck_scan_inodes(&ctx)) != 0)
-		goto out;
-	if ((r = mfs4_fsck_orphans(&ctx)) != 0)
-		goto out;
-	if ((r = mfs4_fsck_directories(&ctx)) != 0)
-		goto out;
-	if ((r = mfs4_fsck_check_link_counts(&ctx)) != 0)
-		goto out;
-	if ((r = mfs4_fsck_check_zmap(&ctx)) != 0)
-		goto out;
-
-	/* A single valid superblock copy is sufficient; never rewrite its peer. */
-	r = 0;
+	if (repair_mode != MFS4_FSCK_CHECK_ONLY)
+		r = mfs4_fsck_repair(&ctx);
+	else
+		r = 0;
 out:
 	mfs4_fsck_cleanup(&ctx);
 	return r;
