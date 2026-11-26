@@ -23,17 +23,27 @@ struct mfs4_fsck_report {
 	int journal_replayed;
 	int superblock_degraded;
 	int clean;
+	uint32_t repairs_made;
+	uint64_t unreferenced_data_blocks;
 };
 
+#define MFS4_FSCK_CHECK_ONLY 0
+#define MFS4_FSCK_REPAIR_SAFE 1
+#define MFS4_FSCK_REPAIR_ALL 2
+
 /*
- * Verify an MFS4 volume. If replay_journal is nonzero, a fully validated
- * committed redo transaction is replayed before any home metadata is scanned.
- * Structural errors are never modified by this routine.
+ * Verify and, when requested, repair an MFS4 volume. CHECK_ONLY never writes.
+ * Both repair modes replay a fully validated committed redo transaction
+ * before scanning home metadata. REPAIR_SAFE corrects deterministic metadata
+ * redundancies but never frees unreferenced data blocks. REPAIR_ALL also frees
+ * unreferenced allocated blocks; callers must make an image backup first.
+ * Structural corruption (bad pointers, directories, xattrs or ACL payloads)
+ * is never guessed at or rewritten.
  *
  * device_blocks may be zero when the caller cannot determine the device size.
  * All callbacks return zero on success and a positive errno value on failure.
  */
 int mfs4_fsck_run(const struct mfs4_fsck_io *io, uint64_t device_blocks,
-    int replay_journal, struct mfs4_fsck_report *report);
+    int repair_mode, struct mfs4_fsck_report *report);
 
 #endif /* _MFS4_FSCK_CORE_H */
