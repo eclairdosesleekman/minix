@@ -177,8 +177,12 @@ static int rw_chunk(
 	panic("rw_chunk: position too high");
   if (rip->i_sp->s_version == V4) {
 	  r = mfs4_read_map_checked(rip, (off_t)position, &b);
-	  if (r != OK)
+	  if (r != OK) {
+		  /* Corrupt pointer trees and failed metadata reads fail closed. */
+		  if (r == EIO)
+			  rip->i_sp->s_rd_only = 1;
 		  return -r;
+	  }
   } else {
 	  b = read_map(rip, (off_t)position, 0);
   }
@@ -219,8 +223,15 @@ static int rw_chunk(
 		n = NO_READ;
 	assert(ino != VMC_NO_INODE);
 	assert(!(ino_off % block_size));
-	if ((r = lmfs_get_block_ino(&bp, dev, b, n, ino, ino_off)) != OK)
-		panic("MFS: error getting block (%llu,%u): %d", (unsigned long long)dev, b, r);
+	if ((r = lmfs_get_block_ino(&bp, dev, b, n, ino, ino_off)) != OK) {
+		if (rip->i_sp->s_version == V4) {
+			/* Do not panic the MFS service on a volume I/O failure. */
+			rip->i_sp->s_rd_only = 1;
+			return r;
+		}
+		panic("MFS: error getting block (%llu,%u): %d",
+		    (unsigned long long)dev, b, r);
+	}
   }
 
   /* In all cases, bp now points to a valid buffer. */
@@ -335,6 +346,8 @@ struct buf *get_block_map(register struct inode *rip, u64_t position)
 	if (rip->i_sp->s_version == V4) {
 		r = mfs4_read_map_checked(rip, (off_t)position, &b);
 		if (r != OK) {
+			if (r == EIO)
+				rip->i_sp->s_rd_only = 1;
 			err_code = r;
 			return NULL;
 		}
@@ -351,9 +364,15 @@ struct buf *get_block_map(register struct inode *rip, u64_t position)
 	position = rounddown(position, block_size);
 	assert(rip->i_num != VMC_NO_INODE);
 	if ((r = lmfs_get_block_ino(&bp, rip->i_dev, b, NORMAL, rip->i_num,
-	    position)) != OK)
+	    position)) != OK) {
+		if (rip->i_sp->s_version == V4) {
+			rip->i_sp->s_rd_only = 1;
+			err_code = r;
+			return NULL;
+		}
 		panic("MFS: error getting block (%llu,%u): %d",
 		    (unsigned long long)rip->i_dev, b, r);
+	}
 	return bp;
 }
 

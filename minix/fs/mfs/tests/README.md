@@ -38,11 +38,11 @@ helpers and the open-reference reclaim policy. It does not instantiate the
 MFS inode cache, LMFS buffer cache, VFS callbacks, or device flush/recovery
 path. Those still require a MINIX runtime/QEMU test and crash injection.
 
-MFS4 v1 xattr-chain encoding/cleanup is not implemented yet. Linked-inode
-truncate preserves its xattr chain and clears the truncate orphan state.
-For a zero-link orphan with nonzero `xattr_head`, the worker returns
-`EOPNOTSUPP` and preserves the inode/orphan record rather than freeing an
-inode with unhandled xattrs.
+The MFS4 orphan worker validates and frees a zero-link inode's XAT4
+chain in its final journal transaction before clearing the inode and orphan
+record. The standalone host orphan test does not execute this MFS inode-cache,
+xattr, LMFS, or journal integration; end-to-end crash recovery remains a
+QEMU/device release test.
 
 
 ## Phase 6 xattr format and API

@@ -310,8 +310,16 @@ struct buf *new_block(
 
   r = lmfs_get_block_ino(&bp, rip->i_dev, b, NO_READ, rip->i_num,
   	rounddown(position, rip->i_sp->s_block_size));
-  if (r != OK)
-	panic("MFS: error getting block (%llu,%u): %d", (unsigned long long)rip->i_dev, b, r);
+  if (r != OK) {
+	if (rip->i_sp->s_version == V4) {
+		/* The enclosing MFS4 callback aborts its shadow transaction. */
+		rip->i_sp->s_rd_only = 1;
+		err_code = r;
+		return NULL;
+	}
+	panic("MFS: error getting block (%llu,%u): %d",
+	    (unsigned long long)rip->i_dev, b, r);
+  }
   zero_block(bp);
   return(bp);
 }

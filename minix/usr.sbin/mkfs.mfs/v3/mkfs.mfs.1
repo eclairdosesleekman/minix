@@ -8,6 +8,7 @@
 .Nm
 .Op Fl V Ar version
 .Op Fl n
+.Op Fl f
 .Op Fl ldtv
 .Op Fl B Ar blocksize
 .Op Fl i Ar inodes
@@ -28,7 +29,10 @@ blocks, a 128-byte inode format, and the fixed 66-block journal area.
 For MFS4, print the computed filesystem layout without writing to the target.
 This option requires a target whose size can be determined or an explicit
 .Fl b Ar blocks .
-The following options are available:
+.It Fl f
+For MFS4, skip the interactive confirmation before overwriting the target.
+Use this option only when formatting is intentional, such as in automation.
+Device-mounted checks and geometry validation are still performed.
 .It Fl l
 Make a listing on standard output
 .It Fl d
@@ -84,6 +88,10 @@ Alternate way to specify the size
 The
 .Nm
 builds a file system and copies specified files to it.
+The MFS4 formatter displays the target and filesystem size and requires
+an affirmative confirmation before writing.  The
+.Fl f
+option is required to skip that prompt.
 The prototype file tells which directories and files to copy to it.
 If the prototype file cannot be opened, and its name is just a string of
 digits, an empty file system will be made with the specified number of
