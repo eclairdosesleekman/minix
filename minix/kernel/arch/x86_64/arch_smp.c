@@ -433,14 +433,19 @@ void smp_init (void)
 		goto uniproc_fallback;
 	}
 
+	/*
+	 * discover_cpus() has published the MADT APIC-ID map.  Resolve the BSP
+	 * once and seed the reserved register before any CPU-local access (in
+	 * particular tss_init_all() and setup_sysenter_syscall()).
+	 */
+	bsp_cpu_id = x86_current_cpu_id();
+	cpuid = bsp_cpu_id;
+
 	lapic_addr = LOCAL_APIC_DEF_ADDR;
 	ioapic_enabled = 0;
 
 	tss_init_all();
 	setup_sysenter_syscall();
-
-	/* Resolve the bootstrap processor's logical index through the MADT map. */
-	bsp_cpu_id = x86_current_cpu_id();
 
 	if (!lapic_enable(bsp_cpu_id)) {
 		printf("ERROR : failed to initialize BSP Local APIC\n");

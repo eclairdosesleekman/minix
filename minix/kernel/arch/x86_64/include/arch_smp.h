@@ -8,16 +8,21 @@
 #ifndef __ASSEMBLY__
 
 /*
- * Return the logical CPU number for the processor executing this code.
+ * Resolve the logical CPU number during SMP bootstrap or diagnostics.
  * CPUID.01H:EBX[31:24] reports the local APIC ID; arch_smp.c maps that
  * hardware ID to the logical CPU number assigned from the ACPI MADT.
- *
- * This must not depend on the current stack pointer: kernel call depth,
- * interrupt nesting and switch_k_stack() can all move the stack outside
- * any fixed window around its top.
+ * This slow resolver is not used by the CPU-local hot path.
  */
 unsigned int x86_current_cpu_id(void);
-#define cpuid	x86_current_cpu_id()
+
+/*
+ * %r15 is reserved by the x86_64 SMP kernel build.  Entry stubs save the
+ * interrupted process' %r15, then load this CPU's logical ID from the
+ * fixed slot adjacent to proc_ptr on its kernel stack.  Kernel-mode nested
+ * interrupts preserve the value through pushaq/popaq.
+ */
+register unsigned int x86_cpu_id_reg asm("r15");
+#define cpuid	x86_cpu_id_reg
 
 /*
  * switch_k_stack() jumps to its continuation; it does not push a return
@@ -35,10 +40,11 @@ unsigned int x86_current_cpu_id(void);
  * its CPU-id slot, initialized by tss_init()).
  */
 #define smp_single_cpu_fallback() do {		\
-	  tss_init(0, get_k_stack_top(0));	\
-	  setup_sysenter_syscall();		\
+	  cpuid = 0;				\
 	  bsp_cpu_id = 0;			\
 	  ncpus = 1;				\
+	  tss_init(0, get_k_stack_top(0));	\
+	  setup_sysenter_syscall();		\
 	  switch_k_stack(X86_STACK_SWITCH_SP(0), \
 			  bsp_finish_booting);		\
 } while(0)
