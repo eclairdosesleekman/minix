@@ -14,6 +14,7 @@ MAKEDEV_SOURCE=/minix-MAKEDEV
 EFI_SIZE_MB=64
 MIN_DISK_MB=2048
 MOUNT_POINT=/mnt
+MFS_VERSION=4
 
 fail()
 {
@@ -38,6 +39,34 @@ ask_yes_no()
 		"") [ "$default" = yes ] && return 0 || return 1 ;;
 		*) return 1 ;;
 	esac
+}
+
+select_mfs_version()
+{
+	echo
+	echo "Select the MFS filesystem format."
+	echo "MFS4 is the default and uses a fixed 4 KiB block size."
+	echo "MFS3 is available for legacy compatibility."
+	while :; do
+		printf "Filesystem format: (4) MFS4 or (3) MFS3 [4] "
+		read answer || fail "Could not read the filesystem format."
+		[ -n "$answer" ] || answer=4
+		case "$answer" in
+			4|MFS4|mfs4) MFS_VERSION=4; return 0 ;;
+			3|MFS3|mfs3) MFS_VERSION=3; return 0 ;;
+			*) echo "Enter 4 for MFS4 or 3 for MFS3." ;;
+		esac
+	done
+}
+
+mkfs_mfs()
+{
+	if [ "$MFS_VERSION" = 4 ]; then
+		# The disk-name confirmation above authorizes this format operation.
+		mkfs.mfs -V 4 -f "$@"
+	else
+		mkfs.mfs -V 3 "$@"
+	fi
 }
 
 [ "`id -u 2>/dev/null`" = 0 ] || fail "Run the installer as root."
@@ -156,6 +185,10 @@ else
 fi
 [ -s "$efi_source" ] || [ -b "$efi_source" ] || fail "UEFI boot source $efi_source is not readable."
 
+# Ask before writing the new partition table so users can choose the on-disk
+# MFS version before any destructive operation begins.
+select_mfs_version
+
 printf "\nCreating GPT on %s...\n" "$diskdev"
 gpt "$diskdev" create -f || fail "Could not create the GPT on $diskdev."
 gpt "$diskdev" add -a 1m -s ${EFI_SIZE_MB}m -t efi -l "EFI System" || fail "Could not create the EFI System Partition."
@@ -169,8 +202,8 @@ while [ ! -b "$espdev" ] || [ ! -b "$rootdev" ]; do
 	sleep 1
 done
 
-printf "\nCreating the MINIX root filesystem...\n"
-mkfs.mfs "$rootdev" || fail "Could not create the MFS filesystem on $rootdev."
+printf "\nCreating the MINIX root filesystem as MFS%s...\n" "$MFS_VERSION"
+mkfs_mfs "$rootdev" || fail "Could not create the MFS$MFS_VERSION filesystem on $rootdev."
 
 printf "Installing UEFI boot files from %s...\n" "$efi_source"
 dd if="$efi_source" of="$espdev" || fail "Could not copy the UEFI boot files to $espdev."

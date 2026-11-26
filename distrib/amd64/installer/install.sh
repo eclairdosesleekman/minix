@@ -31,6 +31,32 @@ MOUNTED_HOME=no
 fail() { echo "minix-install: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"; }
 
+select_mfs_version() {
+	echo
+	echo "Step 5: Select the MFS filesystem format"
+	echo "MFS4 is recommended and uses a fixed 4 KiB block size."
+	echo "MFS3 is the legacy format and retains configurable block sizes."
+	while :; do
+		printf "Filesystem format: (4) MFS4 or (3) MFS3 [4] "
+		read MFS_VERSION || fail "input ended"
+		[ -n "$MFS_VERSION" ] || MFS_VERSION=4
+		case "$MFS_VERSION" in
+			4|MFS4|mfs4) MFS_VERSION=4; return ;;
+			3|MFS3|mfs3) MFS_VERSION=3; return ;;
+			*) echo "Enter 4 for MFS4 or 3 for MFS3." ;;
+		esac
+	done
+}
+
+mkfs_mfs() {
+	if [ "$MFS_VERSION" = 4 ]; then
+		# The installer has already obtained explicit destructive confirmation.
+		mkfs.mfs -V 4 -f "$@"
+	else
+		mkfs.mfs -V 3 "$@"
+	fi
+}
+
 usage() {
 	cat <<'EOF'
 Usage: minix-install [--disk c0d0] [--help]
@@ -257,12 +283,18 @@ if [ "$MODE" = automatic ]; then
 	wait_for_device "$USR_PART"
 fi
 
-echo
-if [ "$PRESERVE_HOME" = yes ]; then
-	echo "Step 5: Reinstall uses the default 4 KiB filesystem block size."
+select_mfs_version
+if [ "$MFS_VERSION" = 4 ]; then
+	echo
+	echo "MFS4 uses its fixed 4 KiB filesystem block size."
+	BLOCK_BYTES=4096
+elif [ "$PRESERVE_HOME" = yes ]; then
+	echo
+	echo "MFS3 reinstall uses the default 4 KiB filesystem block size."
 	BLOCK_BYTES=4096
 else
-	echo "Step 5: Select a filesystem block size"
+	echo
+	echo "Step 6: Select the MFS3 filesystem block size"
 	echo "The default filesystem block size is 4 KiB."
 	ask_number "Block size in KiB" 1 64 4
 	BLOCK_BYTES=$((NUMBER * 1024))
@@ -274,16 +306,16 @@ need dd
 need pax
 echo
 echo "Creating filesystems..."
-mkfs.mfs "$ROOT" || fail "could not create root MFS filesystem"
+mkfs_mfs "$ROOT" || fail "could not create root MFS$MFS_VERSION filesystem"
 if [ "$HOME_ENABLED" = yes ] && [ "$PRESERVE_HOME" != yes ]; then
-	mkfs.mfs -B "$BLOCK_BYTES" "$HOME_PART" || fail "could not create /home MFS filesystem"
+	mkfs_mfs -B "$BLOCK_BYTES" "$HOME_PART" || fail "could not create /home MFS$MFS_VERSION filesystem"
 fi
-mkfs.mfs -B "$BLOCK_BYTES" "$USR_PART" || fail "could not create /usr MFS filesystem"
+mkfs_mfs -B "$BLOCK_BYTES" "$USR_PART" || fail "could not create /usr MFS$MFS_VERSION filesystem"
 dd if="$EFI_IMAGE" of="$ESP" bs=64k || fail "could not write UEFI system partition image"
 sync
 
 echo
-echo "Step 6: Installing release sets"
+echo "Step 7: Installing release sets"
 mkdir -p "$MNT"
 mount "$ROOT" "$MNT" || fail "could not mount root filesystem"
 MOUNTED_ROOT=yes
@@ -373,7 +405,7 @@ mkdir -p "$MNT/usr/adm" "$MNT/tmp"
 if [ -c /dev/random ]; then dd if=/dev/random of="$MNT/usr/adm/random.dat" bs=1024 count=1 || :; fi
 
 echo
-echo "Step 7: Configure networking"
+echo "Step 8: Configure networking"
 if [ -x /bin/netconf ]; then
 	/bin/netconf -p "$MNT" || echo "Network configuration was skipped; configure it after first boot."
 else
@@ -381,7 +413,7 @@ else
 fi
 
 echo
-echo "Step 8: Install pkgin (when package archives are on the media)"
+echo "Step 9: Install pkgin (when package archives are on the media)"
 PKG_VERSION=$(uname -v | cut -f2 -d' ')
 PKG_ARCH=$(uname -p)
 PKG_DIR=/packages/$PKG_VERSION/$PKG_ARCH/All

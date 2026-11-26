@@ -66,10 +66,12 @@ amd64 UEFI/GPT boot layout:
 3. In automatic mode, choose the size of a separate `/home` partition.
 4. Choose a full installation or, when an existing MFS `/home` is found,
    reinstall while preserving its contents.
-5. Select the MFS filesystem block size.
-6. Install the available release sets, amd64 kernel and boot modules, and
+5. Select MFS4 (default, fixed 4 KiB blocks) or legacy MFS3.
+6. When MFS3 is selected, choose its filesystem block size; MFS4 always uses
+   its fixed 4 KiB block size.
+7. Install the available release sets, amd64 kernel and boot modules, and
    create the target device nodes.
-7. Configure networking interactively and install `pkgin` when its package
+8. Configure networking interactively and install `pkgin` when its package
    archives are present on the installation media.
 
 Release archives are read from `/usr/amd64/binary/sets`. The installer
@@ -89,8 +91,9 @@ currently supplies `rootdevname=c0d0p1`.
 partition table and all partitions. Expert mode overwrites the EFI, root,
 and `/usr` filesystems; `/home` is reformatted only for a full
 installation. The installer checks that the target is not mounted and
-requires an exact typed confirmation before writing to the disk. In the
-reinstall path, an existing MFS `/home` is preserved.
+requires an exact typed confirmation before writing to the disk. The MFS
+format choice applies to every partition formatted by this installation;
+in the reinstall path, an existing MFS `/home` is preserved as-is.
 
 The amd64 installer is experimental. Test the ISO and both partitioning
 modes in a VM before installing on physical hardware.
