@@ -627,7 +627,7 @@ mfs4_mkfs_main(int argc, char **argv)
 			(void)close(fd);
 			errx(1, "format cancelled (no confirmation received; use -f to force)");
 		}
-		response[strcspn(response, "\\r\\n")] = '\\0';
+		response[strcspn(response, "\r\n")] = '\0';
 		if (strcmp(response, "y") != 0 &&
 		    strcmp(response, "Y") != 0 &&
 		    strcmp(response, "yes") != 0 &&
@@ -636,7 +636,7 @@ mfs4_mkfs_main(int argc, char **argv)
 			errx(1, "format cancelled");
 		}
 	} else {
-		(void)printf("Force mode: confirmation skipped by -f.\\n");
+		(void)printf("Force mode: confirmation skipped by -f.\n");
 	}
 
 	(void)close(fd);
