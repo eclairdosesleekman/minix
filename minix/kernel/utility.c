@@ -23,7 +23,7 @@ extern void direct_com_print_char(char);
 #define ARE_PANICING 0xDEADC0FF
 
 /*===========================================================================*
- *	panic                                          *
+ *		panic                                          *
  *===========================================================================*/
 void panic(const char *fmt, ...)
 {
