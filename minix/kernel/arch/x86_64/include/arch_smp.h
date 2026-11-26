@@ -16,13 +16,12 @@
 unsigned int x86_current_cpu_id(void);
 
 /*
- * %r15 is reserved by the x86_64 SMP kernel build.  Entry stubs save the
- * interrupted process' %r15, then load this CPU's logical ID from the
- * fixed slot adjacent to proc_ptr on its kernel stack.  Kernel-mode nested
- * interrupts preserve the value through pushaq/popaq.
+ * Resolve the current logical CPU ID from the local APIC ID and the ACPI
+ * MADT map.  This accessor avoids relying on a global register variable:
+ * the LLVM 3.6 x86_64 backend used by the MINIX cross toolchain cannot lower
+ * global register variables such as asm("r15").
  */
-register unsigned int x86_cpu_id_reg asm("r15");
-#define cpuid	x86_cpu_id_reg
+#define cpuid	x86_current_cpu_id()
 
 /*
  * switch_k_stack() jumps to its continuation; it does not push a return
@@ -40,7 +39,6 @@ register unsigned int x86_cpu_id_reg asm("r15");
  * its CPU-id slot, initialized by tss_init()).
  */
 #define smp_single_cpu_fallback() do {		\
-	  cpuid = 0;				\
 	  bsp_cpu_id = 0;			\
 	  ncpus = 1;				\
 	  tss_init(0, get_k_stack_top(0));	\
