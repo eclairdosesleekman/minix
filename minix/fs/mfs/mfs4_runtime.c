@@ -408,30 +408,16 @@ mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 		goto fail;
 	}
 
-	for (step = 0; step < search_count; step++) {
-		index = first_allocatable +
-		    ((uint64_t)(origin - first_allocatable) + step) %
-		    search_count;
-		block_index = index / MFS4_BITS_PER_BLOCK;
-		if (block_index >= blocks)
-			break;
-		byte_index = index % MFS4_BITS_PER_BLOCK;
-		if ((r = mfs4_tx_get_meta(start + block_index, type,
-		    &image)) != OK) {
-			err_code = r;
-			goto fail;
-		}
-		mask = (uint8_t)(1U << (byte_index & 7));
-		if ((image[byte_index >> 3] & mask) == 0) {
-			image[byte_index >> 3] |= mask;
-			result = (bit_t)index;
-			break;
-		}
+	ctx.sp = sp; ctx.start = start; ctx.type = type; ctx.local = local;
+	sio.cookie = &ctx;
+	sio.bits = bits; sio.blocks = blocks;
+	sio.first_allocatable = first_allocatable;
+	sio.peek = mfs4_alloc_peek_cb;
+	sio.stage = mfs4_alloc_stage_cb;
+	if ((r = mfs4_alloc_scan(&sio, origin, &found_bit)) != OK) {
+		err_code = r; goto fail;
 	}
-	if (result == NO_BIT) {
-		err_code = ENOSPC;
-		goto fail;
-	}
+	result = (bit_t)found_bit;
 	if (map == ZMAP && (r = mfs4_tx_note_block_delta(1)) != OK) {
 		err_code = r;
 		goto fail;
