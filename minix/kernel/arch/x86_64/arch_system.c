@@ -276,20 +276,9 @@ void arch_init(void)
 	direct_com_print("MINIX/amd64: tss_init done\r\n");
 #endif
 #else
-	/*
-	 * Under SMP the BSP runs the whole bootstrap on the separate boot stack
-	 * (k_boot_stk) until smp_init() switches to its per-CPU stack.
-	 * tss_init_all() seeds the cpuid slot (top-of-stack[-1]) only on the
-	 * per-CPU stacks, so until that switch every get_cpulocal_var() on the
-	 * boot stack -- in arch_post_init() (ptproc = vm), memory_init(),
-	 * system_init(), and the LAPIC-calibration clock IRQ -- would index by a
-	 * garbage cpuid read from an uninitialized boot-stack word.  The
-	 * bootstrap CPU is index 0; seed the boot stack's slot now.  The slot is
-	 * the topmost boot-stack word, only written by the entry frame, so this
-	 * value persists for the rest of the boot-stack phase.  The cpuid macro
-	 * is an lvalue using the same %rbp-rounded computation as every reader.
-	 */
-	cpuid = 0;
+	/* CPU identity comes from the local APIC ID (x86_current_cpu_id);
+	 * before MADT enumeration it returns logical slot 0, so no boot-stack
+	 * seeding is needed here. */
 #endif
 
 #if !CONFIG_OXPCIE
