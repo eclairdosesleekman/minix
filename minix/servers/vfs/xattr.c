@@ -109,7 +109,6 @@ do_xattr(void)
 		vp = flp->filp_vno;
 		assert(vp != NULL);
 		dup_vnode(vp);
-		unlock_filp(flp);
 	} else {
 		if (fd != -1)
 			return EBADF;
