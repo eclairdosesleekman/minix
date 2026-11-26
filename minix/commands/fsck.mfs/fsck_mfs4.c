@@ -291,7 +291,7 @@ fsck_mfs4_dispatch(int argc, char **argv, const char *path)
 			printf("%s: warning: only one superblock copy is valid; "
 			    "use -a/-p/-y to restore its peer\n", path);
 		if (report.repairs_made != 0)
-			printf("%s: applied %u repair operation(s)\n",
+			printf("%s: applied %" PRIu64 " repair operation(s)\n",
 			    path, report.repairs_made);
 		if (!report.clean && report.orphan_inodes != 0)
 			printf("%s: orphan recovery remains pending; volume left dirty "
