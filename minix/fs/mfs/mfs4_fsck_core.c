@@ -967,7 +967,11 @@ mfs4_fsck_check_link_counts(struct mfs4_fsck_ctx *ctx)
 			if ((ip.flags & I4_ORPHAN) && ip.nlink == 0 &&
 			    ctx->link_refs[ino] == 0)
 				continue;
-			if (ctx->repair_mode == MFS4_FSCK_CHECK_ONLY)
+			/* A referenced inode with a zero directory-derived count is
+			 * ambiguous (e.g. a lost inode); do not invent a namespace.
+			 */
+			if (ctx->link_refs[ino] == 0 ||
+			    ctx->repair_mode == MFS4_FSCK_CHECK_ONLY)
 				return EIO;
 			ctx->report->repairs_made++;
 		}
@@ -1033,6 +1037,8 @@ mfs4_fsck_reload_maps(struct mfs4_fsck_ctx *ctx)
 static int
 mfs4_fsck_scan(struct mfs4_fsck_ctx *ctx)
 {
+	int r;
+
 	memset(ctx->seen_blocks, 0, ctx->data_map_bytes);
 	memset(ctx->orphan_seen, 0, (size_t)ctx->sb.total_inodes + 1);
 	memset(ctx->link_refs, 0,
@@ -1046,16 +1052,16 @@ mfs4_fsck_scan(struct mfs4_fsck_ctx *ctx)
 	ctx->report->orphan_inodes = 0;
 	ctx->report->unreferenced_data_blocks = 0;
 
-	if (mfs4_fsck_check_bitmap_tails(ctx) != 0)
-		return EIO;
-	if (mfs4_fsck_scan_inodes(ctx) != 0)
-		return EIO;
-	if (mfs4_fsck_orphans(ctx) != 0)
-		return EIO;
-	if (mfs4_fsck_directories(ctx) != 0)
-		return EIO;
-	if (mfs4_fsck_check_link_counts(ctx) != 0)
-		return EIO;
+	if ((r = mfs4_fsck_check_bitmap_tails(ctx)) != 0)
+		return r;
+	if ((r = mfs4_fsck_scan_inodes(ctx)) != 0)
+		return r;
+	if ((r = mfs4_fsck_orphans(ctx)) != 0)
+		return r;
+	if ((r = mfs4_fsck_directories(ctx)) != 0)
+		return r;
+	if ((r = mfs4_fsck_check_link_counts(ctx)) != 0)
+		return r;
 	return mfs4_fsck_check_zmap(ctx);
 }
 
