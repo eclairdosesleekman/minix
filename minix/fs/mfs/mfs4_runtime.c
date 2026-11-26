@@ -385,7 +385,6 @@ mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 	if (bits <= first_allocatable ||
 	    bits > (uint64_t)UINT32_MAX + 1 || blocks == 0)
 		return NO_BIT;
-	search_count = bits - first_allocatable;
 	if (origin < first_allocatable || origin >= bits)
 		origin = (bit_t)first_allocatable;
 	own = mfs4_own_tx();
