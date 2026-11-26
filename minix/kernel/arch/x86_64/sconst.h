@@ -59,18 +59,10 @@
 #define CURR_PROC_PTR		40
 
 /*
- * The logical CPU ID is the word immediately above proc_ptr at rsp0.  These
- * offsets are measured from the CPU-pushed interrupt frame before
- * SAVE_PROCESS_CTX adds its temporary %rbp push.
+ * The logical CPU ID is retained in rsp0[1] by tss_init for the fixed
+ * per-CPU stack layout.  C code resolves the current ID through
+ * x86_current_cpu_id() instead of relying on a compiler-reserved register.
  */
-#define CURR_CPU_ID		48
-
-#ifdef CONFIG_SMP
-#define LOAD_CPU_ID(displ)	\
-	movq	(CURR_CPU_ID + 8 + displ)(%rsp), %r15
-#else
-#define LOAD_CPU_ID(displ)
-#endif
 
 /*
  * Test whether the interrupt came from kernel context.  If so, jump to label.
@@ -150,8 +142,8 @@
 /*
  * Save the complete user context on a kernel entry caused by an interrupt or
  * IPC trap.  On entry, %rbp is pushed first to obtain a scratch register,
- * then proc_ptr and (for SMP) the logical CPU ID are loaded from their fixed
- * slots at the top of this CPU's kernel stack.
+ * then proc_ptr is loaded from its fixed slot at the top of this CPU's
+ * kernel stack.  C code resolves the logical CPU ID through CPUID.
  *
  * displ = extra bytes already pushed before this macro (e.g. 16 for exception
  * entry with vector + error code; 0 for plain IPC/IRQ entry).
@@ -168,7 +160,6 @@
 	movq	(CURR_PROC_PTR + 8 + displ)(%rsp), %rbp		;\
 									\
 	SAVE_GP_REGS(%rbp)					;\
-	LOAD_CPU_ID(displ)					;\
 	movl	$trapcode, P_KERN_TRAP_STYLE(%rbp)			;\
 	pop	%rsi	/* recover the pushed %rbp and save it */	;\
 	mov	%rsi, BPREG(%rbp)				;\
