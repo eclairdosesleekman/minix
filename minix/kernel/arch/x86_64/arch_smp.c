@@ -62,8 +62,11 @@ unsigned int x86_current_cpu_id(void)
 	unsigned int apic_id;
 	int cpu;
 
-	/* Before MADT enumeration, the bootstrap CPU uses logical slot zero. */
-	if (!apicid_map_ready)
+	/*
+	 * Before MADT enumeration, and in a forced uniprocessor fallback, the
+	 * bootstrap CPU uses logical slot zero.
+	 */
+	if (!apicid_map_ready || ncpus <= 1)
 		return 0;
 
 	__asm__ volatile("cpuid"
