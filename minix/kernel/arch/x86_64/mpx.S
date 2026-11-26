@@ -471,6 +471,27 @@ LABEL(nmi)
 #ifndef USE_WATCHDOG
 	EXCEPTION_NO_ERR_CODE(NMI_VECTOR)
 #else
+	/* A kernel-origin NMI already has the CPU ID cached in %r15. */
+	TEST_INT_IN_KERNEL(8, nmi_watchdog_kernel)
+
+	/*
+	 * A user-origin NMI bypasses SAVE_PROCESS_CTX.  Preserve the user %r15,
+	 * then load the CPU ID from rsp0[1].  On entry RSP is rsp0 - 40; after
+	 * the extra push, rsp0[1] is therefore at 56(%rsp).
+	 */
+	pushq	%r15
+	movq	56(%rsp), %r15
+	pushw	%ds; pushw	%es; pushw	%fs; pushw	%gs
+	pushaq
+	mov	%ss, %si;  mov	%si, %ds;  mov	%si, %es
+	mov	%rsp, %rdi
+	CALL_C_ALIGNED(_C_LABEL(nmi_watchdog_handler))
+	popaq
+	popw	%gs; popw	%fs; popw	%es; popw	%ds
+	popq	%r15		/* restore the interrupted user's %r15 */
+	iretq
+
+nmi_watchdog_kernel:
 	pushw	%ds; pushw	%es; pushw	%fs; pushw	%gs
 	pushaq
 	mov	%ss, %si;  mov	%si, %ds;  mov	%si, %es
