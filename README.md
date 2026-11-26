@@ -182,6 +182,32 @@ MXV is being developed incrementally, with the long-term objective of providing 
 
 **MXV aims to make MINIX 3 not only a guest operating system, but also a native virtualization host.**
 
+## MFS4: 64-bit Metadata-Journaled File System
+
+Permalink: MFS4: 64-bit Metadata-Journaled File System
+
+MFS4 is a modern, 64-bit capable evolution of the MINIX File System (MFS). Designed specifically for the amd64/x86_64 port of MINIX 3, it retains the simplicity and microkernel-friendly architecture of legacy MFS while introducing robust metadata journaling, large file support, and system-wide POSIX ACLs.
+
+The same `mfs` server binary seamlessly handles both MFS3 and MFS4 volumes, dispatching to the correct codec based on superblock magic detection at mount time.
+
+### Key Features
+
+- **64-bit Addressing & Triple Indirect Mapping:** Supports file sizes up to 1 TiB using a fixed 4 KiB block size and a 7-direct + single + double + triple indirect block pointer hierarchy. The on-disk inode is expanded to 128 bytes to accommodate 64-bit file sizes, signed 64-bit timestamps (with nanosecond precision), and 32-bit UID/GID/nlink counts.
+- **Fixed Redo Journaling:** Implements a fixed-length, single-transaction redo journal (66 blocks) at the beginning of the volume. Metadata updates are strictly isolated using transaction-local shadow images, ensuring that uncommitted metadata never leaks into the LMFS block cache or touches home blocks before the commit point.
+- **Hardware-Enforced Durability:** Durability barriers explicitly separate LMFS buffer flushes from device volatile write-cache flushes via `DIOCFLUSH`. MFS4 adopts a fail-closed policy, refusing Read-Write mounts on storage devices that do not support guaranteed cache flushing.
+- **POSIX ACL & Extended Attributes (xattr):** Full system-wide integration of xattr and POSIX ACLs. XAT4 chains are journaled atomically, and final access decisions are evaluated consistently by the VFS layer. Default ACL inheritance and `chmod` synchronization are handled within bounded transactions.
+- **Safe Crash Recovery & Orphan List:** Employs an orphan list mechanism to safely truncate and reclaim blocks from unlinked or shrunk files across multiple bounded transactions. This guarantees structural integrity and prevents stale data exposure even after sudden power loss or server crashes.
+- **No Full `fsck` Required:** On a structurally sound crash, MFS4 automatically replays the committed journal and recovers orphans during the RW mount sequence, eliminating the need for manual full-volume `fsck` scans.
+
+### Tooling
+
+- **`mkfs.mfs -V 4`**: Initializes MFS4 volumes with the fixed journal layout, primary/backup superblocks, and clean state markers. (Defaults to `-V 3` for backward compatibility).
+- **`fsck.mfs`**: A format-aware structural verifier and conservative repair engine that validates journal CRCs, triple indirect trees, xattr chains, and ACL consistency before attempting any repairs.
+
+### Design Philosophy
+
+MFS4 intentionally avoids complex features like B+Trees, extent trees, Copy-on-Write (CoW), or data journaling. By bounding transaction sizes (maximum 64 unique metadata blocks per commit) and relying on ordered data writes, MFS4 provides predictable recovery times, minimizes write amplification, and maintains a small, auditable codebase suitable for MINIX 3's microkernel environment.
+
 ## Current port status
 
 - i386 and amd64 source/build support.
@@ -190,6 +216,8 @@ MXV is being developed incrementally, with the long-term objective of providing 
 - Improvement of SMP and stable SMP operation (check up to 4 cores).
 - Implement POSIX PAX extended header extraction.
 - Implement amd64 version guided installer.
+- Implement MFS4 filesystem (1 TiB support, fixed redo journal, POSIX ACL, xattr).
+- Implement `mkfs.mfs -V 4` and MFS4 aware `fsck.mfs`.
 - Implement ext4 filesystem support (Work in progress).
 - Installation successful and boot from installed virtual disk.
 - Bootstrap successful of pkgsrc 2026Q3.
