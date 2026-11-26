@@ -161,9 +161,9 @@ fsck_mfs4_is_volume(int fd, uint64_t *device_blocks)
 }
 
 static int
-fsck_mfs4_wants_replay(int argc, char **argv, int *no_write)
+fsck_mfs4_repair_mode(int argc, char **argv, int *no_write)
 {
-	int repair = 0;
+	int repair_mode = MFS4_FSCK_CHECK_ONLY;
 	int i;
 
 	*no_write = 0;
@@ -176,9 +176,12 @@ fsck_mfs4_wants_replay(int argc, char **argv, int *no_write)
 			*no_write = 1;
 			break;
 		case 'a':
-		case 'y':
 		case 'p':
-			repair = 1;
+			if (repair_mode < MFS4_FSCK_REPAIR_SAFE)
+				repair_mode = MFS4_FSCK_REPAIR_SAFE;
+			break;
+		case 'y':
+			repair_mode = MFS4_FSCK_REPAIR_ALL;
 			break;
 		case 'r':
 			return -1;
@@ -193,9 +196,9 @@ fsck_mfs4_wants_replay(int argc, char **argv, int *no_write)
 			break;
 		}
 	}
-	if (*no_write && repair)
+	if (*no_write && repair_mode != MFS4_FSCK_CHECK_ONLY)
 		return -1;
-	return repair;
+	return repair_mode;
 }
 
 int
@@ -205,7 +208,7 @@ fsck_mfs4_dispatch(int argc, char **argv, const char *path)
 	struct mfs4_fsck_io io;
 	struct mfs4_fsck_report report;
 	uint64_t device_blocks;
-	int no_write, replay, flags, r, saved_errno;
+	int no_write, repair_mode, flags, r, saved_errno;
 
 	device.fd = open(path, O_RDONLY);
 	if (device.fd < 0) {
@@ -217,23 +220,19 @@ fsck_mfs4_dispatch(int argc, char **argv, const char *path)
 		return FSCK_MFS4_NOT_MFS4;
 	}
 
-	replay = fsck_mfs4_wants_replay(argc, argv, &no_write);
-	if (replay < 0) {
+	repair_mode = fsck_mfs4_repair_mode(argc, argv, &no_write);
+	if (repair_mode < 0) {
 		fprintf(stderr,
-		    "%s: MFS4 accepts -n (check only) or -a/-y/-p "
-		    "(journal replay); other legacy selection flags are unsupported\n",
+		    "%s: MFS4 accepts -n (check only), -a/-p (safe repair), or "
+		    "-y (all supported repairs); other legacy selection flags are unsupported\n",
 		    path);
 		(void)close(device.fd);
 		return 2;
 	}
-	if (no_write) {
+	if (no_write || repair_mode == MFS4_FSCK_CHECK_ONLY)
 		flags = O_RDONLY;
-		replay = 0;
-	} else if (replay) {
+	else
 		flags = O_RDWR;
-	} else {
-		flags = O_RDONLY;
-	}
 	(void)close(device.fd);
 	device.fd = open(path, flags);
 	if (device.fd < 0) {
@@ -256,16 +255,23 @@ fsck_mfs4_dispatch(int argc, char **argv, const char *path)
 	io.write_block = fsck_mfs4_write_block;
 	io.flush = fsck_mfs4_flush;
 
-	r = mfs4_fsck_run(&io, device_blocks, replay, &report);
+	r = mfs4_fsck_run(&io, device_blocks, repair_mode, &report);
 	saved_errno = r;
 	if (r == EBUSY) {
 		fprintf(stderr,
 		    "%s: committed MFS4 journal transaction pending; "
-		    "use -a/-y/-p to replay, -n made no changes\n", path);
+		    "use -a/-p/-y to replay and repair, -n made no changes\n", path);
 	} else if (r == EOPNOTSUPP) {
 		fprintf(stderr,
 		    "%s: unsupported MFS4 feature; volume was not modified\n",
 		    path);
+	} else if (r == EIO && report.unreferenced_data_blocks != 0 &&
+	    repair_mode == MFS4_FSCK_REPAIR_SAFE) {
+		fprintf(stderr,
+		    "%s: %" PRIu64 " allocated data blocks are unreferenced; "
+		    "they were preserved. Back up the image and use -y only if "
+		    "these blocks may be discarded\n",
+		    path, report.unreferenced_data_blocks);
 	} else if (r != 0) {
 		fprintf(stderr, "%s: MFS4 consistency check failed: %s\n",
 		    path, strerror(r));
@@ -283,8 +289,13 @@ fsck_mfs4_dispatch(int argc, char **argv, const char *path)
 		    report.clean ? "clean" : "dirty");
 		if (report.superblock_degraded)
 			printf("%s: warning: only one superblock copy is valid; "
-			    "the damaged copy was not overwritten\n", path);
-		(void)no_write;
+			    "use -a/-p/-y to restore its peer\n", path);
+		if (report.repairs_made != 0)
+			printf("%s: applied %u repair operation(s)\n",
+			    path, report.repairs_made);
+		if (!report.clean && report.orphan_inodes != 0)
+			printf("%s: orphan recovery remains pending; volume left dirty "
+			    "for writable MFS mount recovery\n", path);
 	}
 	if (close(device.fd) != 0 && r == 0)
 		return 1;
