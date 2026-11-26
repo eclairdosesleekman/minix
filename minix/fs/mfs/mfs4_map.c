@@ -201,6 +201,9 @@ mfs4_write_map_active(struct inode *rip, const struct mfs4_map_path *path,
 	if (path->depth == 0) {
 		pointer = rip->i_zone[root_slot];
 		if (freeing) {
+			/* Refuse to free a corrupt pointer before deriving its zmap bit. */
+			if (pointer != 0 && !mfs4_pointer_valid(rip->i_sp, pointer))
+				return EIO;
 			if (pointer != 0)
 				free_zone(fs_dev, pointer);
 			rip->i_zone[root_slot] = 0;
@@ -237,6 +240,9 @@ mfs4_write_map_active(struct inode *rip, const struct mfs4_map_path *path,
 		    indexes[level] * sizeof(uint32_t));
 
 		if (level + 1 == path->depth) {
+			/* The leaf names a data block, not another indirect block. */
+			if (child != 0 && !mfs4_pointer_valid(rip->i_sp, child))
+				return EIO;
 			if (freeing) {
 				if (child != 0)
 					free_zone(fs_dev, child);
