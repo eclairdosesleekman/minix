@@ -363,6 +363,30 @@ mfs4_bitmap_peek(struct super_block *sp, uint64_t block, uint32_t type,
 	return OK;
 }
 
+struct mfs4_alloc_ctx {
+	struct super_block *sp;
+	uint64_t start;
+	uint32_t type;
+	uint8_t *local;
+};
+
+static int
+mfs4_alloc_peek_cb(void *cookie, uint64_t block_index, const uint8_t **out)
+{
+	struct mfs4_alloc_ctx *c = cookie;
+
+	return mfs4_bitmap_peek(c->sp, c->start + block_index, c->type,
+	    c->local, out);
+}
+
+static int
+mfs4_alloc_stage_cb(void *cookie, uint64_t block_index, uint8_t **out)
+{
+	struct mfs4_alloc_ctx *c = cookie;
+
+	return mfs4_tx_get_meta(c->start + block_index, c->type, out);
+}
+
 bit_t
 mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 {
