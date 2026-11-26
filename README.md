@@ -184,8 +184,6 @@ MXV is being developed incrementally, with the long-term objective of providing 
 
 ## MFS4: 64-bit Metadata-Journaled File System
 
-Permalink: MFS4: 64-bit Metadata-Journaled File System
-
 MFS4 is a modern, 64-bit capable evolution of the MINIX File System (MFS). Designed specifically for the amd64/x86_64 port of MINIX 3, it retains the simplicity and microkernel-friendly architecture of legacy MFS while introducing robust metadata journaling, large file support, and system-wide POSIX ACLs.
 
 The same `mfs` server binary seamlessly handles both MFS3 and MFS4 volumes, dispatching to the correct codec based on superblock magic detection at mount time.
