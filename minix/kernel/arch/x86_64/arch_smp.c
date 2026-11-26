@@ -72,8 +72,14 @@ unsigned int x86_current_cpu_id(void)
 	__sync_synchronize();
 	apic_id = (ebx >> 24) & 0xff;
 	cpu = apicid2cpuid[apic_id];
-	if (cpu < 0)
-		panic("x86_current_cpu_id: unknown local APIC id %u", apic_id);
+	if (cpu < 0) {
+		/*
+		 * panic() prints cpuid itself, so it cannot be used when this
+		 * lookup has failed.  Reset rather than index another CPU's
+		 * local state or recurse through panic().
+		 */
+		reset();
+	}
 
 	return (unsigned int)cpu;
 }
