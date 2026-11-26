@@ -1008,6 +1008,230 @@ mfs4_fsck_check_zmap(struct mfs4_fsck_ctx *ctx)
 	return 0;
 }
 
+
+static int
+mfs4_fsck_reload_maps(struct mfs4_fsck_ctx *ctx)
+{
+	uint32_t i;
+	int r;
+
+	for (i = 0; i < ctx->sb.imap_blocks; i++) {
+		r = mfs4_fsck_read(ctx, ctx->sb.imap_start + i,
+		    ctx->imap + (size_t)i * MFS4_BLOCK_SIZE);
+		if (r != 0)
+			return r;
+	}
+	for (i = 0; i < ctx->sb.zmap_blocks; i++) {
+		r = mfs4_fsck_read(ctx, ctx->sb.zmap_start + i,
+		    ctx->zmap + (size_t)i * MFS4_BLOCK_SIZE);
+		if (r != 0)
+			return r;
+	}
+	return 0;
+}
+
+static int
+mfs4_fsck_scan(struct mfs4_fsck_ctx *ctx)
+{
+	memset(ctx->seen_blocks, 0, ctx->data_map_bytes);
+	memset(ctx->orphan_seen, 0, (size_t)ctx->sb.total_inodes + 1);
+	memset(ctx->link_refs, 0,
+	    ((size_t)ctx->sb.total_inodes + 1) * sizeof(*ctx->link_refs));
+	memset(ctx->acl_modes, 0,
+	    ((size_t)ctx->sb.total_inodes + 1) * sizeof(*ctx->acl_modes));
+	memset(ctx->acl_mode_valid, 0, (size_t)ctx->sb.total_inodes + 1);
+	ctx->orphan_head = 0;
+	ctx->report->used_inodes = 0;
+	ctx->report->used_data_blocks = 0;
+	ctx->report->orphan_inodes = 0;
+	ctx->report->unreferenced_data_blocks = 0;
+
+	if (mfs4_fsck_check_bitmap_tails(ctx) != 0)
+		return EIO;
+	if (mfs4_fsck_scan_inodes(ctx) != 0)
+		return EIO;
+	if (mfs4_fsck_orphans(ctx) != 0)
+		return EIO;
+	if (mfs4_fsck_directories(ctx) != 0)
+		return EIO;
+	if (mfs4_fsck_check_link_counts(ctx) != 0)
+		return EIO;
+	return mfs4_fsck_check_zmap(ctx);
+}
+
+/* Restore the redundant copy only when exactly one copy decoded cleanly. */
+static int
+mfs4_fsck_repair_superblocks(struct mfs4_fsck_ctx *ctx)
+{
+	uint8_t block[MFS4_BLOCK_SIZE];
+	int r;
+
+	if (!ctx->report->superblock_degraded)
+		return 0;
+	if (!ctx->primary_super_valid) {
+		if ((r = ctx->io->read_block(ctx->io->cookie, 0, block)) != 0)
+			return r;
+		memcpy(block + MFS4_SUPER_PRIMARY_OFFSET, ctx->valid_super,
+		    MFS4_SUPER_SIZE);
+		if ((r = ctx->io->write_block(ctx->io->cookie, 0, block)) != 0)
+			return r;
+		ctx->primary_super_valid = 1;
+		ctx->report->repairs_made++;
+	}
+	if (!ctx->backup_super_valid) {
+		memset(block, 0, sizeof(block));
+		memcpy(block, ctx->valid_super, MFS4_SUPER_SIZE);
+		if ((r = ctx->io->write_block(ctx->io->cookie,
+		    ctx->sb.backup_block, block)) != 0)
+			return r;
+		ctx->backup_super_valid = 1;
+		ctx->report->repairs_made++;
+	}
+	ctx->report->superblock_degraded = 0;
+	return 0;
+}
+
+static int
+mfs4_fsck_write_maps(struct mfs4_fsck_ctx *ctx)
+{
+	uint32_t i;
+	int r;
+
+	for (i = 0; i < ctx->sb.imap_blocks; i++) {
+		r = ctx->io->write_block(ctx->io->cookie,
+		    ctx->sb.imap_start + i,
+		    ctx->imap + (size_t)i * MFS4_BLOCK_SIZE);
+		if (r != 0)
+			return r;
+	}
+	for (i = 0; i < ctx->sb.zmap_blocks; i++) {
+		r = ctx->io->write_block(ctx->io->cookie,
+		    ctx->sb.zmap_start + i,
+		    ctx->zmap + (size_t)i * MFS4_BLOCK_SIZE);
+		if (r != 0)
+			return r;
+	}
+	return 0;
+}
+
+static int
+mfs4_fsck_write_inode_repairs(struct mfs4_fsck_ctx *ctx)
+{
+	uint8_t block[MFS4_BLOCK_SIZE];
+	uint64_t block_index, ino;
+	size_t offset;
+	uint16_t mode;
+	uint32_t nlink;
+	int changed, r;
+
+	for (block_index = 0; block_index < ctx->sb.inode_table_blocks;
+	    block_index++) {
+		if ((r = mfs4_fsck_read(ctx,
+		    ctx->sb.inode_table_start + block_index, block)) != 0)
+			return r;
+		changed = 0;
+		for (uint32_t slot = 0; slot < MFS4_INODES_PER_BLOCK; slot++) {
+			ino = block_index * MFS4_INODES_PER_BLOCK + slot;
+			if (ino == 0 || ino > ctx->sb.total_inodes)
+				continue;
+			offset = (size_t)slot * MFS4_INODE_SIZE;
+			mode = mfs4_get_le16(block + offset + MFS4_I_MODE);
+			if (mode == 0)
+				continue;
+			nlink = mfs4_get_le32(block + offset + MFS4_I_NLINK);
+			if (nlink != ctx->link_refs[ino]) {
+				mfs4_put_le32(block + offset + MFS4_I_NLINK,
+				    ctx->link_refs[ino]);
+				changed = 1;
+			}
+			if (ctx->acl_mode_valid[ino]) {
+				uint16_t new_mode = (uint16_t)((mode & ~0777U) |
+				    (ctx->acl_modes[ino] & 0777U));
+				if (new_mode != mode) {
+					mfs4_put_le16(block + offset + MFS4_I_MODE,
+					    new_mode);
+					changed = 1;
+				}
+			}
+		}
+		if (changed && (r = ctx->io->write_block(ctx->io->cookie,
+		    ctx->sb.inode_table_start + block_index, block)) != 0)
+			return r;
+	}
+	return 0;
+}
+
+static int
+mfs4_fsck_set_clean(struct mfs4_fsck_ctx *ctx, int clean)
+{
+	uint8_t state[MFS4_BLOCK_SIZE];
+	uint32_t head, flags, new_flags;
+	int r;
+
+	if ((r = mfs4_fsck_read(ctx, ctx->sb.state_block, state)) != 0)
+		return r;
+	if ((r = mfs4_orphan_state_validate(state,
+	    ctx->sb.volume_generation, ctx->sb.total_inodes, &head)) != 0)
+		return r;
+	flags = mfs4_get_le32(state + MFS4_STATE_FLAGS);
+	if ((flags & ~MFS4_STATE_CLEAN) != 0)
+		return EIO;
+	ctx->orphan_head = head;
+
+	/* A non-empty orphan list is not a cleanly unmounted filesystem. */
+	new_flags = flags;
+	if (clean && head == 0)
+		new_flags |= MFS4_STATE_CLEAN;
+	else
+		new_flags &= ~MFS4_STATE_CLEAN;
+	if (new_flags != flags) {
+		mfs4_put_le32(state + MFS4_STATE_FLAGS, new_flags);
+		mfs4_put_le32(state + MFS4_STATE_CRC32C,
+		    mfs4_crc32c(state, MFS4_STATE_CRC32C));
+		if ((r = ctx->io->write_block(ctx->io->cookie,
+		    ctx->sb.state_block, state)) != 0)
+			return r;
+		if ((r = ctx->io->flush(ctx->io->cookie)) != 0)
+			return r;
+	}
+	ctx->report->clean = (new_flags & MFS4_STATE_CLEAN) != 0;
+	return 0;
+}
+
+static int
+mfs4_fsck_repair(struct mfs4_fsck_ctx *ctx)
+{
+	int r, needs_changes;
+
+	needs_changes = ctx->report->repairs_made != 0 ||
+	    ctx->report->superblock_degraded;
+	if (needs_changes) {
+		/* Persist DIRTY before touching home metadata: repair is restartable. */
+		if ((r = mfs4_fsck_set_clean(ctx, 0)) != 0)
+			return r;
+		if ((r = ctx->io->flush(ctx->io->cookie)) != 0)
+			return r;
+		if ((r = mfs4_fsck_repair_superblocks(ctx)) != 0)
+			return r;
+		if ((r = mfs4_fsck_write_maps(ctx)) != 0)
+			return r;
+		if ((r = mfs4_fsck_write_inode_repairs(ctx)) != 0)
+			return r;
+		if ((r = ctx->io->flush(ctx->io->cookie)) != 0)
+			return r;
+
+		/* Re-read the repaired home metadata and rerun every consistency pass. */
+		if ((r = mfs4_fsck_reload_maps(ctx)) != 0)
+			return r;
+		ctx->repair_mode = MFS4_FSCK_CHECK_ONLY;
+		if ((r = mfs4_fsck_scan(ctx)) != 0)
+			return r;
+	}
+
+	/* Do not claim CLEAN while a valid orphan list still needs RW recovery. */
+	return mfs4_fsck_set_clean(ctx, ctx->orphan_head == 0);
+}
+
 static void
 mfs4_fsck_cleanup(struct mfs4_fsck_ctx *ctx)
 {
