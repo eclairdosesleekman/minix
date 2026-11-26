@@ -4,8 +4,8 @@
  * VFS mutation callbacks frame each operation in one transaction. Inode,
  * allocation-map, indirect-map, directory, and state metadata are staged as
  * shadow images. File data remains in LMFS and is forced stable before the
- * journal commit point. Orphan-list cleanup remains a Phase 5 operation, so
- * writable mount refuses volumes with a nonempty orphan list.
+ * journal commit point. After replay, writable mount resumes orphan-list
+ * cleanup before exposing the volume to VFS.
  */
 #include "fs.h"
 #include <string.h>
