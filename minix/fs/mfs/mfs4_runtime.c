@@ -16,6 +16,7 @@
 #include "buf.h"
 #include "inode.h"
 #include "super.h"
+#include "mfs4_alloc_scan.h"
 #include "mfs4_journal.h"
 #include "mfs4_map.h"
 
