@@ -366,8 +366,7 @@ mfs4_bitmap_peek(struct super_block *sp, uint64_t block, uint32_t type,
 bit_t
 mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 {
-	uint64_t bits, start, blocks, step, index, byte_index, block_index;
-	uint64_t first_allocatable, search_count;
+	uint64_t bits, start, blocks, first_allocatable, found_bit;
 	uint32_t type;
 	uint8_t *image, mask;
 	bit_t result = NO_BIT;
