@@ -21,11 +21,18 @@ For MFS4, verify the volume without writing any blocks. A pending committed
 journal transaction is reported and is not replayed.
 .TP 5
 .B \-y
-For MFS4, replay a fully validated committed journal transaction before
-checking the filesystem. This does not perform structural repairs.
+For MFS4, replay a fully validated committed journal transaction and apply
+all supported deterministic repairs. This may free allocated data blocks
+that are not referenced by any valid inode, so make a filesystem image backup
+before using this option.
 .TP 5
 .B \-a
-# Automatically repair inconsistencies
+For MFS4, replay a validated committed journal transaction and apply only
+safe repairs. Unreferenced allocated data blocks are preserved.
+.TP 5
+.B \-p
+For MFS4, perform the same safe, preen-style repairs as
+.BR \-a .
 .TP 5
 .B \-c
 # Check and list only the specified i-nodes
@@ -77,32 +84,51 @@ simply be unmounted before it is checked.
 .\" disk name refs corrected, i.e., old hd1 now c0d0p0 -- ASW 2005-01-15
 
 .SH MFS4 VOLUMES
-The MFS4 checker is selected by the on-disk magic number.  The legacy MFS2/MFS3
+The MFS4 checker is selected by the on-disk magic number. The legacy MFS2/MFS3
 checker remains unchanged for legacy volumes.
 .PP
 For MFS4, the default operation and
 .B \-n
-are read-only checks.  The checker validates both superblock copies, the fixed
+are read-only checks. The checker validates both superblock copies, the fixed
 redo journal, allocation bitmaps, inode records, direct and indirect block
 trees (including triple indirection), directory entries, orphan state,
-extended-attribute chains, and POSIX ACL values.
+extended-attribute chains, POSIX ACL values, link counts, and allocation
+references.
 .PP
 The
 .B \-a
 and
-.B \-y
+.B \-p
 options replay a journal transaction only after its commit record, header,
 descriptors, and every metadata image have passed CRC and range validation.
-The replay is idempotent.  These options do not guess repairs for damaged
-bitmaps, inodes, directories, or xattrs.  Such structural inconsistencies are
-reported without modifying their metadata.  A damaged superblock copy is not
-automatically overwritten.
+They then repair deterministic metadata redundancies: restore a missing
+redundant superblock from the valid peer, restore reserved and tail bitmap
+bits, reconcile inode allocation bits with valid inode records, allocate
+bitmap bits for referenced blocks, reconcile link counts where the directory
+graph is unambiguous, and make inode mode bits agree with a valid access ACL.
+They do not free unreferenced allocated data blocks.
 .PP
-The MFS4 checker currently accepts
+The
+.B \-y
+option performs the same repairs and additionally clears allocation bits for
+blocks that are not referenced by any valid inode, indirect tree, or xattr
+chain. This may discard recoverable data from a lost allocation, so it must
+not be used without a prior image backup.
+.PP
+After repairs, the checker flushes home metadata, rereads the repaired
+superblocks and allocation maps, and reruns the consistency scan. It sets the
+clean state only if the full scan succeeds and the orphan list is empty.
+A structurally valid non-empty orphan list is left dirty for the MFS writable
+mount recovery path.
+.PP
+The checker never guesses repairs for invalid block pointers, duplicate block
+references, damaged directory entries, invalid orphan chains, malformed
+xattr TLVs, or invalid ACL payloads. A committed journal whose header or
+images fail validation is not discarded. Unknown incompat and read-only
+compatible features are not repaired or replayed. Structural errors are
+reported without changing home metadata.
+.PP
+Before running a repair, unmount the filesystem and make a backup image.
 .B \-n
-and journal replay via
-.BR \-a ,
-.BR \-y ,
-or
-.BR \-p .
-Legacy selection and interactive repair flags are not supported for MFS4.
+never writes blocks or replays the journal. Legacy selection and interactive
+repair flags are not supported for MFS4.
