@@ -212,6 +212,14 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 		return OK;
 	}
 
+	/*
+	 * s_mfs4_volume_flags carries the read-only-compatible feature mask.
+	 * Unknown bits permit a read-only mount, but must be rejected before
+	 * any RW-side flush, journal replay, or other on-disk mutation.
+	 */
+	if (sp->s_mfs4_volume_flags != 0)
+		return EOPNOTSUPP;
+
 	/* Fail closed when the device cannot promise durable journal barriers. */
 	if ((r = mfs4_jio_flush(sp)) != OK)
 		return r;
@@ -230,10 +238,6 @@ mfs4_journal_mount(struct super_block *sp, int readonly)
 	 */
 	used_zones = sp->s_zones - mfs4_count_free_bits(sp, ZMAP);
 	lmfs_set_blockusage(sp->s_zones, used_zones);
-
-	/* Do not modify a volume with features this server does not know. */
-	if (sp->s_mfs4_volume_flags != 0)
-		return EOPNOTSUPP;
 
 	/* Recovery is idempotent: the orphan head remains published until each
 	 * inode's final cleanup transaction commits.
