@@ -8,14 +8,16 @@
 #ifndef __ASSEMBLY__
 
 /*
- * Returns the current cpu id.  The id is stored as a reg_t at
- * kernel_stack_top - sizeof(reg_t) by tss_init() (see protect.c).  Use
- * vir_bytes (64-bit) for the address arithmetic so the kernel stack VA at
- * 0xFFFFFFFF80xxxxxx is not truncated, and read it as a reg_t so [-1] lands
- * on the full 8-byte slot rather than its high (zero) half.
+ * Return the logical CPU number for the processor executing this code.
+ * CPUID.01H:EBX[31:24] reports the local APIC ID; arch_smp.c maps that
+ * hardware ID to the logical CPU number assigned from the ACPI MADT.
+ *
+ * This must not depend on the current stack pointer: kernel call depth,
+ * interrupt nesting and switch_k_stack() can all move the stack outside
+ * any fixed window around its top.
  */
-#define cpuid	(((reg_t *)(((vir_bytes)get_stack_frame() + (K_STACK_SIZE - 1)) \
-						& ~(K_STACK_SIZE - 1)))[-1])
+unsigned int x86_current_cpu_id(void);
+#define cpuid	x86_current_cpu_id()
 
 /*
  * switch_k_stack() jumps to its continuation; it does not push a return
