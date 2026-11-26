@@ -41,9 +41,41 @@ static int volatile cpu_down;
 
 #define SMP_SHUTDOWN_TIMEOUT_US 5000000U
 
-/* there can be at most 255 local APIC ids, each fits in 8 bits */
-static unsigned char apicid2cpuid[255];
+/* The xAPIC ID is an 8-bit value, including 255. */
+static int apicid2cpuid[256];
+static volatile int apicid_map_ready;
 unsigned char cpuid2apicid[CONFIG_MAX_CPUS];
+
+/*
+ * Return the logical CPU number of the current processor without consulting
+ * the kernel stack.  CPUID leaf 1 reports the local APIC ID in EBX[31:24].
+ * The ACPI MADT map is published before any application processor is
+ * started.  Before that point only the bootstrap processor is active, so
+ * CPU 0 is the only valid CPU-local slot.
+ */
+unsigned int x86_current_cpu_id(void)
+{
+	u32_t eax = 1, ebx, ecx, edx;
+	unsigned int apic_id;
+	int cpu;
+
+	__asm__ volatile("cpuid"
+		: "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
+	(void)ecx;
+	(void)edx;
+
+	if (!apicid_map_ready)
+		return 0;
+
+	/* Pair the map publication with the MADT table writes. */
+	__sync_synchronize();
+	apic_id = (ebx >> 24) & 0xff;
+	cpu = apicid2cpuid[apic_id];
+	if (cpu < 0)
+		panic("x86_current_cpu_id: unknown local APIC id %u", apic_id);
+
+	return (unsigned int)cpu;
+}
 
 SPINLOCK_DEFINE(smp_cpu_lock)
 SPINLOCK_DEFINE(dispq_lock)
@@ -366,6 +398,10 @@ static int discover_cpus(void)
 {
 	struct acpi_madt_lapic * cpu;
 
+	/* -1 marks APIC IDs not present in the ACPI MADT. */
+	memset(apicid2cpuid, 0xff, sizeof(apicid2cpuid));
+	apicid_map_ready = 0;
+
 	while (ncpus < CONFIG_MAX_CPUS && (cpu = acpi_get_lapic_next())) {
 		apicid2cpuid[cpu->apic_id] = ncpus;
 		cpuid2apicid[ncpus] = cpu->apic_id;
@@ -373,9 +409,12 @@ static int discover_cpus(void)
 		ncpus++;
 	}
 
+	/* Publish the complete lookup table before an AP can enter C code. */
+	__sync_synchronize();
+	apicid_map_ready = 1;
+
 	return ncpus;
 }
-
 void smp_init (void)
 {
 	/* read the MP configuration */
@@ -396,18 +435,6 @@ void smp_init (void)
 	 */
 	bsp_cpu_id = apicid2cpuid[apicid()];
 
-	/*
-	 * tss_init_all() seeded the cpuid slot (top-of-stack[-1]) only on the
-	 * real per-CPU stacks (get_k_stack_top()); the BSP is still on the
-	 * separate boot stack (k_boot_stk), whose slot is uninitialized.
-	 * lapic_enable() below calibrates the LAPIC timer with interrupts
-	 * enabled, and the clock IRQ reads cpuid in context_stop() to index
-	 * kernel_ticks[] &c.  Seed the boot stack's slot with the BSP id now so
-	 * that read is valid until we switch_k_stack().  The cpuid macro is an
-	 * lvalue using the same %rbp-rounded computation, so this writes exactly
-	 * the slot the IRQ will read while we run on the boot stack.
-	 */
-	cpuid = bsp_cpu_id;
 
 	if (!lapic_enable(bsp_cpu_id)) {
 		printf("ERROR : failed to initialize BSP Local APIC\n");
