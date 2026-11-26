@@ -54,6 +54,12 @@ set_bit(uint8_t *map, uint32_t bit)
 }
 
 static void
+clear_bit(uint8_t *map, uint32_t bit)
+{
+	map[bit >> 3] &= (uint8_t)~(1U << (bit & 7U));
+}
+
+static void
 make_super(uint8_t raw[MFS4_SUPER_SIZE])
 {
 	memset(raw, 0, MFS4_SUPER_SIZE);
@@ -298,7 +304,7 @@ test_directory_corruption_is_not_repaired(void)
 	io.write_block = test_write;
 	io.flush = test_flush;
 
-	r = mfs4_fsck_run(&io, TEST_BLOCKS, 0, &report);
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_ALL, &report);
 	assert(r == EIO);
 	assert(device.writes == 0);
 }
@@ -319,8 +325,111 @@ test_bad_state_crc_is_rejected_without_writes(void)
 	io.write_block = test_write;
 	io.flush = test_flush;
 
-	r = mfs4_fsck_run(&io, TEST_BLOCKS, 0, &report);
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_ALL, &report);
 	assert(r == EIO);
+	assert(device.writes == 0);
+}
+
+static void
+test_safe_repairs_redundant_metadata(void)
+{
+	struct test_device device;
+	struct mfs4_fsck_io io;
+	struct mfs4_fsck_report report;
+	uint8_t *root_inode, super[MFS4_SUPER_SIZE];
+	uint32_t flags;
+	int r;
+
+	make_volume(&device);
+	/* Reconstruct reserved bitmap bits, link count and the backup superblock. */
+	clear_bit(device.blocks[68], 1);
+	clear_bit(device.blocks[69], 0);
+	root_inode = device.blocks[70] + MFS4_INODE_SIZE;
+	mfs4_put_le32(root_inode + MFS4_I_NLINK, 7);
+	memset(device.blocks[TEST_BLOCKS - 1], 0, MFS4_BLOCK_SIZE);
+
+	memset(&io, 0, sizeof(io));
+	io.cookie = &device;
+	io.read_block = test_read;
+	io.write_block = test_write;
+	io.flush = test_flush;
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_SAFE, &report);
+	assert(r == 0);
+	assert(report.repairs_made >= 3);
+	assert(device.writes != 0);
+	assert((device.blocks[68][0] & 0x03U) == 0x03U);
+	assert((device.blocks[69][0] & 0x01U) == 0x01U);
+	assert(mfs4_get_le32(device.blocks[70] + MFS4_INODE_SIZE +
+	    MFS4_I_NLINK) == 2);
+	memcpy(super, device.blocks[0] + MFS4_SUPER_PRIMARY_OFFSET,
+	    sizeof(super));
+	assert(memcmp(device.blocks[TEST_BLOCKS - 1], super,
+	    sizeof(super)) == 0);
+	flags = mfs4_get_le32(device.blocks[72] + MFS4_STATE_FLAGS);
+	assert((flags & MFS4_STATE_CLEAN) != 0);
+	assert(report.clean == 1);
+}
+
+static void
+test_preen_preserves_unreferenced_blocks_but_yes_frees_them(void)
+{
+	struct test_device device;
+	struct mfs4_fsck_io io;
+	struct mfs4_fsck_report report;
+	int r;
+
+	make_volume(&device);
+	/* zmap bit 1 names data block 74, which no inode references. */
+	set_bit(device.blocks[69], 1);
+	memset(&io, 0, sizeof(io));
+	io.cookie = &device;
+	io.read_block = test_read;
+	io.write_block = test_write;
+	io.flush = test_flush;
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_SAFE, &report);
+	assert(r == EIO);
+	assert(report.unreferenced_data_blocks == 1);
+	assert(device.writes == 0);
+	assert((device.blocks[69][0] & 0x02U) != 0);
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_ALL, &report);
+	assert(r == 0);
+	assert(report.repairs_made != 0);
+	assert(report.unreferenced_data_blocks == 0);
+	assert((device.blocks[69][0] & 0x02U) == 0);
+	assert(report.clean == 1);
+}
+
+static void
+test_unknown_incompat_feature_is_never_repaired(void)
+{
+	struct test_device device;
+	struct mfs4_fsck_io io;
+	struct mfs4_fsck_report report;
+	uint8_t *primary, *backup;
+	int r;
+
+	make_volume(&device);
+	primary = device.blocks[0] + MFS4_SUPER_PRIMARY_OFFSET;
+	backup = device.blocks[TEST_BLOCKS - 1];
+	mfs4_put_le32(primary + MFS4_SB_INCOMPAT_FEATURES, 1);
+	mfs4_put_le32(primary + MFS4_SB_CRC32C, 0);
+	mfs4_put_le32(primary + MFS4_SB_CRC32C,
+	    mfs4_crc32c(primary, MFS4_SB_CRC32C));
+	mfs4_put_le32(backup + MFS4_SB_INCOMPAT_FEATURES, 1);
+	mfs4_put_le32(backup + MFS4_SB_CRC32C, 0);
+	mfs4_put_le32(backup + MFS4_SB_CRC32C,
+	    mfs4_crc32c(backup, MFS4_SB_CRC32C));
+	memset(&io, 0, sizeof(io));
+	io.cookie = &device;
+	io.read_block = test_read;
+	io.write_block = test_write;
+	io.flush = test_flush;
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_ALL, &report);
+	assert(r == EOPNOTSUPP);
 	assert(device.writes == 0);
 }
 
@@ -332,6 +441,9 @@ main(void)
 	test_detached_orphan_directory_link_counts();
 	test_directory_corruption_is_not_repaired();
 	test_bad_state_crc_is_rejected_without_writes();
+	test_safe_repairs_redundant_metadata();
+	test_preen_preserves_unreferenced_blocks_but_yes_frees_them();
+	test_unknown_incompat_feature_is_never_repaired();
 	puts("mfs4_fsck_test: all tests passed");
 	return 0;
 }
