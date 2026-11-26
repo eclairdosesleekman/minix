@@ -23,7 +23,7 @@ struct mfs4_fsck_report {
 	int journal_replayed;
 	int superblock_degraded;
 	int clean;
-	uint32_t repairs_made;
+	uint64_t repairs_made;
 	uint64_t unreferenced_data_blocks;
 };
 
