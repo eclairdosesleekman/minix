@@ -14,13 +14,14 @@
 /* Table sizes. */
 #define IDT_SIZE 256	/* the table is set to it's maximal size */
 
-/* GDT layout (SYSENTER/SYSEXIT compliant) */
+/* GDT layout (SYSENTER/SYSCALL/SYSRET compliant) */
 #define KERN_CS_INDEX        1
 #define KERN_DS_INDEX        2
-#define USER_CS_INDEX        3
-#define USER_DS_INDEX        4
-#define LDT_INDEX            5
-#define TSS_INDEX_FIRST      6
+#define USER_CS32_INDEX      3 /* STAR[63:48] base for 64-bit SYSRET */
+#define USER_DS_INDEX        4 /* STAR[63:48] + 8: SYSRET SS */
+#define USER_CS_INDEX        5 /* STAR[63:48] + 16: SYSRET CS */
+#define LDT_INDEX            6 /* reserved; x86_64 loads a null LDTR */
+#define TSS_INDEX_FIRST      7
 /* 64-bit TSS descriptor occupies 2 GDT slots (16 bytes instead of 8) */
 #define TSS_INDEX(cpu)       (TSS_INDEX_FIRST + (cpu) * 2)
 #define GDT_SIZE             (TSS_INDEX(CONFIG_MAX_CPUS))
@@ -28,6 +29,7 @@
 #define SEG_SELECTOR(i)          ((i)*8)
 #define KERN_CS_SELECTOR SEG_SELECTOR(KERN_CS_INDEX)
 #define KERN_DS_SELECTOR SEG_SELECTOR(KERN_DS_INDEX)
+#define USER_CS32_SELECTOR SEG_SELECTOR(USER_CS32_INDEX)
 #define USER_CS_SELECTOR (SEG_SELECTOR(USER_CS_INDEX) | USER_PRIVILEGE)
 #define USER_DS_SELECTOR (SEG_SELECTOR(USER_DS_INDEX) | USER_PRIVILEGE)
 #define LDT_SELECTOR SEG_SELECTOR(LDT_INDEX)
