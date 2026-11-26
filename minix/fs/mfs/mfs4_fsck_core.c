@@ -1,9 +1,11 @@
 /*
- * Read-only structural verifier for the MFS4 v1.0 disk format.
+ * Structural verifier and conservative repair engine for the MFS4 v1.0 format.
  *
- * The checker deliberately shares the journal, orphan, xattr and ACL codecs
- * with the MFS server. It never guesses at repairs: the only write operation
- * is an explicitly requested replay of a completely validated commit record.
+ * The checker shares journal, orphan, xattr and ACL codecs with the MFS server.
+ * Repair writes are staged until the complete metadata graph has been checked;
+ * a dirty state marker is flushed before repairs, and the repaired volume is
+ * rescanned before CLEAN may be set. Ambiguous structural corruption is never
+ * guessed at or rewritten.
  */
 #include <errno.h>
 #include <limits.h>
@@ -1065,6 +1067,29 @@ mfs4_fsck_scan(struct mfs4_fsck_ctx *ctx)
 	return mfs4_fsck_check_zmap(ctx);
 }
 
+static int
+mfs4_fsck_verify_superblocks(struct mfs4_fsck_ctx *ctx)
+{
+	uint8_t block0[MFS4_BLOCK_SIZE], backup_block[MFS4_BLOCK_SIZE];
+	uint8_t primary[MFS4_SUPER_SIZE], backup[MFS4_SUPER_SIZE];
+	struct mfs4_fsck_super ps, bs;
+	int r;
+
+	if ((r = ctx->io->read_block(ctx->io->cookie, 0, block0)) != 0)
+		return r;
+	if ((r = ctx->io->read_block(ctx->io->cookie,
+	    ctx->sb.backup_block, backup_block)) != 0)
+		return r;
+	memcpy(primary, block0 + MFS4_SUPER_PRIMARY_OFFSET, sizeof(primary));
+	memcpy(backup, backup_block, sizeof(backup));
+	if (mfs4_fsck_decode_super(primary, &ps) != 0 ||
+	    mfs4_fsck_decode_super(backup, &bs) != 0 ||
+	    memcmp(primary, backup, MFS4_SUPER_SIZE) != 0 ||
+	    memcmp(primary, ctx->valid_super, MFS4_SUPER_SIZE) != 0)
+		return EIO;
+	return 0;
+}
+
 /* Restore the redundant copy only when exactly one copy decoded cleanly. */
 static int
 mfs4_fsck_repair_superblocks(struct mfs4_fsck_ctx *ctx)
@@ -1218,6 +1243,8 @@ mfs4_fsck_repair(struct mfs4_fsck_ctx *ctx)
 		if ((r = ctx->io->flush(ctx->io->cookie)) != 0)
 			return r;
 		if ((r = mfs4_fsck_repair_superblocks(ctx)) != 0)
+			return r;
+		if ((r = mfs4_fsck_verify_superblocks(ctx)) != 0)
 			return r;
 		if ((r = mfs4_fsck_write_maps(ctx)) != 0)
 			return r;
