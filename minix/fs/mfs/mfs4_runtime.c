@@ -398,12 +398,12 @@ mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 	 * root directory block.  Never allocate either one if its bitmap bit
 	 * has been cleared by on-disk corruption.
 	 */
-	if ((r = mfs4_tx_get_meta(start, type, &image)) != OK) {
+	if ((r = mfs4_bitmap_peek(sp, start, type, local, &peek)) != OK) {
 		err_code = r;
 		goto fail;
 	}
-	if ((map == IMAP && (image[0] & 0x02U) == 0) ||
-	    (map == ZMAP && (image[0] & 0x01U) == 0)) {
+	if ((map == IMAP && (peek[0] & 0x02U) == 0) ||
+	    (map == ZMAP && (peek[0] & 0x01U) == 0)) {
 		err_code = EIO;
 		goto fail;
 	}
