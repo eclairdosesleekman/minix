@@ -380,9 +380,9 @@ static void smp_reinit_vars(void)
 	ioapic_enabled = 0;
 
 	/*
-	 * Keep the BSP's logical CPU ID: cpuid is already stored in the active
-	 * bootstrap stack, and the online CPU mask may therefore be sparse even
-	 * when SMP initialization falls back to one processor.
+	 * Keep the BSP's logical CPU ID.  CPU identity now comes from the MADT
+	 * APIC-ID map, not from the active kernel stack, so the online CPU mask
+	 * may remain sparse when SMP initialization falls back to one processor.
 	 */
 	ncpus = bsp_cpu_id + 1;
 }
