@@ -372,6 +372,86 @@ test_safe_repairs_redundant_metadata(void)
 }
 
 static void
+test_primary_superblock_is_restored_from_backup(void)
+{
+	struct test_device device;
+	struct mfs4_fsck_io io;
+	struct mfs4_fsck_report report;
+	uint8_t primary[MFS4_SUPER_SIZE];
+	uint8_t *raw;
+	int r;
+
+	make_volume(&device);
+	raw = device.blocks[0] + MFS4_SUPER_PRIMARY_OFFSET;
+	memset(raw, 0, MFS4_SUPER_SIZE);
+	memset(&io, 0, sizeof(io));
+	io.cookie = &device;
+	io.read_block = test_read;
+	io.write_block = test_write;
+	io.flush = test_flush;
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_SAFE, &report);
+	assert(r == 0);
+	assert(report.repairs_made != 0);
+	memcpy(primary, device.blocks[TEST_BLOCKS - 1], sizeof(primary));
+	assert(memcmp(raw, primary, sizeof(primary)) == 0);
+	assert(report.superblock_degraded == 0);
+}
+
+static void
+test_inode_and_referenced_data_bitmap_bits_are_restored(void)
+{
+	struct test_device device;
+	struct mfs4_fsck_io io;
+	struct mfs4_fsck_report report;
+	uint8_t child_inode[MFS4_INODE_SIZE];
+	uint8_t *root, *child;
+	int r;
+
+	make_volume(&device);
+	root = device.blocks[73];
+	child = device.blocks[74];
+
+	/* Add one child directory, then lose both its imap and data zmap bits. */
+	mfs4_put_le32(device.blocks[70] + MFS4_INODE_SIZE + MFS4_I_NLINK, 3);
+	mfs4_put_le64(device.blocks[70] + MFS4_INODE_SIZE + MFS4_I_SIZE,
+	    3 * MFS4_DIRENT_SIZE);
+	mfs4_put_le32(root + 2 * MFS4_DIRENT_SIZE + MFS4_DIRENT_INODE, 2);
+	memcpy(root + 2 * MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME, "child", 5);
+
+	memset(child_inode, 0, sizeof(child_inode));
+	mfs4_put_le16(child_inode + MFS4_I_MODE, 0040755);
+	mfs4_put_le32(child_inode + MFS4_I_NLINK, 2);
+	mfs4_put_le64(child_inode + MFS4_I_SIZE, 2 * MFS4_DIRENT_SIZE);
+	mfs4_put_le32(child_inode + MFS4_I_GENERATION, 1);
+	mfs4_put_le32(child_inode + MFS4_I_DIRECT, 74);
+	memcpy(device.blocks[70] + 2 * MFS4_INODE_SIZE,
+	    child_inode, sizeof(child_inode));
+
+	memset(child, 0, MFS4_BLOCK_SIZE);
+	mfs4_put_le32(child + MFS4_DIRENT_INODE, 2);
+	memcpy(child + MFS4_DIRENT_NAME, ".", 1);
+	mfs4_put_le32(child + MFS4_DIRENT_SIZE + MFS4_DIRENT_INODE, 1);
+	memcpy(child + MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME, "..", 2);
+
+	clear_bit(device.blocks[68], 2);
+	clear_bit(device.blocks[69], 1);
+	memset(&io, 0, sizeof(io));
+	io.cookie = &device;
+	io.read_block = test_read;
+	io.write_block = test_write;
+	io.flush = test_flush;
+
+	r = mfs4_fsck_run(&io, TEST_BLOCKS, MFS4_FSCK_REPAIR_SAFE, &report);
+	assert(r == 0);
+	assert(report.used_inodes == 2);
+	assert(report.used_data_blocks == 2);
+	assert(report.repairs_made != 0);
+	assert((device.blocks[68][0] & (1U << 2)) != 0);
+	assert((device.blocks[69][0] & (1U << 1)) != 0);
+}
+
+static void
 test_preen_preserves_unreferenced_blocks_but_yes_frees_them(void)
 {
 	struct test_device device;
@@ -442,6 +522,8 @@ main(void)
 	test_directory_corruption_is_not_repaired();
 	test_bad_state_crc_is_rejected_without_writes();
 	test_safe_repairs_redundant_metadata();
+	test_primary_superblock_is_restored_from_backup();
+	test_inode_and_referenced_data_bitmap_bits_are_restored();
 	test_preen_preserves_unreferenced_blocks_but_yes_frees_them();
 	test_unknown_incompat_feature_is_never_repaired();
 	puts("mfs4_fsck_test: all tests passed");
