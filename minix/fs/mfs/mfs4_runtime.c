@@ -368,7 +368,10 @@ mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 {
 	uint64_t bits, start, blocks, first_allocatable, found_bit;
 	uint32_t type;
-	uint8_t *image, mask;
+	uint8_t local[MFS4_BLOCK_SIZE];
+	const uint8_t *peek;
+	struct mfs4_alloc_ctx ctx;
+	struct mfs4_alloc_scan_io sio;
 	bit_t result = NO_BIT;
 	int own, r;
 
