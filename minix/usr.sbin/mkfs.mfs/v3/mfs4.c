@@ -511,6 +511,7 @@ mfs4_mkfs_main(int argc, char **argv)
 	uint64_t blocks = 0, inodes = 0, capacity_bytes = 0, capacity_blocks;
 	uint64_t bytes_needed;
 	int have_blocks = 0, have_inodes = 0, dry_run = 0, verbose = 0;
+	int force = 0;
 	int fd, i, open_flags;
 	struct stat st;
 	struct mfs4_geometry geometry;
@@ -540,6 +541,8 @@ mfs4_mkfs_main(int argc, char **argv)
 			dry_run = 1;
 		} else if (strcmp(argv[i], "-v") == 0) {
 			verbose++;
+		} else if (strcmp(argv[i], "-f") == 0) {
+			force = 1;
 		} else if (argv[i][0] == '-') {
 			errx(1, "unknown MFS4 mkfs option: %s", argv[i]);
 		} else if (target == NULL) {
@@ -550,7 +553,7 @@ mfs4_mkfs_main(int argc, char **argv)
 	}
 
 	if (target == NULL)
-		errx(1, "usage: mkfs.mfs -V 4 [-n] [-B 4096] [-i inodes] [-b blocks] special");
+		errx(1, "usage: mkfs.mfs -V 4 [-n] [-f] [-B 4096] [-i inodes] [-b blocks] special");
 
 	open_flags = dry_run ? O_RDONLY : O_RDWR;
 	fd = open(target, open_flags | O_BINARY);
@@ -604,6 +607,36 @@ mfs4_mkfs_main(int argc, char **argv)
 		(void)printf("  mode:               dry-run (no writes performed)\n");
 		(void)close(fd);
 		return 0;
+	}
+
+	/*
+	 * Formatting destroys the existing contents. Require an affirmative
+	 * interactive confirmation unless the caller explicitly supplies -f.
+	 * EOF, an empty line, and every response other than y/yes fail closed.
+	 */
+	(void)printf("About to format %s as MFS4 (%" PRIu64
+	    " bytes, %" PRIu64 " 4096-byte blocks).\n",
+	    target, bytes_needed, blocks);
+	(void)printf("WARNING: all existing data on this target will be destroyed.\n");
+	if (!force) {
+		char response[32];
+
+		(void)printf("Continue? [y/N] ");
+		(void)fflush(stdout);
+		if (fgets(response, sizeof(response), stdin) == NULL) {
+			(void)close(fd);
+			errx(1, "format cancelled (no confirmation received; use -f to force)");
+		}
+		response[strcspn(response, "\\r\\n")] = '\\0';
+		if (strcmp(response, "y") != 0 &&
+		    strcmp(response, "Y") != 0 &&
+		    strcmp(response, "yes") != 0 &&
+		    strcmp(response, "YES") != 0) {
+			(void)close(fd);
+			errx(1, "format cancelled");
+		}
+	} else {
+		(void)printf("Force mode: confirmation skipped by -f.\\n");
 	}
 
 	(void)close(fd);
