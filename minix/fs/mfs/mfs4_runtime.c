@@ -344,6 +344,24 @@ mfs4_bitmap_type(int map)
 	return map == IMAP ? MFS4_JMETA_IMAP : MFS4_JMETA_ZMAP;
 }
 
+static int
+mfs4_bitmap_peek(struct super_block *sp, uint64_t block, uint32_t type,
+    uint8_t local[MFS4_BLOCK_SIZE], const uint8_t **out)
+{
+	const uint8_t *shadow;
+	struct buf *bp;
+	int r;
+	if (mfs4_tx_is_active() && mfs4_tx_find_meta(block, &shadow) == 0) {
+		*out = shadow; return OK;
+	}
+	if ((r = lmfs_get_block(&bp, sp->s_dev, block, NORMAL)) != OK)
+		return r;
+	memcpy(local, b_data(bp), MFS4_BLOCK_SIZE);
+	put_block(bp);
+	*out = local;
+	return OK;
+}
+
 bit_t
 mfs4_alloc_bit(struct super_block *sp, int map, bit_t origin)
 {
