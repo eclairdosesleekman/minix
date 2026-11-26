@@ -126,7 +126,8 @@ minix_acl_validate(const void *value, size_t length)
 		default: break;
 		}
 	}
-	if (seen != 15U || (named && !(seen & 4U)))
+	/* USER_OBJ|GROUP_OBJ|OTHER (1|2|8) always required; MASK only with named. */
+	if ((seen & 11U) != 11U || (named && !(seen & 4U)))
 		return EIO;
 	return 0;
 }
