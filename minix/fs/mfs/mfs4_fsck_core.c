@@ -1232,7 +1232,7 @@ mfs4_fsck_set_clean(struct mfs4_fsck_ctx *ctx, int clean)
 static int
 mfs4_fsck_repair(struct mfs4_fsck_ctx *ctx)
 {
-	int r, needs_changes;
+	int r, needs_changes, journal_pending;
 
 	needs_changes = ctx->report->repairs_made != 0 ||
 	    ctx->report->superblock_degraded;
@@ -1260,6 +1260,16 @@ mfs4_fsck_repair(struct mfs4_fsck_ctx *ctx)
 		if ((r = mfs4_fsck_scan(ctx)) != 0)
 			return r;
 	}
+
+	/*
+	 * The clean marker is the final publication step. Revalidate that no
+	 * committed transaction remains, including after any earlier replay.
+	 */
+	journal_pending = mfs4_journal_validate(&ctx->journal_io);
+	if (journal_pending < 0)
+		return -journal_pending;
+	if (journal_pending != 0)
+		return EBUSY;
 
 	/* Do not claim CLEAN while a valid orphan list still needs RW recovery. */
 	return mfs4_fsck_set_clean(ctx, ctx->orphan_head == 0);
