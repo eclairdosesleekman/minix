@@ -276,9 +276,10 @@ void arch_init(void)
 	direct_com_print("MINIX/amd64: tss_init done\r\n");
 #endif
 #else
-	/* CPU identity comes from the local APIC ID (x86_current_cpu_id);
-	 * before MADT enumeration it returns logical slot 0, so no boot-stack
-	 * seeding is needed here. */
+	/*
+	 * head.S seeds the BSP's reserved %r15 with logical CPU 0.  smp_init()
+	 * replaces it with the MADT-resolved logical ID before per-CPU setup.
+	 */
 #endif
 
 #if !CONFIG_OXPCIE

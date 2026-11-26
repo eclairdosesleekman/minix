@@ -128,6 +128,10 @@ multiboot_entry64_efi:
 	 */
 	cli
 	cld
+#ifdef CONFIG_SMP
+	/* The BSP is logical CPU 0 until smp_init() resolves the MADT mapping. */
+	xorq	%r15, %r15
+#endif
 
 	/* Save the Multiboot2 arguments before using the registers. */
 	movl	%eax, boot_saved_magic(%rip)

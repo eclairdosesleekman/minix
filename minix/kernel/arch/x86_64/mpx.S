@@ -30,10 +30,10 @@
  *   arch_finish_switch_to_user() before returning to userspace.
  *
  * Register save policy:
- *   All GP registers (rax-rdi, r8-r15, rbp) are saved on every kernel entry.
- *   Saving r12-r15 unconditionally simplifies restore_user_context: both
- *   same-process returns and context switches use the same restore path without
- *   any bookkeeping about which registers were actually saved.
+ *   All GP registers (rax-rdi, r8-r15, rbp) are saved on every user entry.
+ *   Under SMP, %r15 is then replaced with the current logical CPU ID.  Kernel
+ *   code is compiled with -ffixed-r15, and nested kernel interrupts preserve
+ *   it via pushaq/popaq.  The saved user %r15 is restored on return.
  */
 
 #include "kernel/kernel.h"
@@ -146,6 +146,12 @@ ENTRY(hwint15)	hwint_slave(15)
 /*===========================================================================*/
 /*			SYSCALL fast path -- per-CPU entry points	     */
 /*===========================================================================*/
+#ifdef CONFIG_SMP
+#define LOAD_SYSCALL_CPU_ID	movq 8(%rsp), %r15
+#else
+#define LOAD_SYSCALL_CPU_ID
+#endif
+
 /*
  * One entry point per logical CPU.  The LSTAR MSR for CPU N is set to
  * ipc_entry_syscall_cpuN at boot so each CPU knows its own stack without
@@ -155,6 +161,7 @@ ENTRY(hwint15)	hwint_slave(15)
  * per-CPU kernel stack.  arch_finish_switch_to_user() stores the current
  * proc_ptr at that address before returning to userspace, so:
  *   proc_ptr = *(k_percpu_stacks[cpu])
+ *   logical CPU ID = *(&proc_ptr + 1), loaded into %r15 after saving user %r15.
  *
  * Register state on AMD64 SYSCALL entry:
  *   %rcx  = saved user RIP   (CPU-saved)
@@ -203,6 +210,8 @@ ENTRY(ipc_entry_syscall_cpu ## cpu)					;\
 	/* Pop stashed user %rbp and write to BPREG. */			\
 	popq	%rax						;\
 	movq	%rax, BPREG(%rbp)				;\
+	/* %rsp now points at proc_ptr; the CPU ID is the adjacent next word. */\
+	LOAD_SYSCALL_CPU_ID					;\
 	/* SYSCALL leaves the user data segment selectors loaded; the INT	\
 	 * entry path (SAVE_PROCESS_CTX) restores kernel segs here, so the	\
 	 * per-CPU SYSCALL stub must do the same before running C code.	*/	\
@@ -462,6 +471,27 @@ LABEL(nmi)
 #ifndef USE_WATCHDOG
 	EXCEPTION_NO_ERR_CODE(NMI_VECTOR)
 #else
+	/* A kernel-origin NMI already has the CPU ID cached in %r15. */
+	TEST_INT_IN_KERNEL(8, nmi_watchdog_kernel)
+
+	/*
+	 * A user-origin NMI bypasses SAVE_PROCESS_CTX.  Preserve the user %r15,
+	 * then load the CPU ID from rsp0[1].  On entry RSP is rsp0 - 40; after
+	 * the extra push, rsp0[1] is therefore at 56(%rsp).
+	 */
+	pushq	%r15
+	movq	56(%rsp), %r15
+	pushw	%ds; pushw	%es; pushw	%fs; pushw	%gs
+	pushaq
+	mov	%ss, %si;  mov	%si, %ds;  mov	%si, %es
+	mov	%rsp, %rdi
+	CALL_C_ALIGNED(_C_LABEL(nmi_watchdog_handler))
+	popaq
+	popw	%gs; popw	%fs; popw	%es; popw	%ds
+	popq	%r15		/* restore the interrupted user's %r15 */
+	iretq
+
+nmi_watchdog_kernel:
 	pushw	%ds; pushw	%es; pushw	%fs; pushw	%gs
 	pushaq
 	mov	%ss, %si;  mov	%si, %ds;  mov	%si, %es

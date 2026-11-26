@@ -482,6 +482,10 @@ ENTRY(reload_ds)
  * (RSP % 16 == 8), because this routine jumps to the continuation. */
 ENTRY(switch_k_stack)
 	movq	%rdi, %rsp		/* switch to new stack */
+#ifdef CONFIG_SMP
+	/* new_sp is 24 bytes below the stack top; CPU ID is at top - 8. */
+	movq	16(%rsp), %r15
+#endif
 	xorq	%rbp, %rbp		/* reset frame pointer */
 	jmpq	*%rsi			/* jump to continuation */
 	/* NOT_REACHABLE */
