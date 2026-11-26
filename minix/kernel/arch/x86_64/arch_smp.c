@@ -47,11 +47,14 @@ static volatile int apicid_map_ready;
 unsigned char cpuid2apicid[CONFIG_MAX_CPUS];
 
 /*
- * Return the logical CPU number of the current processor without consulting
- * the kernel stack.  CPUID leaf 1 reports the local APIC ID in EBX[31:24].
- * The ACPI MADT map is published before any application processor is
- * started.  Before that point only the bootstrap processor is active, so
- * CPU 0 is the only valid CPU-local slot.
+ * Return the logical CPU number of the current processor.  CPUID leaf 1
+ * reports the local APIC ID in EBX[31:24], which is translated through the
+ * ACPI MADT map.  The map is published before any application processor is
+ * started; before then only the bootstrap processor is active, so CPU 0 is
+ * the only valid CPU-local slot.
+ *
+ * This accessor is used instead of a fixed %r15 register variable because
+ * the LLVM 3.6 x86_64 backend in the MINIX cross toolchain rejects it.
  */
 unsigned int x86_current_cpu_id(void)
 {
@@ -59,8 +62,11 @@ unsigned int x86_current_cpu_id(void)
 	unsigned int apic_id;
 	int cpu;
 
-	/* Before MADT enumeration, the bootstrap CPU uses logical slot zero. */
-	if (!apicid_map_ready)
+	/*
+	 * Before MADT enumeration, and in a forced uniprocessor fallback, the
+	 * bootstrap CPU uses logical slot zero.
+	 */
+	if (!apicid_map_ready || ncpus <= 1)
 		return 0;
 
 	__asm__ volatile("cpuid"
@@ -435,11 +441,9 @@ void smp_init (void)
 
 	/*
 	 * discover_cpus() has published the MADT APIC-ID map.  Resolve the BSP
-	 * once and seed the reserved register before any CPU-local access (in
-	 * particular tss_init_all() and setup_sysenter_syscall()).
+	 * logical ID before initializing per-CPU state.
 	 */
 	bsp_cpu_id = x86_current_cpu_id();
-	cpuid = bsp_cpu_id;
 
 	lapic_addr = LOCAL_APIC_DEF_ADDR;
 	ioapic_enabled = 0;

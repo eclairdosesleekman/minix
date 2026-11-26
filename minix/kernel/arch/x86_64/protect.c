@@ -274,9 +274,10 @@ int tss_init(unsigned cpu, void * kernel_stack)
 
 	/*
 	 * Keep the two words at the top of every kernel stack as a fixed entry
-	 * ABI: rsp0[0] is proc_ptr (refreshed before returning to userspace),
-	 * and rsp0[1] is this stack's logical CPU ID.  Entry stubs use these
-	 * addresses directly, independent of call depth.
+	 * layout: rsp0[0] is proc_ptr (refreshed before returning to userspace),
+	 * and rsp0[1] retains this stack's logical CPU ID.  Current C code resolves
+	 * the CPU ID through the local APIC ID and ACPI MADT map rather than
+	 * depending on a compiler-reserved general-purpose register.
 	 */
 	*((reg_t *)(t->rsp0 + 1 * sizeof(reg_t))) = cpu;
 	return SEG_SELECTOR(index);

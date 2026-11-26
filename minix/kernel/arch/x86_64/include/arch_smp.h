@@ -8,21 +8,13 @@
 #ifndef __ASSEMBLY__
 
 /*
- * Resolve the logical CPU number during SMP bootstrap or diagnostics.
- * CPUID.01H:EBX[31:24] reports the local APIC ID; arch_smp.c maps that
- * hardware ID to the logical CPU number assigned from the ACPI MADT.
- * This slow resolver is not used by the CPU-local hot path.
+ * Return the logical CPU number from CPUID.01H:EBX[31:24] (the local APIC
+ * ID), translated through the ACPI MADT map in arch_smp.c.  The SMP kernel
+ * uses this accessor for CPU-local accesses instead of a global register
+ * variable, which the LLVM 3.6 x86_64 backend cannot lower.
  */
 unsigned int x86_current_cpu_id(void);
-
-/*
- * %r15 is reserved by the x86_64 SMP kernel build.  Entry stubs save the
- * interrupted process' %r15, then load this CPU's logical ID from the
- * fixed slot adjacent to proc_ptr on its kernel stack.  Kernel-mode nested
- * interrupts preserve the value through pushaq/popaq.
- */
-register unsigned int x86_cpu_id_reg asm("r15");
-#define cpuid	x86_cpu_id_reg
+#define cpuid	x86_current_cpu_id()
 
 /*
  * switch_k_stack() jumps to its continuation; it does not push a return
@@ -40,7 +32,6 @@ register unsigned int x86_cpu_id_reg asm("r15");
  * its CPU-id slot, initialized by tss_init()).
  */
 #define smp_single_cpu_fallback() do {		\
-	  cpuid = 0;				\
 	  bsp_cpu_id = 0;			\
 	  ncpus = 1;				\
 	  tss_init(0, get_k_stack_top(0));	\
