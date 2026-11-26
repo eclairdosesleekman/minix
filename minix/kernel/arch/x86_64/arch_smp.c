@@ -59,13 +59,14 @@ unsigned int x86_current_cpu_id(void)
 	unsigned int apic_id;
 	int cpu;
 
+	/* Before MADT enumeration, the bootstrap CPU uses logical slot zero. */
+	if (!apicid_map_ready)
+		return 0;
+
 	__asm__ volatile("cpuid"
 		: "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx));
 	(void)ecx;
 	(void)edx;
-
-	if (!apicid_map_ready)
-		return 0;
 
 	/* Pair the map publication with the MADT table writes. */
 	__sync_synchronize();
@@ -410,11 +411,14 @@ static int discover_cpus(void)
 	}
 
 	/* Publish the complete lookup table before an AP can enter C code. */
-	__sync_synchronize();
-	apicid_map_ready = 1;
+	if (ncpus > 0) {
+		__sync_synchronize();
+		apicid_map_ready = 1;
+	}
 
 	return ncpus;
 }
+
 void smp_init (void)
 {
 	/* read the MP configuration */
@@ -429,12 +433,8 @@ void smp_init (void)
 	tss_init_all();
 	setup_sysenter_syscall();
 
-	/*
-	 * we still run on the boot stack and we cannot use cpuid as its value
-	 * wasn't set yet. apicid2cpuid initialized in mps_init()
-	 */
-	bsp_cpu_id = apicid2cpuid[apicid()];
-
+	/* Resolve the bootstrap processor's logical index through the MADT map. */
+	bsp_cpu_id = x86_current_cpu_id();
 
 	if (!lapic_enable(bsp_cpu_id)) {
 		printf("ERROR : failed to initialize BSP Local APIC\n");
