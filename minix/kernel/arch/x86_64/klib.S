@@ -525,6 +525,7 @@ ENTRY(smp_get_cores)
 /*===========================================================================*/
 /* void arch_spinlock_lock(u32_t *lock_data)   rdi=lock_data */
 ENTRY(arch_spinlock_lock)
+cli
 	movq	$1, %rdx
 .Lspin_retry:
 	movl	$1, %ecx
