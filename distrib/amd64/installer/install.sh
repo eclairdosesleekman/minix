@@ -319,6 +319,12 @@ echo "Step 7: Installing release sets"
 mkdir -p "$MNT"
 mount "$ROOT" "$MNT" || fail "could not mount root filesystem"
 MOUNTED_ROOT=yes
+# The MFS server is loaded from mod11_mfs in minix-kernel.tgz.  Do not let a
+# stale MFS3-only server masquerade as a successful MFS4 root mount and fail
+# later with an unhelpful "Not a directory" from mkdir(2).
+if [ ! -d "$MNT" ]; then
+	fail "mounted MFS$MFS_VERSION root at $ROOT is not a directory; rebuild the amd64 installer media with CREATE_IMAGE_ONLY=0 so mod11_mfs and mkfs.mfs come from the same source revision"
+fi
 # MFS4 creates its root inode with mode 0755 already.  The legacy MFS3
 # formatter creates it as 0777, so only MFS3 needs this permission fix.
 if [ "$MFS_VERSION" = 3 ]; then

@@ -57,6 +57,25 @@ fi
 : ${IMG:=${RELEASEDIR}/images/Minix-${RELEASE_VERSION}-x86_64-install.iso}
 ISO_VOLID=${ISO_VOLID:-$(printf 'MINIX_%s' "${RELEASE_VERSION}" | sed 's/[^A-Za-z0-9_]/_/g' | tr '[:lower:]' '[:upper:]')}
 
+# The running installer MFS server is carried in mod11_mfs inside
+# minix-kernel.tgz.  Rebuild release sets from this source tree by default so
+# mkfs.mfs and the MFS server cannot silently come from different revisions.
+case "${CREATE_IMAGE_ONLY}" in
+	0)
+		echo "Building amd64 source and release sets..."
+		# BUILDVARS is intentionally word-split into build.sh variable arguments.
+		sh "${BUILDSH}" -j "${JOBS}" -m "${ARCH}" -O "${OBJ}" \
+		    -D "${DESTDIR}" ${BUILDVARS} -U -u release
+		;;
+	1)
+		echo "Using prebuilt amd64 release sets (CREATE_IMAGE_ONLY=1)."
+		;;
+	*)
+		echo "CREATE_IMAGE_ONLY must be 0 or 1, not: ${CREATE_IMAGE_ONLY}" >&2
+		exit 2
+		;;
+esac
+
 if [ ! -d "${DESTDIR}" ]; then
 	echo "Missing DESTDIR: ${DESTDIR}" >&2
 	echo "Build the amd64 release first, or set CREATE_IMAGE_ONLY=0." >&2
