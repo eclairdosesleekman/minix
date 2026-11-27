@@ -243,7 +243,7 @@ else
 	if [ "$HOME_ENABLED" = yes ]; then
 		[ -b "$HOME_PART" ] || [ -c "$HOME_PART" ] || fail "$HOME_PART does not exist"
 		mkdir -p "$PROBE"
-		if mount -r "$HOME_PART" "$PROBE" >/dev/null 2>&1; then
+		if mount -r -t mfs "$HOME_PART" "$PROBE" >/dev/null 2>&1; then
 			umount "$PROBE" || fail "could not unmount /home probe"
 			echo "An existing MFS /home partition was found."
 			echo "Type F for a full install or R to reinstall while preserving /home."
@@ -317,7 +317,7 @@ sync
 echo
 echo "Step 7: Installing release sets"
 mkdir -p "$MNT"
-mount "$ROOT" "$MNT" || fail "could not mount root filesystem"
+mount -t mfs "$ROOT" "$MNT" || fail "could not mount root filesystem"
 MOUNTED_ROOT=yes
 # The MFS server is loaded from mod11_mfs in minix-kernel.tgz.  Do not let a
 # stale MFS3-only server masquerade as a successful MFS4 root mount and fail
@@ -331,10 +331,10 @@ if [ "$MFS_VERSION" = 3 ]; then
 	chmod 0755 "$MNT"
 fi
 mkdir -p "$MNT/usr" "$MNT/home"
-mount "$USR_PART" "$MNT/usr" || fail "could not mount /usr"
+mount -t mfs "$USR_PART" "$MNT/usr" || fail "could not mount /usr"
 MOUNTED_USR=yes
 if [ "$HOME_ENABLED" = yes ]; then
-	mount "$HOME_PART" "$MNT/home" || fail "could not mount /home"
+	mount -t mfs "$HOME_PART" "$MNT/home" || fail "could not mount /home"
 	MOUNTED_HOME=yes
 fi
 
