@@ -161,6 +161,27 @@ mfs4_get_le64(const uint8_t *p)
 	    ((uint64_t)mfs4_get_le32(p + 4) << 32);
 }
 
+static inline int
+mfs4_root_dirblock_valid(const uint8_t *block)
+{
+	if (block == NULL)
+		return 0;
+
+	/*
+	 * The root directory must begin with "." and "..", both referring to
+	 * inode 1. This signature lets the mount code distinguish a missing
+	 * root inode type bit from an arbitrary non-directory inode.
+	 */
+	return mfs4_get_le32(block + MFS4_DIRENT_INODE) == 1U &&
+	    block[MFS4_DIRENT_NAME] == '.' &&
+	    block[MFS4_DIRENT_NAME + 1] == '\0' &&
+	    mfs4_get_le32(block + MFS4_DIRENT_SIZE +
+	    MFS4_DIRENT_INODE) == 1U &&
+	    block[MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME] == '.' &&
+	    block[MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME + 1] == '.' &&
+	    block[MFS4_DIRENT_SIZE + MFS4_DIRENT_NAME + 2] == '\0';
+}
+
 static inline void
 mfs4_put_le16(uint8_t *p, uint16_t v)
 {
