@@ -135,6 +135,34 @@
 
 #else /* __minix */
 
+/*
+ * MINIX does not provide the pthread types used by the NetBSD libc
+ * thread-stub interface.  When _REENTRANT is enabled, libc still builds
+ * these stubs, but they do not inspect lock or attribute objects.  Use
+ * opaque types here rather than exposing the unrelated libmthread ABI.
+ */
+#include <signal.h>
+
+typedef struct __libc_mutex *mutex_t;
+typedef void *mutexattr_t;
+typedef struct __libc_cond *cond_t;
+typedef void *condattr_t;
+typedef struct __libc_rwlock *rwlock_t;
+typedef void *rwlockattr_t;
+typedef int thread_key_t;
+typedef int thr_t;
+typedef void *thrattr_t;
+typedef thr_t pthread_t;
+
+#define MUTEX_INITIALIZER ((mutex_t)0)
+#define MUTEX_TYPE_NORMAL 0
+#define MUTEX_TYPE_ERRORCHECK 1
+#define MUTEX_TYPE_RECURSIVE 2
+#define COND_INITIALIZER ((cond_t)0)
+#define RWLOCK_INITIALIZER ((rwlock_t)0)
+
+struct timespec;
+
 typedef struct {
 	int pto_done;
 } once_t;
