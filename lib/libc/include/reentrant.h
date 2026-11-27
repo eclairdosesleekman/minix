@@ -127,6 +127,8 @@
 #define	thread_key_t		pthread_key_t
 
 #define	thr_t			pthread_t
+#define THR_NONE ((thr_t)0)
+#define THR_CANCEL_DISABLE PTHREAD_CANCEL_DISABLE
 
 #define	thrattr_t		pthread_attr_t
 
@@ -153,6 +155,8 @@ typedef int thread_key_t;
 typedef int thr_t;
 typedef void *thrattr_t;
 typedef thr_t pthread_t;
+#define THR_NONE ((thr_t)-1)
+#define THR_CANCEL_DISABLE 1
 
 #define MUTEX_INITIALIZER ((mutex_t)0)
 #define MUTEX_TYPE_NORMAL 0
