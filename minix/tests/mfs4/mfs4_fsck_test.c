@@ -127,6 +127,22 @@ make_root_directory(uint8_t block[MFS4_BLOCK_SIZE])
 }
 
 static void
+test_root_dirblock_signature(void)
+{
+	uint8_t block[MFS4_BLOCK_SIZE];
+
+	make_root_directory(block);
+	assert(mfs4_root_dirblock_valid(block));
+
+	block[MFS4_DIRENT_NAME] = 'x';
+	assert(!mfs4_root_dirblock_valid(block));
+
+	make_root_directory(block);
+	mfs4_put_le32(block + MFS4_DIRENT_SIZE + MFS4_DIRENT_INODE, 2);
+	assert(!mfs4_root_dirblock_valid(block));
+}
+
+static void
 make_volume(struct test_device *device)
 {
 	uint8_t super[MFS4_SUPER_SIZE];
@@ -516,6 +532,7 @@ test_unknown_incompat_feature_is_never_repaired(void)
 int
 main(void)
 {
+	test_root_dirblock_signature();
 	test_clean_volume_is_read_only_verified();
 	test_nested_directory_link_counts();
 	test_detached_orphan_directory_link_counts();
