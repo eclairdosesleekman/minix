@@ -7,13 +7,13 @@ on:
       - "distrib/amd64/installer/install.sh"
       - "distrib/amd64/installimage/setup-amd64.sh"
       - "releasetools/x86_64_uefi_cdimage.sh"
-      - "releasetools/x86_64_uefi_cdimage.sh"
   push:
     branches:
       - master
     paths:
       - "distrib/amd64/installer/install.sh"
       - "distrib/amd64/installimage/setup-amd64.sh"
+      - "releasetools/x86_64_uefi_cdimage.sh"
 
 jobs:
   installer-shell-checks:
