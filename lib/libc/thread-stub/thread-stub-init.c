@@ -38,6 +38,7 @@ __RCSID("$NetBSD: thread-stub-init.c,v 1.2 2013/08/19 22:14:37 matt Exp $");
 #define __LIBC_THREAD_STUBS
 #include "reentrant.h"
 #include <signal.h>
+#include <stddef.h>
 
 /* libpthread init */
 
