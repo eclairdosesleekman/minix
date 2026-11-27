@@ -76,7 +76,7 @@ int
 pthread_join(pthread_t thread, void **valptr)
 {
 
-	if (thread == pthread_self())
+	if (thread == thr_self())
 		return EDEADLK;
 	return ESRCH;
 }
