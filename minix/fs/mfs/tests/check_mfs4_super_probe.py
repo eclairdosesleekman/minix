@@ -6,7 +6,7 @@ import re
 
 source = Path(__file__).resolve().parents[1].joinpath("mfs4_runtime.c").read_text()
 match = re.search(
-    r"int\\nmfs4_probe_super\\(.*?\\n}\\n(?=\\nint\\nmfs4_read_super\\()",
+    r"int\nmfs4_probe_super\(.*?\n}\n(?=\nint\nmfs4_read_super\()",
     source,
     re.S,
 )
