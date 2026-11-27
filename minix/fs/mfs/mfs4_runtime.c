@@ -201,16 +201,13 @@ mfs4_probe_super(struct super_block *sp, int *is_mfs4)
 	if ((r = lmfs_set_blocksize_err(probe_block_size)) != OK)
 		return r;
 
-	if ((r = bdev_ioctl(sp->s_dev, DIOCGETP, &part, NONE)) != OK) {
-		(void)lmfs_set_blocksize_err(old_block_size);
-		return OK; /* Let the legacy MFS3 parser decide. */
-	}
-	partition_blocks = part.size / MFS4_BLOCK_SIZE;
-	if (part.size % MFS4_BLOCK_SIZE != 0 || partition_blocks < 2) {
-		(void)lmfs_set_blocksize_err(old_block_size);
-		return OK;
-	}
-
+	/*
+	 * Inspect the primary signature before asking the driver for partition
+	 * geometry.  A failed DIOCGETP must not make an MFS4 volume look like an
+	 * MFS3 volume: read_super() would otherwise pass the MFS4 bytes to the
+	 * legacy decoder, which can later interpret the inode table at the wrong
+	 * location.
+	 */
 	if ((r = lmfs_get_block(&bp, sp->s_dev, 0, NORMAL)) != OK) {
 		(void)lmfs_set_blocksize_err(old_block_size);
 		return r;
@@ -222,41 +219,54 @@ mfs4_probe_super(struct super_block *sp, int *is_mfs4)
 	    MFS4_SUPER_MAGIC_SIZE) == 0;
 	backup_magic = 0;
 
-	if (primary_magic && NBPG > MFS4_BLOCK_SIZE) {
+	/*
+	 * MFS4 uses 4 KiB blocks.  Do not probe a backup superblock on an
+	 * architecture whose page size is larger, but also do not silently
+	 * reinterpret a volume carrying the MFS4 signature as MFS3.
+	 */
+	if (NBPG > MFS4_BLOCK_SIZE) {
 		(void)lmfs_set_blocksize_err(old_block_size);
-		return EINVAL;
-	}
-	if (!primary_magic && NBPG > MFS4_BLOCK_SIZE) {
-		(void)lmfs_set_blocksize_err(old_block_size);
-		return OK;
+		return primary_magic ? EINVAL : OK;
 	}
 
-	if (primary_magic) {
-		*is_mfs4 = 1;
-		if ((r = lmfs_set_blocksize_err(MFS4_BLOCK_SIZE)) != OK)
-			return r;
+	/*
+	 * The partition size is required to validate total_blocks and locate
+	 * the backup superblock.  Only a device with no MFS4 primary signature
+	 * may fall back to the legacy MFS3 parser when geometry is unavailable.
+	 */
+	if ((r = bdev_ioctl(sp->s_dev, DIOCGETP, &part, NONE)) != OK) {
+		(void)lmfs_set_blocksize_err(old_block_size);
+		return primary_magic ? r : OK;
+	}
+	partition_blocks = part.size / MFS4_BLOCK_SIZE;
+	if (part.size % MFS4_BLOCK_SIZE != 0 || partition_blocks < 2) {
+		(void)lmfs_set_blocksize_err(old_block_size);
+		return primary_magic ? EINVAL : OK;
+	}
+
+	/* MFS4's primary/backup locations are measured in 4 KiB blocks. */
+	if ((r = lmfs_set_blocksize_err(MFS4_BLOCK_SIZE)) != OK) {
+		(void)lmfs_set_blocksize_err(old_block_size);
+		return r;
 	}
 	if ((r = lmfs_get_block(&bp, sp->s_dev, partition_blocks - 1,
 	    NORMAL)) != OK) {
-		if (*is_mfs4)
-			return r;
 		(void)lmfs_set_blocksize_err(old_block_size);
-		return OK;
+		return primary_magic ? r : OK;
 	}
 	memcpy(backup, b_data(bp), sizeof(backup));
 	put_block(bp);
 	backup_magic = memcmp(backup + MFS4_SB_MAGIC, MFS4_SUPER_MAGIC,
 	    MFS4_SUPER_MAGIC_SIZE) == 0;
+
 	if (!primary_magic && !backup_magic) {
+		/* Restore the caller's block size before entering the MFS3 path. */
 		(void)lmfs_set_blocksize_err(old_block_size);
 		return OK;
 	}
-	*is_mfs4 = 1;
-	if (NBPG > MFS4_BLOCK_SIZE)
-		return EINVAL;
-	if ((r = lmfs_set_blocksize_err(MFS4_BLOCK_SIZE)) != OK)
-		return r;
 
+	/* From this point onward, validation failures are MFS4 mount failures. */
+	*is_mfs4 = 1;
 	primary_ok = mfs4_decode_super(primary, partition_blocks, &pg) == 0;
 	backup_ok = mfs4_decode_super(backup, partition_blocks, &bg) == 0;
 	if (!primary_ok && !backup_ok)
