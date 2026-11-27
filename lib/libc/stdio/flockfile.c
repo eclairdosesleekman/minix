@@ -50,11 +50,6 @@ __weak_alias(funlockfile,_funlockfile)
 #endif
 
 #ifdef _REENTRANT
-/*
- * XXX This code makes the assumption that a thr_t (pthread_t) is a 
- * XXX pointer.
- */
-
 void
 flockfile(FILE *fp)
 {
@@ -75,7 +70,7 @@ ftrylockfile(FILE *fp)
 		
 	if (_LOCKOWNER(fp) == thr_self()) {
 		_LOCKCOUNT(fp)++;
-	} else if (_LOCKOWNER(fp) == NULL) {
+	} else if (_LOCKOWNER(fp) == THR_NONE) {
 		_LOCKOWNER(fp) = thr_self();
 		_LOCKCOUNT(fp) = 1;
 	} else
@@ -109,8 +104,8 @@ __flockfile_internal(FILE *fp, int internal)
 	} else {
 		/* danger! cond_wait() is a cancellation point. */
 		int oldstate;
-		thr_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
-		while (_LOCKOWNER(fp) != NULL)
+		thr_setcancelstate(THR_CANCEL_DISABLE, &oldstate);
+		while (_LOCKOWNER(fp) != THR_NONE)
 			cond_wait(&_LOCKCOND(fp), &_LOCK(fp));
 		thr_setcancelstate(oldstate, NULL);
 		_LOCKOWNER(fp) = thr_self();
@@ -121,7 +116,7 @@ __flockfile_internal(FILE *fp, int internal)
 
 	if (_LOCKINTERNAL(fp) == 1)
 		/* stash cancellation state and disable */
-		thr_setcancelstate(PTHREAD_CANCEL_DISABLE,
+		thr_setcancelstate(THR_CANCEL_DISABLE,
 		    &_LOCKCANCELSTATE(fp));
 
 	mutex_unlock(&_LOCK(fp));
@@ -144,7 +139,7 @@ __funlockfile_internal(FILE *fp, int internal)
 
 	_LOCKCOUNT(fp)--;
 	if (_LOCKCOUNT(fp) == 0) {
-		_LOCKOWNER(fp) = NULL;
+		_LOCKOWNER(fp) = THR_NONE;
 		cond_signal(&_LOCKCOND(fp));
 	}
 
