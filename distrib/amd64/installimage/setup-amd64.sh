@@ -210,7 +210,7 @@ dd if="$efi_source" of="$espdev" || fail "Could not copy the UEFI boot files to 
 sync
 
 mkdir -p "$MOUNT_POINT" || fail "Could not create $MOUNT_POINT."
-mount "$rootdev" "$MOUNT_POINT" || fail "Could not mount the new root filesystem."
+mount -t mfs "$rootdev" "$MOUNT_POINT" || fail "Could not mount the new root filesystem."
 
 printf "\nExtracting amd64 release sets (this may take several minutes)...\n"
 for set_name in $set_list; do
