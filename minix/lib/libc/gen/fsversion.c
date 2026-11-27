@@ -13,6 +13,7 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/minlib.h>
+#include <minix/mfs4_disk.h>
 #include <minix/type.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -100,6 +101,11 @@ int fsversion(char *dev, char *prog)
 	}
 
 	/* first check MFS, a valid MFS may look like EXT but not vice versa */
+	if (memcmp(super + MFS4_SB_MAGIC, MFS4_SUPER_MAGIC,
+	    MFS4_SUPER_MAGIC_SIZE) == 0) {
+		result = FSVERSION_MFS4;
+		goto done;
+	}
 	if (check_super(MAGIC_OFFSET_MFS, SUPER_MAGIC)) {
 		result = FSVERSION_MFS1;
 		goto done;
