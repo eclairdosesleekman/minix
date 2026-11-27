@@ -61,7 +61,7 @@ struct __sfileext {
 	(fext)->_fgetstr_buf = NULL; \
 	mutex_init(&_LOCK(f), NULL); \
 	cond_init(&_LOCKCOND(f), 0, NULL); \
-	_LOCKOWNER(f) = NULL; \
+	_LOCKOWNER(f) = THR_NONE; \
 	_LOCKCOUNT(f) = 0; \
 	_LOCKINTERNAL(f) = 0; \
 	} while (/* CONSTCOND */ 0)
