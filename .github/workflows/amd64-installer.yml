@@ -7,6 +7,8 @@ on:
       - "distrib/amd64/installer/install.sh"
       - "distrib/amd64/installimage/setup-amd64.sh"
       - "releasetools/x86_64_uefi_cdimage.sh"
+      - "minix/fs/mfs/mfs4_runtime.c"
+      - "minix/fs/mfs/tests/check_mfs4_super_probe.py"
   push:
     branches:
       - master
@@ -14,6 +16,8 @@ on:
       - "distrib/amd64/installer/install.sh"
       - "distrib/amd64/installimage/setup-amd64.sh"
       - "releasetools/x86_64_uefi_cdimage.sh"
+      - "minix/fs/mfs/mfs4_runtime.c"
+      - "minix/fs/mfs/tests/check_mfs4_super_probe.py"
 
 jobs:
   installer-shell-checks:
@@ -40,3 +44,7 @@ jobs:
           grep -Fq 'sh "${BUILDSH}" -j "${JOBS}" -m "${ARCH}"' releasetools/x86_64_uefi_cdimage.sh
           grep -Fq ' -U -u release' releasetools/x86_64_uefi_cdimage.sh
           grep -Fq 'mounted MFS$MFS_VERSION root at $ROOT is not a directory' distrib/amd64/installer/install.sh
+
+      - name: Check MFS4 superblock detection does not fall back to MFS3
+        run: |
+          python3 minix/fs/mfs/tests/check_mfs4_super_probe.py
