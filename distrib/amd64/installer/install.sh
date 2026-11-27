@@ -319,7 +319,11 @@ echo "Step 7: Installing release sets"
 mkdir -p "$MNT"
 mount "$ROOT" "$MNT" || fail "could not mount root filesystem"
 MOUNTED_ROOT=yes
-chmod 0755 "$MNT"
+# MFS4 creates its root inode with mode 0755 already.  The legacy MFS3
+# formatter creates it as 0777, so only MFS3 needs this permission fix.
+if [ "$MFS_VERSION" = 3 ]; then
+	chmod 0755 "$MNT"
+fi
 mkdir -p "$MNT/usr" "$MNT/home"
 mount "$USR_PART" "$MNT/usr" || fail "could not mount /usr"
 MOUNTED_USR=yes
