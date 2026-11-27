@@ -1,8 +1,54 @@
 #include "fs.h"
+#include "buf.h"
 #include "inode.h"
 #include "super.h"
 #include <minix/vfsif.h>
 #include <minix/bdev.h>
+#include <minix/mfs4_disk.h>
+
+/*
+ * The root inode is required to be a directory. If its type field was lost,
+ * only recover it when the first data block still has the canonical root
+ * entries. Persist the correction through the MFS4 journal on writable
+ * mounts; read-only mounts use the verified mode in memory.
+ */
+static int
+mfs4_repair_root_mode(struct inode *root_ip)
+{
+	struct super_block *sp;
+	struct buf *bp;
+	block_t block;
+	mode_t old_mode;
+	int r;
+
+	sp = root_ip->i_sp;
+	if (sp->s_version != V4 ||
+	    (root_ip->i_mode & I_TYPE) == I_DIRECTORY)
+		return OK;
+
+	if (root_ip->i_size < 2 * MFS4_DIRENT_SIZE ||
+	    root_ip->i_zone[0] < sp->s_mfs4_data_start ||
+	    root_ip->i_zone[0] >= sp->s_mfs4_backup_block)
+		return EIO;
+
+	block = (block_t)root_ip->i_zone[0];
+	if ((r = lmfs_get_block(&bp, root_ip->i_dev, block, NORMAL)) != OK)
+		return r;
+	if (!mfs4_root_dirblock_valid((const uint8_t *)b_data(bp))) {
+		put_block(bp);
+		return EIO;
+	}
+	put_block(bp);
+
+	old_mode = root_ip->i_mode;
+	root_ip->i_mode = (root_ip->i_mode & ALL_MODES) | I_DIRECTORY;
+	printf("MFS: repaired MFS4 root inode type from verified '.' and '..' entries\n");
+	if (!sp->s_rd_only && (r = rw_inode(root_ip, WRITING)) != OK) {
+		root_ip->i_mode = old_mode;
+		return r;
+	}
+	return OK;
+}
 
 /*===========================================================================*
  *				fs_mount				     *
@@ -83,6 +129,15 @@ int fs_mount(dev_t dev, unsigned int flags, struct fsdriver_node *root_node,
 	return(EINVAL);
   }
   
+  if (superblock.s_version == V4 &&
+      (r = mfs4_repair_root_mode(root_ip)) != OK) {
+	printf("MFS: invalid MFS4 root directory metadata (%d)\n", r);
+	put_inode(root_ip);
+	superblock.s_dev = NO_DEV;
+	(void)bdev_close(fs_dev);
+	return r;
+  }
+
   if(root_ip->i_mode == 0) {
 	printf("%s:%d zero mode for root inode?\n", __FILE__, __LINE__);
 	put_inode(root_ip);
