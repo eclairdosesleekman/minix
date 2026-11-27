@@ -404,6 +404,9 @@ crypto_onetimestream(const void *seed, void *buf, size_t n)
 struct arc4random_prng {
 	struct crypto_prng	arc4_prng;
 	bool			arc4_seeded;
+#if defined(__minix)
+	pid_t			arc4_pid;
+#endif
 };
 
 static void
@@ -455,6 +458,9 @@ arc4random_prng_addrandom(struct arc4random_prng *prng, const void *data,
 	crypto_prng_seed(&prng->arc4_prng, buf);
 	(void)explicit_memset(buf, 0, sizeof buf);
 	prng->arc4_seeded = true;
+#if defined(__minix)
+	prng->arc4_pid = getpid();
+#endif
 }
 
 #ifdef _REENTRANT
@@ -467,12 +473,15 @@ arc4random_prng_create(void)
 	prng = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, -1, 0);
 	if (prng == MAP_FAILED)
 		goto fail0;
-	if (minherit(prng, size, MAP_INHERIT_ZERO) == -1)
-		goto fail1;
+#if !defined(__minix)
+	if (minherit(prng, size, MAP_INHERIT_ZERO) == -1) {
+		(void)munmap(prng, size);
+		goto fail0;
+	}
+#endif
 
 	return prng;
 
-fail1:	(void)munmap(prng, size);
 fail0:	return NULL;
 }
 #endif
@@ -584,6 +593,15 @@ arc4random_prng_get(void)
 		mutex_lock(&arc4random_global.lock);
 		prng = &arc4random_global.prng;
 	}
+
+#if defined(__minix)
+	/* minherit(2) and pthread_atfork(3) are unavailable on MINIX. */
+	if (__predict_false(prng->arc4_pid != getpid())) {
+		(void)explicit_memset(&prng->arc4_prng, 0,
+		    sizeof(prng->arc4_prng));
+		prng->arc4_seeded = false;
+	}
+#endif
 
 	/* Guarantee the PRNG is seeded.  */
 	if (__predict_false(!prng->arc4_seeded))
