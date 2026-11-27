@@ -69,7 +69,8 @@ int main(int argc, char *argv[])
 	switch (v) {
 		case FSVERSION_MFS1:
 		case FSVERSION_MFS2:
-		case FSVERSION_MFS3: type = MINIX_FS_TYPE; break;
+		case FSVERSION_MFS3:
+		case FSVERSION_MFS4: type = MINIX_FS_TYPE; break;
 		case FSVERSION_EXT2: type = "ext2"; break;
 		case FSVERSION_ISO9660: type = "isofs"; break;
 		case FSVERSION_FFS: type = "ffs"; break;
