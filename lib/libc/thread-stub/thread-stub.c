@@ -53,6 +53,12 @@ __RCSID("$NetBSD: thread-stub.c,v 1.27 2013/05/28 17:29:41 christos Exp $");
 #include <stdlib.h>
 #include <unistd.h>
 
+#if defined(__minix)
+#define pthread_stub_self() __libc_thr_self_stub()
+#else
+#define pthread_stub_self() pthread_self()
+#endif
+
 extern int __isthreaded;
 
 #define	DIE()	(void)raise(SIGABRT)
@@ -76,7 +82,7 @@ int
 pthread_join(pthread_t thread, void **valptr)
 {
 
-	if (thread == thr_self())
+	if (thread == pthread_stub_self())
 		return EDEADLK;
 	return ESRCH;
 }
@@ -85,7 +91,7 @@ int
 pthread_detach(pthread_t thread)
 {
 
-	if (thread == thr_self())
+	if (thread == pthread_stub_self())
 		return 0;
 	return ESRCH;
 }
