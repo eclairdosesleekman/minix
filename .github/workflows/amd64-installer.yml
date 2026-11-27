@@ -6,6 +6,8 @@ on:
       - ".github/workflows/amd64-installer.yml"
       - "distrib/amd64/installer/install.sh"
       - "distrib/amd64/installimage/setup-amd64.sh"
+      - "releasetools/x86_64_uefi_cdimage.sh"
+      - "releasetools/x86_64_uefi_cdimage.sh"
   push:
     branches:
       - master
@@ -22,6 +24,7 @@ jobs:
         run: |
           sh -n distrib/amd64/installer/install.sh
           sh -n distrib/amd64/installimage/setup-amd64.sh
+          bash -n releasetools/x86_64_uefi_cdimage.sh
       - name: Check MFS3 and default MFS4 paths
         run: |
           grep -Fq 'Filesystem format: (4) MFS4 or (3) MFS3 [4]' distrib/amd64/installer/install.sh
@@ -30,3 +33,10 @@ jobs:
           grep -Fq 'mkfs.mfs -V 3' distrib/amd64/installer/install.sh
           grep -Fq 'mkfs.mfs -V 4 -f' distrib/amd64/installimage/setup-amd64.sh
           grep -Fq 'mkfs.mfs -V 3' distrib/amd64/installimage/setup-amd64.sh
+
+      - name: Check that the installer ISO refreshes the MFS server release set
+        run: |
+          grep -Fq 'case "${CREATE_IMAGE_ONLY}" in' releasetools/x86_64_uefi_cdimage.sh
+          grep -Fq 'sh "${BUILDSH}" -j "${JOBS}" -m "${ARCH}"' releasetools/x86_64_uefi_cdimage.sh
+          grep -Fq ' -U -u release' releasetools/x86_64_uefi_cdimage.sh
+          grep -Fq 'mounted MFS$MFS_VERSION root at $ROOT is not a directory' distrib/amd64/installer/install.sh
