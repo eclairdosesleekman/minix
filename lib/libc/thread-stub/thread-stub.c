@@ -85,7 +85,7 @@ int
 pthread_detach(pthread_t thread)
 {
 
-	if (thread == pthread_self())
+	if (thread == thr_self())
 		return 0;
 	return ESRCH;
 }
