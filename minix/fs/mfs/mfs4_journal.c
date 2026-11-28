@@ -331,7 +331,14 @@ mfs4_tx_get_meta(uint64_t home_block, uint32_t metadata_type,
 int
 mfs4_tx_find_meta(uint64_t home_block, const uint8_t **image_out)
 {
-	if (!journal_bound)
+	if (image_out == NULL)
+               return EINVAL;
+
+       /*
+        * No active transaction means that no shadow image exists.
+        * Callers can then fall back to the ordinary LMFS buffer.
+        */
+       if (!journal_bound || !journal_tx.active)
 		return ENOENT;
 	return mfs4_journal_tx_find_meta(&journal_tx, home_block, image_out);
 }
