@@ -78,7 +78,7 @@ int fs_mknod(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid,
  *===========================================================================*/
 int fs_mkdir(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid)
 {
-  int r1, r2;			/* status codes */
+  int r1, r2, result;			/* status codes */
   ino_t dot, dotdot;		/* inode numbers for . and .. */
   struct inode *rip, *ldirp;
 
