@@ -133,7 +133,7 @@ int fs_mkdir(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid)
 
   put_inode(ldirp);		/* return the inode of the parent dir */
   put_inode(rip);		/* return the inode of the newly made dir */
-  return(err_code);		/* new_node() always sets 'err_code' */
+  return result;		/* new_node() always sets 'err_code' */
 }
 
 
