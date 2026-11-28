@@ -102,6 +102,7 @@ int fs_mkdir(ino_t dir_nr, char *name, mode_t mode, uid_t uid, gid_t gid)
   /* Now make dir entries for . and .. unless the disk is completely full. */
   r1 = search_dir(rip, ".", &dot, ENTER);	/* enter . in the new dir */
   r2 = search_dir(rip, "..", &dotdot, ENTER);	/* enter .. in the new dir */
+  result = (r1 != OK) ? r1 : r2;
 
   /* If both . and .. were successfully entered, increment the link counts. */
   if (r1 == OK && r2 == OK) {
